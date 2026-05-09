@@ -227,10 +227,13 @@ async function syncBatch(entries){
     return{sheet:e.sheet,row:Object.values(d).map(v=>v==null?'':String(v).substring(0,500))};
   });
   try{
-    // Use form POST — bypasses CORS for Apps Script
-    const form=new FormData();
-    form.append('payload',JSON.stringify({action:'batchAppend',entries:rows}));
-    await fetch(SCRIPT_URL,{method:'POST',body:form,mode:'no-cors'});
+    const body=JSON.stringify({action:'batchAppend',entries:rows});
+    await fetch(SCRIPT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body,
+      mode:'no-cors'
+    });
     setSyncOk();
   }catch(e){
     console.warn('Sync failed:',e.message);
@@ -238,17 +241,18 @@ async function syncBatch(entries){
   }
 }
 
-async function syncSingle(sheetName, data){
+async function syncSingle(sheetName,data){
   const clean={...data};delete clean.photo;delete clean.billPhoto;
   const row=Object.values(clean).map(v=>v==null?'':String(v).substring(0,500));
   try{
-    const form=new FormData();
-    form.append('payload',JSON.stringify({action:'append',sheet:sheetName,row}));
-    await fetch(SCRIPT_URL,{method:'POST',body:form,mode:'no-cors'});
+    await fetch(SCRIPT_URL,{
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body:JSON.stringify({action:'append',sheet:sheetName,row}),
+      mode:'no-cors'
+    });
     setSyncOk();
-  }catch(e){
-    sq.push({sheet:sheetName,data});setSyncErr();
-  }
+  }catch(e){sq.push({sheet:sheetName,data});setSyncErr();}
 }
 async function flushQueue(){if(!sq.length)return;const tmp=[...sq];sq=[];await syncBatch(tmp);}
 setInterval(flushQueue,30000);
