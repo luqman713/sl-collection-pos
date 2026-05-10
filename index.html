@@ -262,15 +262,72 @@ function setSyncErr(){document.querySelectorAll('.sd').forEach(d=>{d.className='
 
 async function loadFromSheets(){
   try{
-    const res=await fetch(`${SCRIPT_URL}?action=getAllData`);
-    if(!res.ok)throw new Error('Network error');
-    const r=await res.json();
-    if(r.success&&r.data){
-      const pr=r.data['Products']||[];
-      if(pr.length>1){const h=pr[0];const parsed=pr.slice(1).filter(x=>x[0]).map(row=>{const o={};h.forEach((col,i)=>o[String(col)]=row[i]||'');return{code:o['Product Code']||'',name:o['Product Name']||'',category:o['Category']||'',size:o['Size']||'',colour:o['Colour']||'',noOfDesigns:o['No of Designs']||'',noOfColours:o['No of Colours']||'',costPrice:Number(o['Cost Price'])||0,supplier:o['Supplier']||'',stock:Number(o['Stock Qty'])||0,photo:''};});if(parsed.length>0){db.products=parsed;sv('sl3_products',db.products);}}
-      setSyncOk();toast('✅ Data loaded','success');
+    // Use JSONP to bypass CORS for GET requests
+    const data = await new Promise((resolve, reject) => {
+      const cbName = 'sl_cb_' + Date.now();
+      const script = document.createElement('script');
+      const timer = setTimeout(() => {
+        reject(new Error('Timeout'));
+        script.remove();
+        delete window[cbName];
+      }, 8000);
+      window[cbName] = (result) => {
+        clearTimeout(timer);
+        script.remove();
+        delete window[cbName];
+        resolve(result);
+      };
+      script.src = `${SCRIPT_URL}?action=getAllData&callback=${cbName}`;
+      script.onerror = () => { clearTimeout(timer); reject(new Error('Script error')); };
+      document.head.appendChild(script);
+    });
+
+    if(data && data.success && data.data){
+      const pr=data.data['Products']||[];
+      if(pr.length>1){
+        const h=pr[0];
+        const parsed=pr.slice(1).filter(x=>x[0]).map(row=>{
+          const o={};h.forEach((col,i)=>o[String(col)]=row[i]||'');
+          return{
+            code:o['Product Code']||'',name:o['Product Name']||'',
+            category:o['Category']||'',size:o['Size']||'',colour:o['Colour']||'',
+            noOfDesigns:o['No of Designs']||'',noOfColours:o['No of Colours']||'',
+            costPrice:Number(o['Cost Price'])||0,supplier:o['Supplier']||'',
+            stock:Number(o['Stock Qty'])||0,photo:''
+          };
+        });
+        if(parsed.length>0){db.products=parsed;sv('sl3_products',db.products);}
+      }
+      // Load customers from sheet
+      const cu=data.data['Customers']||[];
+      if(cu.length>1){
+        cu.slice(1).forEach(r=>{
+          if(r[0]&&r[1]){
+            const exists=db.accounts.find(a=>a.type==='Customer'&&a.name===r[1]);
+            if(!exists) db.accounts.push({id:uid(),type:'Customer',name:String(r[1]),phone:String(r[2]||''),bal:0});
+          }
+        });
+        sv('sl3_accounts',db.accounts);
+      }
+      // Load suppliers from sheet
+      const su=data.data['Suppliers']||[];
+      if(su.length>1){
+        su.slice(1).forEach(r=>{
+          if(r[0]&&r[1]){
+            const exists=db.accounts.find(a=>a.type==='Supplier'&&a.name===r[1]);
+            if(!exists) db.accounts.push({id:uid(),type:'Supplier',name:String(r[1]),phone:'',bal:0});
+          }
+        });
+        sv('sl3_accounts',db.accounts);
+      }
+      setSyncOk();
+      toast('✅ Data synced from Google Sheets','success');
     }
-  }catch(e){toast('⚠️ Offline — cached data','warning');console.warn(e.message);}
+  }catch(e){
+    console.warn('Sheets load failed:',e.message);
+    setSyncErr();
+    // Use cached data — system still works offline
+  }
 }
 
 // SKU
@@ -954,7 +1011,10 @@ async function savePur(){
   const prod={code:sku,name:nm,category:cat,size:sz,colour:cl,noOfDesigns:$('pds')?.value||'',noOfColours:$('pnc')?.value||'',costPrice:cst,supplier:sup,photo:'',stock:qty,dateAdded:d};
   if(pPhoto){const ph=ld('sl3_photos',{});ph[sku]=pPhoto;try{sv('sl3_photos',ph);prod.photo=pPhoto;}catch(e){}}
   const ok=atomic([
-    ()=>{db.products.push({...prod});},
+    ()=>{
+      if(db.products.find(p=>p.code===sku)) throw new Error(`SKU ${sku} already exists. Please try again.`);
+      db.products.push({...prod});
+    },
     ()=>{db.transactions.push({id:pid,date:d,time:t,type:'Purchase',party:sup,payMode:purPayMode,total:tot,paid:pd,payable:pybl,psrc,pprov,user:CU.name,status:'done'});},
     ()=>{db.movements.push({id:uid(),date:d,time:t,sku,name:nm,category:cat,type:'Purchase',qtyChange:qty,cost:cst,value:tot,txnId:pid,user:CU.name,reason:`Supplier: ${sup}`});},
     ()=>{
