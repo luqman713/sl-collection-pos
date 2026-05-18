@@ -367,7 +367,7 @@ function doLogout(){CU=null;cart=[];clearTimeout(itimer);$('app').style.display=
 
 // NAV
 function setupNav(){
-  const ot=[{id:'dash',l:'📊'},{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'},{id:'led',l:'📒 Ledger'},{id:'rep',l:'📈 Reports'},{id:'cash',l:'💵 Cash'}];
+  const ot=[{id:'dash',l:'📊'},{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'},{id:'led',l:'📒 Ledger'},{id:'rep',l:'📈 Reports'},{id:'cash',l:'💵 Cash'},{id:'assets',l:'🏪 Assets'}];
   const st=[{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'}];
   const tabs=CU.role==='owner'?ot:st;
   $('nav').innerHTML=tabs.map((t,i)=>`<div class="nt ${i===0?'active':''}" onclick="showTab('${t.id}',this)">${t.l}</div>`).join('');
@@ -380,11 +380,12 @@ function showTab(id,el,init){
   switch(id){
     case 'dash':c.innerHTML=rDash();iDash();break;
     case 'bill':c.innerHTML=rBill();iBill();break;
-    case 'inv':c.innerHTML=rInv();break;
+    case 'inv':c.innerHTML=rInv();renderInvList();break;
     case 'buy':c.innerHTML=rBuy();break;
     case 'led':c.innerHTML=rLed();break;
     case 'rep':c.innerHTML=rRep();iRep();break;
     case 'cash':c.innerHTML=rCash();iCash();break;
+    case 'assets':c.innerHTML=rAssets();break;
   }
 }
 
@@ -407,17 +408,69 @@ function setOB(){
 }
 function refDash(){
   const sales=db.transactions.filter(t=>(t.type==='Sale'||t.type==='Aged Sale')&&t.date===td()&&t.status==='done');
+  const monthlySales=db.transactions.filter(t=>(t.type==='Sale'||t.type==='Aged Sale')&&t.date&&t.date.endsWith(new Date().getFullYear().toString().slice(-2))&&t.status==='done');
   const ts=sales.reduce((s,t)=>s+Number(t.total||0),0);
   const tm=sales.reduce((s,t)=>s+Number(t.margin||0),0);
+  const mts=monthlySales.reduce((s,t)=>s+Number(t.total||0),0);
+  const mtm=monthlySales.reduce((s,t)=>s+Number(t.margin||0),0);
   const ob=ld('sl3_ob',{}).amount||0;
-  const exp=db.ledger.filter(e=>e.accType==='Expense'&&e.date===td()).reduce((s,e)=>s+e.dr,0);
+  const cashAcc=db.accounts.find(a=>a.name==='Cash Drawer'&&a.type==='Cash');
+  const cashBal=cashAcc?cashAcc.bal:ob+ts;
+  const exp=db.ledger.filter(e=>e.accType==='Expense'&&e.date===td()&&e.accName!=='COGS').reduce((s,e)=>s+e.dr,0);
+
+  // Receivables & Payables
+  const totalRec=db.ledger.filter(e=>e.accType==='Customer').reduce((s,e)=>s+(e.dr-e.cr),0);
+  const totalPay=db.ledger.filter(e=>e.accType==='Supplier').reduce((s,e)=>s+(e.cr-e.dr),0);
+
+  // Stock alerts
+  const lowStock=db.products.filter(p=>Number(p.stock)>0&&Number(p.stock)<=2).length;
+  const deadStock=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=90).length;
+
+  // Top selling (from lines)
+  const prodSales={};
+  db.lines.forEach(l=>{if(!prodSales[l.name])prodSales[l.name]=0;prodSales[l.name]+=Number(l.qty||0);});
+  const topProds=Object.entries(prodSales).sort((a,b)=>b[1]-a[1]).slice(0,3);
+
   const ds=$('dstats');
-  if(ds)ds.innerHTML=`<div class="sc2"><div class="sl">Today Sales</div><div class="sv">${fmt(ts)}</div><div class="ss">${sales.length} bills</div></div><div class="sc2 gn"><div class="sl">Gross Margin</div><div class="sv">${fmt(tm)}</div><div class="ss">${ts>0?((tm/ts)*100).toFixed(1):0}%</div></div><div class="sc2 go"><div class="sl">Cash Balance</div><div class="sv">${fmt(ob+ts-exp)}</div></div><div class="sc2 rd"><div class="sl">Expenses</div><div class="sv">${fmt(exp)}</div></div>`;
+  if(ds)ds.innerHTML=`
+    <div class="sc2"><div class="sl">Today Sales</div><div class="sv">${fmt(ts)}</div><div class="ss">${sales.length} bills</div></div>
+    <div class="sc2 gn"><div class="sl">Today Margin</div><div class="sv">${fmt(tm)}</div><div class="ss">${ts>0?((tm/ts)*100).toFixed(1):0}%</div></div>
+    <div class="sc2 go"><div class="sl">Cash Balance</div><div class="sv">${fmt(cashBal)}</div><div class="ss">In drawer</div></div>
+    <div class="sc2 rd"><div class="sl">Expenses</div><div class="sv">${fmt(exp)}</div><div class="ss">Today</div></div>
+    <div class="sc2"><div class="sl">Monthly Sales</div><div class="sv">${fmt(mts)}</div><div class="ss">${monthlySales.length} bills</div></div>
+    <div class="sc2 gn"><div class="sl">Monthly Profit</div><div class="sv">${fmt(mtm)}</div></div>
+    <div class="sc2 rd"><div class="sl">Receivables</div><div class="sv">${fmt(Math.max(0,totalRec))}</div><div class="ss">Outstanding</div></div>
+    <div class="sc2 go"><div class="sl">Payables</div><div class="sv">${fmt(Math.max(0,totalPay))}</div><div class="ss">To suppliers</div></div>
+  `;
+
   const dr=$('drec');
-  if(dr)dr.innerHTML=`<div style="font-size:.65rem;font-weight:700;color:var(--go);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em">💵 Cash Reconciliation</div><div class="rr"><span>Opening Balance</span><span>${fmt(ob)}</span></div><div class="rr"><span>+ Sales (Cash)</span><span>${fmt(ts)}</span></div><div class="rr"><span>- Expenses</span><span>- ${fmt(exp)}</span></div><div class="rr mt"><span>✅ Expected in Drawer</span><span>${fmt(ob+ts-exp)}</span></div>`;
+  if(dr)dr.innerHTML=`
+    <div style="font-size:.65rem;font-weight:700;color:var(--go);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em">💵 Cash Reconciliation — Today</div>
+    <div class="rr"><span>Opening Balance</span><span>${fmt(ob)}</span></div>
+    <div class="rr"><span>+ Sales (Cash)</span><span>${fmt(ts)}</span></div>
+    <div class="rr"><span>- Expenses</span><span>- ${fmt(exp)}</span></div>
+    <div class="rr mt"><span>✅ Expected in Drawer</span><span>${fmt(ob+ts-exp)}</span></div>
+    ${(lowStock||deadStock)?`<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd2)">
+      ${lowStock?`<div style="font-size:.68rem;color:var(--rd);font-weight:600">⚠️ ${lowStock} items low stock</div>`:''}
+      ${deadStock?`<div style="font-size:.68rem;color:var(--go);font-weight:600">🔴 ${deadStock} dead stock items</div>`:''}
+    </div>`:''}
+  `;
+
   const dsl=$('dsales');
-  if(dsl){if(!sales.length)dsl.innerHTML='<div class="em"><div class="ei">🧾</div><p>No sales today</p></div>';
-  else dsl.innerHTML=sales.slice().reverse().map(t=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.time} · ${t.party||'Walk-in'} · ${t.payMode}</div></div><div style="text-align:right"><div style="font-size:.73rem;font-weight:700;color:var(--br)">${fmt(t.total)}</div><div style="font-size:.6rem;color:var(--gn)">+${fmt(t.margin)}</div></div></div></div>`).join('');}
+  if(dsl){
+    let html='';
+    if(topProds.length){
+      html+=`<div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">🏆 Top Products</div>`;
+      html+=topProds.map((p,i)=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--cr2);font-size:.72rem"><span>${i+1}. ${p[0]}</span><span style="font-weight:700;color:var(--br)">${p[1]} sold</span></div>`).join('');
+      html+='<div style="margin-top:12px"></div>';
+    }
+    if(!sales.length){html+='<div class="em"><div class="ei">🧾</div><p>No sales today</p></div>';}
+    else{
+      html+=`<div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">🕒 Today\'s Sales</div>`;
+      html+=sales.slice().reverse().map(t=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.time} · ${t.party||'Walk-in'} · ${t.payMode}</div></div><div style="text-align:right"><div style="font-size:.73rem;font-weight:700;color:var(--br)">${fmt(t.total)}</div><div style="font-size:.6rem;color:var(--gn)">+${fmt(t.margin)}</div></div></div></div>`).join('');
+    }
+    dsl.innerHTML=html;
+  }
 }
 
 // ── BILLING ──
@@ -849,29 +902,237 @@ function procReturn(){
   if(ok){syncBatch([{sheet:'Sales',data:{billNo:rid,date:d,sku,name:p.name,qty:-qty,saleAmt:-amt,payMode:ref,notes:`Return of ${bill}: ${rsn}`,user:CU.name}}]);toast(`✅ Return done! Stock +${qty}`,'success');closeModal();srchProd();}
 }
 
-function openExp(){openModal('💸 Expense',`
-  <div class="fg"><label class="lb">Category</label><select class="sl2" id="ec"><option>Team Daily</option><option>Rent</option><option>Electricity</option><option>Committee</option><option>Salary</option><option>Transport</option><option>Other</option></select></div>
+const EXP_CATS=[
+  'Sales Revenue','Sales Returns',
+  'Daily Operating Expenses','Inventory Purchases',
+  'Payments to Credit Wholesale Suppliers','Payments to Credit Dupatta Suppliers','Payments to Credit Abaya Suppliers',
+  'Credit Customer Receipts',
+  'Luqman Contribution to Shop','Luqman Withdrawals from Shop',
+  'Loan / Capital Introduced','Market Loan Repayments',
+  'Committee Savings – 1','Committee Savings – 2',
+  'Committee Savings – 1 Received',
+  'Amir Drawings / Personal Expenses',
+  'Utility Expenses','Rent Expense','Miscellaneous Expenses',
+  'Shopping Bag Expenses','Purchase-Related Expenses',
+  'Shop Maintenance Expenses','Other Operating Expenses',
+  'Office Expenses','Battery Expenses',
+  'Security Guard Expenses','Sweeper Expenses'
+];
+
+function openExp(){openModal('💸 Expense / Cash Entry',`
+  <div class="fg"><label class="lb">Category</label>
+    <select class="sl2" id="ec">${EXP_CATS.map(c=>`<option>${c}</option>`).join('')}</select>
+  </div>
   <div class="fg"><label class="lb">Description</label><input class="ip" id="ed" placeholder="Details..."></div>
   <div class="fg"><label class="lb">Amount ₨</label><input class="ip" id="ea" type="number" placeholder="0"></div>
-  <div class="fg"><label class="lb">Source</label><select class="sl2" id="es"><option>Cash Drawer</option><option>Bank</option><option>EasyPaisa</option><option>JazzCash</option><option>Owner</option></select></div>
-  <button class="btn br bw" onclick="saveExp()">💾 Save</button>`);}
+  <div class="fg"><label class="lb">Direction</label>
+    <select class="sl2" id="edir"><option value="out">💸 Money Out (Expense/Payment)</option><option value="in">💰 Money In (Receipt/Income)</option></select>
+  </div>
+  <div class="fg"><label class="lb">Source / Account</label>
+    <select class="sl2" id="es"><option>Cash Drawer</option><option>Bank</option><option>EasyPaisa</option><option>JazzCash</option><option>Owner</option></select>
+  </div>
+  <div class="fg"><label class="lb">Date</label><input class="ip" id="edt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+  <button class="btn br bw" onclick="saveExp()">💾 Save Entry</button>`);}
 
 function saveExp(){
-  const cat=$('ec')?.value;const desc=$('ed')?.value?.trim();const amt=Number($('ea')?.value||0);const src=$('es')?.value;
+  const cat=$('ec')?.value;const desc=$('ed')?.value?.trim();const amt=Number($('ea')?.value||0);
+  const src=$('es')?.value;const dir=$('edir')?.value||'out';const edt=$('edt')?.value||td();
   if(!amt||!desc){toast('Fill all','error');return;}
-  const id=`EXP-${Date.now()}`;const d=td();
-  const ok=atomic([()=>{postEntry(id,d,'Expense',cat,amt,0,desc);if(src==='Cash Drawer')postEntry(id,d,'Cash','Cash Drawer',amt,0,`Exp: ${desc}`);}]);
-  if(ok){syncBatch([{sheet:'Cash Register',data:{date:d,nature:desc,category:cat,amountIn:0,amountOut:amt,source:src,user:CU.name}}]);toast(`✅ Expense: ${fmt(amt)}`,'success');closeModal();}
+  const id=`EXP-${Date.now()}`;
+  const ok=atomic([()=>{
+    const isOut=dir==='out';
+    postEntry(id,edt,'Expense',cat,isOut?amt:0,isOut?0:amt,desc);
+    if(src==='Cash Drawer') postEntry(id,edt,'Cash','Cash Drawer',isOut?amt:0,isOut?0:amt,`${cat}: ${desc}`);
+    else if(src==='Bank') postEntry(id,edt,'Bank',src,isOut?amt:0,isOut?0:amt,`${cat}: ${desc}`);
+    db.transactions.push({id,date:edt,time:tn(),type:isOut?'Expense':'Receipt',party:cat,payMode:src,total:amt,user:CU.name,status:'done'});
+  }]);
+  if(ok){
+    syncBatch([{sheet:'Cash Register',data:{date:edt,nature:desc,category:cat,amountIn:dir==='in'?amt:0,amountOut:dir==='out'?amt:0,source:src,user:CU.name}}]);
+    toast(`✅ ${dir==='out'?'Expense':'Receipt'}: ${fmt(amt)}`,'success');
+    closeModal();
+    if(document.querySelector('.nt.active')?.textContent?.includes('💵')) iCash();
+  }
 }
 
 // ── INVENTORY ──
+function getAgeDays(dateStr){
+  if(!dateStr) return 0;
+  try{
+    const parts=dateStr.split('/');
+    const d=parts.length===3?new Date(`${parts[2]}-${parts[1]}-${parts[0]}`):new Date(dateStr);
+    return Math.floor((Date.now()-d.getTime())/(1000*60*60*24));
+  }catch(e){return 0;}
+}
+function getAgeLabel(days){
+  if(days>=90) return{label:'🔴 Dead Stock',color:'var(--rd)',cls:'rd'};
+  if(days>=60) return{label:'🟠 Slow Moving',color:'var(--go)',cls:'go'};
+  if(days>=30) return{label:'🟡 Ageing',color:'#B8A000',cls:''};
+  return{label:'🟢 Fresh',color:'var(--gn)',cls:'gn'};
+}
+
 function rInv(){
-  const cats={};db.products.forEach(p=>{if(!cats[p.category]){cats[p.category]={items:[],qty:0,val:0};}cats[p.category].items.push(p);cats[p.category].qty+=Number(p.stock);cats[p.category].val+=Number(p.stock)*Number(p.costPrice);});
-  const tq=db.products.reduce((s,p)=>s+Number(p.stock),0);const tv=db.products.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);const ls=db.products.filter(p=>Number(p.stock)<=2).length;
-  return`<div class="sg"><div class="sc2"><div class="sl">Products</div><div class="sv">${db.products.length}</div></div><div class="sc2 gn"><div class="sl">Units</div><div class="sv">${tq}</div></div><div class="sc2 go"><div class="sl">Value</div><div class="sv">${fmt(tv)}</div></div><div class="sc2 rd"><div class="sl">Low Stock</div><div class="sv">${ls}</div></div></div>
+  // Get unique filter values
+  const suppliers=[...new Set(db.products.map(p=>p.supplier).filter(Boolean))];
+  const colours=[...new Set(db.products.map(p=>p.colour).filter(Boolean))];
+  const sizes=[...new Set(db.products.map(p=>p.size).filter(Boolean))];
+
+  // Alert counts
+  const lowStock=db.products.filter(p=>Number(p.stock)>0&&Number(p.stock)<=2).length;
+  const deadStock=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=90).length;
+  const slowMov=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=60&&getAgeDays(p.dateAdded)<90).length;
+
+  const tq=db.products.filter(p=>Number(p.stock)>0).reduce((s,p)=>s+Number(p.stock),0);
+  const tv=db.products.filter(p=>Number(p.stock)>0).reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);
+
+  return`
+  <!-- Alerts -->
+  ${(lowStock||deadStock||slowMov)?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+    ${lowStock?`<div style="background:#FDEAEA;border:1px solid var(--rd);border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:var(--rd)">⚠️ Low Stock: ${lowStock} items</div>`:''}
+    ${deadStock?`<div style="background:#FFF0E8;border:1px solid var(--go);border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:var(--go)">🔴 Dead Stock: ${deadStock} items</div>`:''}
+    ${slowMov?`<div style="background:#FFF8E4;border:1px solid #B8A000;border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:#B8A000">🟠 Slow Moving: ${slowMov} items</div>`:''}
+  </div>`:''}
+
+  <!-- Summary Stats -->
+  <div class="sg">
+    <div class="sc2"><div class="sl">Active SKUs</div><div class="sv">${db.products.filter(p=>Number(p.stock)>0).length}</div></div>
+    <div class="sc2 gn"><div class="sl">Total Units</div><div class="sv">${tq}</div></div>
+    <div class="sc2 go"><div class="sl">Stock Value</div><div class="sv">${fmt(tv)}</div></div>
+    <div class="sc2 rd"><div class="sl">Alerts</div><div class="sv">${lowStock+deadStock+slowMov}</div></div>
+  </div>
+
+  <!-- Filters -->
+  <div class="card" style="padding:12px;margin-bottom:12px">
+    <div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px">🔍 Filters</div>
+    <div class="g2" style="margin-bottom:8px">
+      <div><label class="lb">Category</label>
+        <select class="sl2" id="inv-fcat" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+          <option value="">All</option>${CATS.map(c=>`<option>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div><label class="lb">Supplier</label>
+        <select class="sl2" id="inv-fsup" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+          <option value="">All</option>${suppliers.map(s=>`<option>${s}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="g2" style="margin-bottom:8px">
+      <div><label class="lb">Colour</label>
+        <select class="sl2" id="inv-fcol" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+          <option value="">All</option>${colours.map(c=>`<option>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div><label class="lb">Size</label>
+        <select class="sl2" id="inv-fsz" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+          <option value="">All</option>${sizes.map(s=>`<option>${s}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="g2">
+      <div><label class="lb">Ageing</label>
+        <select class="sl2" id="inv-fage" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+          <option value="">All</option>
+          <option value="fresh">🟢 Fresh (&lt;30d)</option>
+          <option value="ageing">🟡 Ageing (30-60d)</option>
+          <option value="slow">🟠 Slow (60-90d)</option>
+          <option value="dead">🔴 Dead Stock (90d+)</option>
+        </select>
+      </div>
+      <div><label class="lb">Search</label>
+        <input class="ip" id="inv-fsrch" placeholder="Name/SKU..." oninput="renderInvList()" style="font-size:.75rem;padding:7px 10px">
+      </div>
+    </div>
+  </div>
+
   ${CU?.role==='owner'?`<button class="btn bo bw" style="margin-bottom:12px" onclick="openStockTake()">🔍 Physical Verification</button>`:''}
-  ${Object.entries(cats).map(([cat,data])=>`<div style="margin-bottom:14px"><div class="rh"><div>${ce(cat)} ${cat}</div><div>Qty: ${data.qty} · ${fmt(data.val)}</div></div><div style="border:1px solid var(--bd2);border-top:none;border-radius:0 0 10px 10px"><div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;background:var(--cr2);padding:6px 10px"><div style="font-size:.6rem;font-weight:700;color:var(--tx3)">ITEM</div><div style="font-size:.6rem;font-weight:700;color:var(--tx3);text-align:center">STOCK</div><div style="font-size:.6rem;font-weight:700;color:var(--tx3);text-align:right">COST</div><div style="font-size:.6rem;font-weight:700;color:var(--tx3);text-align:right">VALUE</div></div>${data.items.map(p=>`<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:8px 10px;border-top:1px solid var(--cr2);background:white;cursor:pointer" onclick="showMov('${p.code}')"><div><div style="font-size:.72rem;font-weight:600">${p.name}</div><div style="font-size:.58rem;color:var(--tx3)">${p.colour||''}${p.size?' · '+p.size:''}</div><div style="font-family:monospace;font-size:.53rem;color:var(--tx3)">${p.code}</div></div><div style="text-align:center"><span style="font-size:.9rem;font-weight:700;color:${Number(p.stock)<=2?'var(--rd)':'var(--gn)'}">${p.stock}</span>${Number(p.stock)<=2?'<div style="font-size:.5rem;color:var(--rd)">LOW</div>':''}</div><div style="text-align:right;font-size:.7rem;color:var(--tx3)">${fmt(p.costPrice)}</div><div style="text-align:right;font-size:.72rem;font-weight:600">${fmt(Number(p.stock)*Number(p.costPrice))}</div></div>`).join('')}<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;padding:7px 10px;background:var(--cr2)"><div style="font-size:.65rem;font-weight:700;color:var(--br)">Total</div><div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--br)">${data.qty}</div><div></div><div style="text-align:right;font-size:.72rem;font-weight:700;color:var(--br)">${fmt(data.val)}</div></div></div></div>`).join('')}
-  <div style="background:var(--br);color:white;border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:2fr 1fr 1fr 1fr"><div style="font-size:.8rem;font-weight:700">GRAND TOTAL</div><div style="text-align:center;font-size:.8rem;font-weight:700">${tq}</div><div></div><div style="text-align:right;font-size:.8rem;font-weight:700">${fmt(tv)}</div></div>`;
+
+  <div id="inv-list-content"></div>
+  `;
+}
+
+function renderInvList(){
+  const fcat=$('inv-fcat')?.value||'';
+  const fsup=$('inv-fsup')?.value||'';
+  const fcol=$('inv-fcol')?.value||'';
+  const fsz=$('inv-fsz')?.value||'';
+  const fage=$('inv-fage')?.value||'';
+  const fsrch=($('inv-fsrch')?.value||'').toLowerCase();
+
+  let prods=db.products.filter(p=>{
+    if(Number(p.stock)<=0) return false; // hide zero stock
+    if(fcat&&p.category!==fcat) return false;
+    if(fsup&&p.supplier!==fsup) return false;
+    if(fcol&&p.colour!==fcol) return false;
+    if(fsz&&p.size!==fsz) return false;
+    if(fsrch&&!p.name.toLowerCase().includes(fsrch)&&!p.code.toLowerCase().includes(fsrch)) return false;
+    if(fage){
+      const days=getAgeDays(p.dateAdded);
+      if(fage==='fresh'&&days>=30) return false;
+      if(fage==='ageing'&&(days<30||days>=60)) return false;
+      if(fage==='slow'&&(days<60||days>=90)) return false;
+      if(fage==='dead'&&days<90) return false;
+    }
+    return true;
+  });
+
+  const c=$('inv-list-content');if(!c)return;
+  if(!prods.length){c.innerHTML='<div class="em"><div class="ei">📦</div><p>No items match filters</p></div>';return;}
+
+  // Group by category
+  const cats={};
+  prods.forEach(p=>{
+    if(!cats[p.category])cats[p.category]={items:[],qty:0,val:0};
+    cats[p.category].items.push(p);
+    cats[p.category].qty+=Number(p.stock);
+    cats[p.category].val+=Number(p.stock)*Number(p.costPrice);
+  });
+  const tv=prods.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);
+
+  c.innerHTML=Object.entries(cats).map(([cat,data])=>`
+    <div style="margin-bottom:14px">
+      <div class="rh"><div>${ce(cat)} ${cat}</div><div>Qty: ${data.qty} · ${fmt(data.val)}</div></div>
+      <div style="border:1px solid var(--bd2);border-top:none;border-radius:0 0 10px 10px">
+        <div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;background:var(--cr2);padding:6px 10px">
+          <div style="font-size:.58rem;font-weight:700;color:var(--tx3)">ITEM</div>
+          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:center">QTY</div>
+          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:right">AGE</div>
+          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:right">VALUE</div>
+        </div>
+        ${data.items.map(p=>{
+          const days=getAgeDays(p.dateAdded);
+          const age=getAgeLabel(days);
+          return`<div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;padding:8px 10px;border-top:1px solid var(--cr2);background:white;cursor:pointer" onclick="showMov('${p.code}')">
+            <div>
+              <div style="font-size:.7rem;font-weight:600">${p.name}</div>
+              <div style="font-size:.56rem;color:var(--tx3)">${p.colour||''}${p.size?' · '+p.size:''}</div>
+              <div style="font-family:monospace;font-size:.52rem;color:var(--tx3)">${p.code}</div>
+              <div style="font-size:.56rem;color:var(--tx3)">${p.supplier||''}</div>
+            </div>
+            <div style="text-align:center">
+              <span style="font-size:.88rem;font-weight:700;color:${Number(p.stock)<=2?'var(--rd)':'var(--gn)'}">${p.stock}</span>
+              ${Number(p.stock)<=2?'<div style="font-size:.5rem;color:var(--rd)">LOW</div>':''}
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:.58rem;font-weight:700;color:${age.color}">${days}d</div>
+              <div style="font-size:.52rem;color:${age.color}">${age.label.split(' ')[0]}</div>
+            </div>
+            <div style="text-align:right;font-size:.7rem;font-weight:600">${fmt(Number(p.stock)*Number(p.costPrice))}</div>
+          </div>`;
+        }).join('')}
+        <div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;padding:7px 10px;background:var(--cr2)">
+          <div style="font-size:.65rem;font-weight:700;color:var(--br)">Total</div>
+          <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--br)">${data.qty}</div>
+          <div></div>
+          <div style="text-align:right;font-size:.72rem;font-weight:700;color:var(--br)">${fmt(data.val)}</div>
+        </div>
+      </div>
+    </div>
+  `).join('')+`
+  <div style="background:var(--br);color:white;border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr">
+    <div style="font-size:.78rem;font-weight:700">GRAND TOTAL</div>
+    <div style="text-align:center;font-size:.78rem;font-weight:700">${prods.reduce((s,p)=>s+Number(p.stock),0)}</div>
+    <div></div>
+    <div style="text-align:right;font-size:.78rem;font-weight:700">${fmt(tv)}</div>
+  </div>`;
 }
 
 function showMov(sku){
@@ -1095,55 +1356,316 @@ function saveEntry(){
   if(ok){syncBatch([{sheet:lTab==='customers'?'Customers':'Suppliers',data:{date:date||td(),party,type,amount:amt,notes,user:CU.name}}]);closeModal();toast(`✅ Entry saved!`,'success');rLedContent();}
 }
 
-// ── REPORTS ──
-function rRep(){return`<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px"><div class="pl active" onclick="setRTab('sales',this)">📊 Sales</div><div class="pl" onclick="setRTab('stock',this)">📦 Stock</div><div class="pl" onclick="setRTab('cash',this)">💵 Cash</div><div class="pl" onclick="setRTab('pl',this)">📈 P&L</div></div><div class="df"><input class="ip" id="rfrom" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1"><input class="ip" id="rto" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1"><button class="btn bp bsm" onclick="genRep()">Go</button></div><div id="rcont"></div>`;}
+function iCash(){rCashList();}
+function rCashList(){const c=$('clist');if(!c)return;const es=db.ledger.filter(e=>e.accType==='Cash').slice(-30).reverse();if(!es.length){c.innerHTML='<div class="em"><div class="ei">💵</div><p>No entries</p></div>';return;}c.innerHTML=es.map(e=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${e.notes||''}</div><div style="font-size:.6rem;color:var(--tx3)">${e.date} · ${e.user||''}</div></div><div style="text-align:right">${e.cr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--gn)">+${fmt(e.cr)}</div>`:''}${e.dr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--rd)">-${fmt(e.dr)}</div>`:''}</div></div></div>`).join('');}
+
 function iRep(){genRep();}
+
+// ── SHOP ASSETS ──
+const ASSET_TYPES=['China Fittings','Hangers','Fans','Chairs','Counters','Shelves','Mirrors','Lights','Racks','Other Fixtures'];
+
+function rAssets(){
+  const assets=ld('sl3_assets',[]);
+  const totalVal=assets.reduce((s,a)=>s+Number(a.cost||0)*Number(a.qty||1),0);
+  return`
+    <div class="sg">
+      <div class="sc2"><div class="sl">Total Assets</div><div class="sv">${assets.length}</div></div>
+      <div class="sc2 go"><div class="sl">Total Value</div><div class="sv">${fmt(totalVal)}</div></div>
+    </div>
+    <button class="btn bp bw" style="margin-bottom:12px" onclick="openAddAsset()">➕ Add Asset</button>
+    ${!assets.length?'<div class="em"><div class="ei">🏪</div><p>No assets recorded yet</p></div>':
+    `<div style="border:1px solid var(--bd2);border-radius:12px;overflow:hidden;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr;background:var(--br);color:white;padding:8px 12px">
+        <div style="font-size:.6rem;font-weight:700">ASSET</div>
+        <div style="font-size:.6rem;font-weight:700;text-align:center">QTY</div>
+        <div style="font-size:.6rem;font-weight:700;text-align:right">COST</div>
+        <div style="font-size:.6rem;font-weight:700;text-align:right">CONDITION</div>
+      </div>
+      ${assets.map((a,i)=>`
+        <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr;padding:9px 12px;border-top:1px solid var(--cr2);background:white">
+          <div>
+            <div style="font-size:.72rem;font-weight:600">${a.name}</div>
+            <div style="font-size:.58rem;color:var(--tx3)">${a.type} · ${a.purchaseDate||''}</div>
+            ${a.notes?`<div style="font-size:.55rem;color:var(--tx3)">${a.notes}</div>`:''}
+          </div>
+          <div style="text-align:center;font-size:.82rem;font-weight:700">${a.qty||1}</div>
+          <div style="text-align:right;font-size:.7rem">${fmt(a.cost)}</div>
+          <div style="text-align:right">
+            <span style="font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:6px;background:${a.condition==='Good'?'#E8F5EE':a.condition==='Fair'?'#FFF8E4':'#FDEAEA'};color:${a.condition==='Good'?'var(--gn)':a.condition==='Fair'?'var(--go)':'var(--rd)'}">${a.condition||'Good'}</span>
+          </div>
+        </div>
+      `).join('')}
+      <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--cr2)">
+        <span style="font-size:.72rem;font-weight:700;color:var(--br)">Total Value</span>
+        <span style="font-size:.72rem;font-weight:700;color:var(--br)">${fmt(totalVal)}</span>
+      </div>
+    </div>`}
+  `;
+}
+
+function openAddAsset(){
+  openModal('➕ Add Shop Asset',`
+    <div class="fg"><label class="lb">Asset Name *</label><input class="ip" id="ast-nm" placeholder="e.g. Glass Counter"></div>
+    <div class="fg"><label class="lb">Type</label>
+      <select class="sl2" id="ast-tp">${ASSET_TYPES.map(t=>`<option>${t}</option>`).join('')}</select>
+    </div>
+    <div class="g2">
+      <div class="fg"><label class="lb">Quantity</label><input class="ip" id="ast-qt" type="number" value="1" placeholder="1"></div>
+      <div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="ast-cs" type="number" placeholder="0"></div>
+    </div>
+    <div class="fg"><label class="lb">Purchase Date</label><input class="ip" id="ast-dt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+    <div class="fg"><label class="lb">Condition</label>
+      <select class="sl2" id="ast-cd"><option>Good</option><option>Fair</option><option>Poor</option></select>
+    </div>
+    <div class="fg"><label class="lb">Notes</label><input class="ip" id="ast-nt" placeholder="Additional details..."></div>
+    <button class="btn bp bw" onclick="saveAsset()">✅ Save Asset</button>
+  `);
+}
+
+function saveAsset(){
+  const name=$('ast-nm')?.value?.trim();
+  if(!name){toast('Enter asset name','error');return;}
+  const assets=ld('sl3_assets',[]);
+  assets.push({
+    id:uid(),name,type:$('ast-tp')?.value,
+    qty:Number($('ast-qt')?.value||1),
+    cost:Number($('ast-cs')?.value||0),
+    purchaseDate:$('ast-dt')?.value,
+    condition:$('ast-cd')?.value||'Good',
+    notes:$('ast-nt')?.value||'',
+    addedBy:CU.name,addedDate:td()
+  });
+  sv('sl3_assets',assets);
+  syncBatch([{sheet:'Employees',data:{date:td(),name:'ASSET',type:name,amount:Number($('ast-cs')?.value||0),notes:$('ast-nt')?.value||'',user:CU.name}}]);
+  closeModal();showTab('assets',document.querySelector('.nt.active'));
+  toast(`✅ Asset "${name}" added!`,'success');
+}
+
+// ── EXPORT FUNCTIONS ──
+function exportCSV(data, filename){
+  if(!data.length) return toast('No data to export','error');
+  const headers=Object.keys(data[0]);
+  const rows=[headers.join(','),...data.map(r=>headers.map(h=>`"${String(r[h]||'').replace(/"/g,'""')}"`).join(','))];
+  const blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename+'.csv';a.click();
+  toast(`✅ ${filename}.csv downloaded`,'success');
+}
+
+function printReport(title, html){
+  const w=window.open('','_blank');
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
+  <style>body{font-family:Arial,sans-serif;padding:20px;font-size:12px}
+  h1{color:#5C2E0E;font-size:18px;margin-bottom:4px}
+  .sub{color:#888;font-size:11px;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px}
+  th{background:#5C2E0E;color:white;padding:6px 8px;text-align:left;font-size:11px}
+  td{padding:5px 8px;border-bottom:1px solid #eee;font-size:11px}
+  .total{font-weight:bold;background:#f5f0eb}
+  @media print{button{display:none}}</style></head><body>
+  <h1>${title}</h1><div class="sub">SL Collection POS · ${td()}</div>
+  ${html}
+  <br><button onclick="window.print()" style="background:#5C2E0E;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">🖨️ Print</button>
+  </body></html>`);
+  w.document.close();
+}
+
+// ── ENHANCED REPORTS ──
+function rRep(){
+  return`
+    <div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px">
+      <div class="pl active" onclick="setRTab('sales',this)">📊 Sales</div>
+      <div class="pl" onclick="setRTab('purchase',this)">📦 Purchase</div>
+      <div class="pl" onclick="setRTab('stock',this)">📋 Stock</div>
+      <div class="pl" onclick="setRTab('ageing',this)">⏳ Ageing</div>
+      <div class="pl" onclick="setRTab('cash',this)">💵 Cash</div>
+      <div class="pl" onclick="setRTab('pl',this)">📈 P&L</div>
+      <div class="pl" onclick="setRTab('ledger',this)">📒 Ledger</div>
+    </div>
+    <div class="df">
+      <input class="ip" id="rfrom" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1">
+      <input class="ip" id="rto" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1">
+      <button class="btn bp bsm" onclick="genRep()">Go</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:12px">
+      <button class="btn bgh bsm" onclick="exportCurrentReport()">📥 CSV</button>
+      <button class="btn bgh bsm" onclick="printCurrentReport()">🖨️ Print</button>
+    </div>
+    <div id="rcont"></div>
+  `;
+}
+
+let lastReportData=[];
+let lastReportTitle='Report';
+
 function setRTab(t,el){rTab=t;document.querySelectorAll('.pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');genRep();}
+
+function exportCurrentReport(){exportCSV(lastReportData,lastReportTitle);}
+function printCurrentReport(){
+  const c=$('rcont');if(!c)return;
+  printReport(lastReportTitle,c.innerHTML);
+}
+
 function genRep(){
-  const from=$('rfrom')?.value||td();const to=$('rto')?.value||td();const c=$('rcont');if(!c)return;
+  const from=$('rfrom')?.value||td();
+  const to=$('rto')?.value||td();
+  const c=$('rcont');if(!c)return;
   const txns=db.transactions.filter(t=>t.date>=from&&t.date<=to&&t.status==='done');
   switch(rTab){
     case'sales':c.innerHTML=genSalesRep(txns,from,to);break;
+    case'purchase':c.innerHTML=genPurRep(txns,from,to);break;
     case'stock':c.innerHTML=genStockRep();break;
+    case'ageing':c.innerHTML=genAgeRep();break;
     case'cash':c.innerHTML=genCashRep(from,to);break;
     case'pl':c.innerHTML=genPLRep(txns,from,to);break;
+    case'ledger':c.innerHTML=genLedgerRep(from,to);break;
   }
 }
-function genSalesRep(txns,from,to){
-  const sl=txns.filter(t=>t.type==='Sale'||t.type==='Aged Sale');
-  const ts=sl.reduce((s,t)=>s+Number(t.total||0),0);const tm=sl.reduce((s,t)=>s+Number(t.margin||0),0);
-  const cs=sl.filter(t=>t.payMode==='Cash').reduce((s,t)=>s+Number(t.total||0),0);const cr=sl.filter(t=>t.payMode==='Credit').reduce((s,t)=>s+Number(t.total||0),0);const bk=sl.filter(t=>t.payMode==='Bank').reduce((s,t)=>s+Number(t.total||0),0);
-  const catB={};db.lines.filter(l=>sl.find(s=>s.id===l.txnId)).forEach(l=>{if(!catB[l.category])catB[l.category]={qty:0,amt:0};catB[l.category].qty+=Number(l.qty||0);catB[l.category].amt+=Number(l.lineTotal||0);});
-  return`<div class="sg"><div class="sc2"><div class="sl">Total Sales</div><div class="sv">${fmt(ts)}</div><div class="ss">${sl.length} bills</div></div><div class="sc2 gn"><div class="sl">Gross Margin</div><div class="sv">${fmt(tm)}</div><div class="ss">${ts>0?((tm/ts)*100).toFixed(1):0}%</div></div></div>
-  <div style="margin-bottom:14px"><div class="rh"><div>Payment Method</div><div>${fmt(ts)}</div></div><div class="rw"><span>💵 Cash</span><span>${fmt(cs)}</span></div><div class="rw"><span>📋 Credit</span><span>${fmt(cr)}</span></div><div class="rw"><span>🏦 Bank</span><span>${fmt(bk)}</span></div><div class="rf"><span>Total</span><span>${fmt(ts)}</span></div></div>
-  <div style="margin-bottom:14px"><div class="rh"><div>Category</div></div>${Object.entries(catB).map(([c,d])=>`<div class="rw"><span>${ce(c)} ${c} (${d.qty})</span><span>${fmt(d.amt)}</span></div>`).join('')}<div class="rf"><span>Total</span><span>${fmt(ts)}</span></div></div>
-  <div style="margin-bottom:14px"><div class="rh"><div>Transactions</div></div>${sl.slice().reverse().map(t=>`<div class="rw"><span><div style="font-size:.72rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.date} · ${t.party||'Walk-in'} · ${t.payMode}</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">${fmt(t.total)}</div><div style="font-size:.6rem;color:var(--gn)">+${fmt(t.margin)}</div></span></div>`).join('')}</div>`;
-}
-function genStockRep(){
-  const cats={};db.products.forEach(p=>{if(!cats[p.category]){cats[p.category]={items:[],qty:0,val:0};}cats[p.category].items.push(p);cats[p.category].qty+=Number(p.stock);cats[p.category].val+=Number(p.stock)*Number(p.costPrice);});
-  const tv=db.products.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);
-  return Object.entries(cats).map(([c,d])=>`<div style="margin-bottom:14px"><div class="rh"><div>${ce(c)} ${c}</div><div>Qty: ${d.qty} · ${fmt(d.val)}</div></div>${d.items.map(p=>`<div class="rw"><span><div style="font-size:.72rem">${p.name}</div><div style="font-size:.6rem;color:var(--tx3)">${p.colour||''}${p.size?' · '+p.size:''}</div></span><span style="text-align:right"><div style="font-weight:700;color:${Number(p.stock)<=2?'var(--rd)':'var(--gn)'}">${p.stock} pcs</div><div style="font-size:.6rem;color:var(--tx3)">${fmt(Number(p.stock)*Number(p.costPrice))}</div></span></div>`).join('')}<div class="rf"><span>Subtotal</span><span>${fmt(d.val)}</span></div></div>`).join('')+`<div style="background:var(--br);color:white;border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between"><span style="font-weight:700">GRAND TOTAL</span><span style="font-weight:700">${fmt(tv)}</span></div>`;
-}
-function genCashRep(from,to){
-  const ob=ld('sl3_ob',{}).amount||0;const ce2=db.ledger.filter(e=>e.accType==='Cash'&&e.date>=from&&e.date<=to);
-  const ti=ce2.reduce((s,e)=>s+e.cr,0);const to2=ce2.reduce((s,e)=>s+e.dr,0);const cl=ob+ti-to2;
-  return`<div class="sg"><div class="sc2 gn"><div class="sl">Total In</div><div class="sv">${fmt(ti)}</div></div><div class="sc2 rd"><div class="sl">Total Out</div><div class="sv">${fmt(to2)}</div></div></div>
-  <div style="margin-bottom:14px"><div class="rh"><div>Cash Flow</div></div><div class="rw"><span>Opening Balance</span><span>${fmt(ob)}</span></div><div class="rw"><span style="color:var(--gn)">+ Inflow</span><span style="color:var(--gn)">${fmt(ti)}</span></div><div class="rw"><span style="color:var(--rd)">- Outflow</span><span style="color:var(--rd)">${fmt(to2)}</span></div><div class="rf"><span>Closing Balance</span><span>${fmt(cl)}</span></div></div>
-  <div style="margin-bottom:14px"><div class="rh"><div>Details</div></div>${ce2.slice().reverse().map(e=>`<div class="rw"><span><div style="font-size:.72rem">${e.notes||''}</div><div style="font-size:.6rem;color:var(--tx3)">${e.date} · ${e.user||''}</div></span><span style="font-weight:700;color:${e.cr>0?'var(--gn)':'var(--rd)'}">${e.cr>0?'+'+fmt(e.cr):'-'+fmt(e.dr)}</span></div>`).join('')}</div>`;
-}
-function genPLRep(txns,from,to){
-  const sl=txns.filter(t=>t.type==='Sale'||t.type==='Aged Sale');
-  const rev=sl.reduce((s,t)=>s+Number(t.total||0),0);const cst=sl.reduce((s,t)=>s+Number(t.cost||0),0);const gp=rev-cst;
-  const exp=db.ledger.filter(e=>e.accType==='Expense'&&e.date>=from&&e.date<=to&&e.accName!=='COGS').reduce((s,e)=>s+e.dr,0);const np=gp-exp;
-  return`<div style="margin-bottom:14px"><div class="rh"><div>Profit & Loss</div><div>${from} to ${to}</div></div><div class="rw"><span style="font-weight:700">Revenue</span><span style="font-weight:700">${fmt(rev)}</span></div><div class="rw"><span style="color:var(--rd)">- Cost of Goods</span><span style="color:var(--rd)">- ${fmt(cst)}</span></div><div class="rw" style="background:var(--cr2)"><span style="font-weight:700;color:var(--gn)">Gross Profit</span><span style="font-weight:700;color:var(--gn)">${fmt(gp)}</span></div><div class="rw"><span style="color:var(--rd)">- Expenses</span><span style="color:var(--rd)">- ${fmt(exp)}</span></div><div class="rf" style="color:${np>=0?'var(--gn)':'var(--rd)'}"><span>Net Profit</span><span>${fmt(np)}</span></div></div>
-  <div class="sg"><div class="sc2 gn"><div class="sl">Gross %</div><div class="sv">${rev>0?((gp/rev)*100).toFixed(1):0}%</div></div><div class="sc2 ${np>=0?'gn':'rd'}"><div class="sl">Net %</div><div class="sv">${rev>0?((np/rev)*100).toFixed(1):0}%</div></div></div>`;
+
+function genPurRep(txns,from,to){
+  const purs=txns.filter(t=>t.type==='Purchase');
+  const total=purs.reduce((s,t)=>s+Number(t.total||0),0);
+  const paid=purs.reduce((s,t)=>s+Number(t.paid||t.total||0),0);
+  const payable=purs.reduce((s,t)=>s+Number(t.payable||0),0);
+  lastReportTitle=`Purchase_Report_${from}_to_${to}`;
+  lastReportData=purs.map(t=>({Date:t.date,ID:t.id,Supplier:t.party,Total:t.total,Paid:t.paid||t.total,Payable:t.payable||0,PayMode:t.payMode,User:t.user}));
+  return`
+    <div class="sg">
+      <div class="sc2"><div class="sl">Total Purchases</div><div class="sv">${fmt(total)}</div><div class="ss">${purs.length} entries</div></div>
+      <div class="sc2 gn"><div class="sl">Total Paid</div><div class="sv">${fmt(paid)}</div></div>
+      <div class="sc2 rd"><div class="sl">Payable</div><div class="sv">${fmt(payable)}</div></div>
+    </div>
+    <div style="margin-bottom:14px">
+      <div class="rh"><div>Purchase Transactions</div><div>${from} to ${to}</div></div>
+      ${!purs.length?'<div style="padding:12px;text-align:center;color:var(--tx3);background:white">No purchases in period</div>':
+      purs.slice().reverse().map(t=>`
+        <div class="rw">
+          <span><div style="font-size:.72rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.date} · ${t.party||''} · ${t.payMode}</div></span>
+          <span style="text-align:right"><div style="font-size:.72rem;font-weight:700">${fmt(t.total)}</div>${t.payable>0?`<div style="font-size:.6rem;color:var(--rd)">Payable: ${fmt(t.payable)}</div>`:''}</span>
+        </div>`).join('')}
+      <div class="rf"><span>Total</span><span>${fmt(total)}</span></div>
+    </div>`;
 }
 
-// ── CASH ──
-function rCash(){return`<div class="sb"><div class="sd"></div><span class="st2">Synced</span></div><div class="stl">💵 Cash Entry</div><div class="card"><div class="fg"><label class="lb">Date</label><input class="ip" id="cdt" type="date" value="${new Date().toISOString().split('T')[0]}"></div><div class="fg"><label class="lb">Category</label><select class="sl2" id="ccat"><option>Team Daily</option><option>Rent</option><option>Electricity</option><option>Committee</option><option>Salary</option><option>Transport</option><option>Loan Given</option><option>Loan Received</option><option>Owner Withdrawal</option><option>Owner Deposit</option><option>Other</option></select></div><div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details..."></div><div class="g2"><div class="fg"><label class="lb">Amount In ₨</label><input class="ip" id="cin" type="number" placeholder="0"></div><div class="fg"><label class="lb">Amount Out ₨</label><input class="ip" id="cout" type="number" placeholder="0"></div></div><button class="btn bp bw" onclick="saveCash()">💾 Save Entry</button></div><div class="stl">Recent</div><div id="clist"></div>`;}
-function iCash(){rCashList();}
-function saveCash(){const dt=$('cdt')?.value||td();const cat=$('ccat')?.value;const dsc=$('cdsc')?.value?.trim();const ai=Number($('cin')?.value||0);const ao=Number($('cout')?.value||0);if(!dsc||(!ai&&!ao)){toast('Fill description and amount','error');return;}const id=`CE-${Date.now()}`;const ok=atomic([()=>{postEntry(id,dt,'Cash','Cash Drawer',ao,ai,`${cat}: ${dsc}`);}]);if(ok){syncBatch([{sheet:'Cash Register',data:{date:dt,nature:dsc,category:cat,amountIn:ai,amountOut:ao,user:CU.name}}]);toast(`✅ Saved!`,'success');if($('cdsc'))$('cdsc').value='';if($('cin'))$('cin').value='';if($('cout'))$('cout').value='';rCashList();}}
-function rCashList(){const c=$('clist');if(!c)return;const es=db.ledger.filter(e=>e.accType==='Cash').slice(-20).reverse();if(!es.length){c.innerHTML='<div class="em"><div class="ei">💵</div><p>No entries</p></div>';return;}c.innerHTML=es.map(e=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${e.notes||''}</div><div style="font-size:.6rem;color:var(--tx3)">${e.date} · ${e.user||''}</div></div><div style="text-align:right">${e.cr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--gn)">+${fmt(e.cr)}</div>`:''}${e.dr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--rd)">-${fmt(e.dr)}</div>`:''}</div></div></div>`).join('');}
+function genAgeRep(){
+  const prods=db.products.filter(p=>Number(p.stock)>0);
+  const aged90=prods.filter(p=>getAgeDays(p.dateAdded)>=90);
+  const aged60=prods.filter(p=>getAgeDays(p.dateAdded)>=60&&getAgeDays(p.dateAdded)<90);
+  const aged30=prods.filter(p=>getAgeDays(p.dateAdded)>=30&&getAgeDays(p.dateAdded)<60);
+  const fresh=prods.filter(p=>getAgeDays(p.dateAdded)<30);
+  lastReportTitle='Inventory_Ageing_Report';
+  lastReportData=prods.map(p=>({SKU:p.code,Name:p.name,Category:p.category,Colour:p.colour,Size:p.size,Supplier:p.supplier,Stock:p.stock,CostPrice:p.costPrice,TotalValue:Number(p.stock)*Number(p.costPrice),PurchaseDate:p.dateAdded,AgeDays:getAgeDays(p.dateAdded),Status:getAgeLabel(getAgeDays(p.dateAdded)).label}));
+  const renderGroup=(title,items,color)=>items.length?`
+    <div style="margin-bottom:14px">
+      <div class="rh" style="background:${color}"><div>${title} (${items.length} items)</div><div>${fmt(items.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0))}</div></div>
+      ${items.map(p=>`<div class="rw"><span><div style="font-size:.72rem;font-weight:600">${p.name}</div><div style="font-size:.6rem;color:var(--tx3)">${p.code} · ${p.supplier||''} · Added: ${p.dateAdded||'N/A'}</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:${color}">${getAgeDays(p.dateAdded)}d</div><div style="font-size:.6rem">Stock: ${p.stock} · ${fmt(Number(p.stock)*Number(p.costPrice))}</div></span></div>`).join('')}
+      <div class="rf"><span>Subtotal</span><span>${fmt(items.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0))}</span></div>
+    </div>`:'';
+  return`
+    <div class="sg">
+      <div class="sc2 rd"><div class="sl">Dead Stock</div><div class="sv">${aged90.length}</div><div class="ss">90+ days</div></div>
+      <div class="sc2 go"><div class="sl">Slow Moving</div><div class="sv">${aged60.length}</div><div class="ss">60-90 days</div></div>
+      <div class="sc2"><div class="sl">Ageing</div><div class="sv">${aged30.length}</div><div class="ss">30-60 days</div></div>
+      <div class="sc2 gn"><div class="sl">Fresh</div><div class="sv">${fresh.length}</div><div class="ss">&lt;30 days</div></div>
+    </div>
+    ${renderGroup('🔴 Dead Stock (90+ days)',aged90,'var(--rd)')}
+    ${renderGroup('🟠 Slow Moving (60-90 days)',aged60,'var(--go)')}
+    ${renderGroup('🟡 Ageing (30-60 days)',aged30,'#B8A000')}
+    ${renderGroup('🟢 Fresh Stock (<30 days)',fresh,'var(--gn)')}
+  `;
+}
+
+function genLedgerRep(from,to){
+  // Customer outstanding
+  const custParties={};
+  db.ledger.filter(e=>e.accType==='Customer').forEach(e=>{
+    if(!custParties[e.accName])custParties[e.accName]=0;
+    custParties[e.accName]+=e.dr-e.cr;
+  });
+  // Supplier outstanding
+  const supParties={};
+  db.ledger.filter(e=>e.accType==='Supplier').forEach(e=>{
+    if(!supParties[e.accName])supParties[e.accName]=0;
+    supParties[e.accName]+=e.cr-e.dr;
+  });
+  const totalRec=Object.values(custParties).reduce((s,v)=>s+Math.max(0,v),0);
+  const totalPay=Object.values(supParties).reduce((s,v)=>s+Math.max(0,v),0);
+  lastReportTitle='Ledger_Summary_Report';
+  lastReportData=[...Object.entries(custParties).map(([n,v])=>({Type:'Customer',Party:n,Balance:v,Status:v>0?'Receivable':'Paid'})),...Object.entries(supParties).map(([n,v])=>({Type:'Supplier',Party:n,Balance:v,Status:v>0?'Payable':'Paid'}))];
+  return`
+    <div class="sg">
+      <div class="sc2 gn"><div class="sl">Total Receivables</div><div class="sv">${fmt(totalRec)}</div></div>
+      <div class="sc2 rd"><div class="sl">Total Payables</div><div class="sv">${fmt(totalPay)}</div></div>
+    </div>
+    <div style="margin-bottom:14px">
+      <div class="rh"><div>👤 Customer Outstanding</div><div>${fmt(totalRec)}</div></div>
+      ${Object.entries(custParties).filter(([,v])=>v>0).map(([n,v])=>`<div class="rw"><span>${n}</span><span style="font-weight:700;color:var(--rd)">${fmt(v)}</span></div>`).join('')||'<div style="padding:10px;text-align:center;color:var(--tx3);background:white;font-size:.75rem">No outstanding</div>'}
+      <div class="rf"><span>Total</span><span>${fmt(totalRec)}</span></div>
+    </div>
+    <div style="margin-bottom:14px">
+      <div class="rh"><div>🏭 Supplier Payables</div><div>${fmt(totalPay)}</div></div>
+      ${Object.entries(supParties).filter(([,v])=>v>0).map(([n,v])=>`<div class="rw"><span>${n}</span><span style="font-weight:700;color:var(--rd)">${fmt(v)}</span></div>`).join('')||'<div style="padding:10px;text-align:center;color:var(--tx3);background:white;font-size:.75rem">No outstanding</div>'}
+      <div class="rf"><span>Total</span><span>${fmt(totalPay)}</span></div>
+    </div>
+  `;
+}
+
+// ── ENHANCED CASH ──
+function rCash(){
+  const cashBal=getAccBal('Cash','Cash Drawer');
+  const todayIn=db.ledger.filter(e=>e.accType==='Cash'&&e.date===td()).reduce((s,e)=>s+e.cr,0);
+  const todayOut=db.ledger.filter(e=>e.accType==='Cash'&&e.date===td()).reduce((s,e)=>s+e.dr,0);
+  return`
+    <div class="sb"><div class="sd"></div><span class="st2">Synced</span></div>
+    <!-- Running Balance Card -->
+    <div style="background:var(--br);color:white;border-radius:14px;padding:16px;margin-bottom:14px">
+      <div style="font-size:.6rem;opacity:.7;text-transform:uppercase;letter-spacing:.1em">Cash Drawer Balance</div>
+      <div style="font-size:2rem;font-weight:700;margin:6px 0">${fmt(cashBal)}</div>
+      <div style="display:flex;gap:16px;margin-top:4px">
+        <div><div style="font-size:.58rem;opacity:.7">Today In</div><div style="font-size:.85rem;font-weight:600;color:#90EE90">+${fmt(todayIn)}</div></div>
+        <div><div style="font-size:.58rem;opacity:.7">Today Out</div><div style="font-size:.85rem;font-weight:600;color:#FFB3B3">-${fmt(todayOut)}</div></div>
+        <div><div style="font-size:.58rem;opacity:.7">Net</div><div style="font-size:.85rem;font-weight:600">${fmt(todayIn-todayOut)}</div></div>
+      </div>
+    </div>
+    <div class="stl">➕ New Entry</div>
+    <div class="card">
+      <div class="fg"><label class="lb">Date</label><input class="ip" id="cdt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
+      <div class="fg"><label class="lb">Category</label>
+        <select class="sl2" id="ccat">${EXP_CATS.map(c=>`<option>${c}</option>`).join('')}</select>
+      </div>
+      <div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details..."></div>
+      <div class="fg"><label class="lb">Direction</label>
+        <select class="sl2" id="cdir"><option value="in">💰 Money In</option><option value="out">💸 Money Out</option></select>
+      </div>
+      <div class="fg"><label class="lb">Amount ₨</label><input class="ip" id="camt" type="number" placeholder="0"></div>
+      <button class="btn bp bw" onclick="saveCash()">💾 Save Entry</button>
+    </div>
+    <div class="stl">📜 Recent Entries <button class="btn bgh bsm" onclick="exportCashBook()">📥 Export</button></div>
+    <div id="clist"></div>
+  `;
+}
+
+function exportCashBook(){
+  const entries=db.ledger.filter(e=>e.accType==='Cash');
+  exportCSV(entries.map(e=>({Date:e.date,Description:e.notes,In:e.cr||0,Out:e.dr||0,User:e.user})),'Cash_Book');
+}
+
+function saveCash(){
+  const dt=$('cdt')?.value||td();const cat=$('ccat')?.value;
+  const dsc=$('cdsc')?.value?.trim();const amt=Number($('camt')?.value||0);
+  const dir=$('cdir')?.value||'out';
+  if(!amt||!dsc){toast('Fill all','error');return;}
+  const id=`CE-${Date.now()}`;const isIn=dir==='in';
+  const ok=atomic([()=>{
+    postEntry(id,dt,'Cash','Cash Drawer',isIn?0:amt,isIn?amt:0,`${cat}: ${dsc}`);
+    db.transactions.push({id,date:dt,time:tn(),type:isIn?'Cash Receipt':'Cash Payment',party:cat,payMode:'Cash',total:amt,user:CU.name,status:'done'});
+  }]);
+  if(ok){
+    syncBatch([{sheet:'Cash Register',data:{date:dt,nature:dsc,category:cat,amountIn:isIn?amt:0,amountOut:isIn?0:amt,user:CU.name}}]);
+    toast(`✅ ${isIn?'Receipt':'Payment'}: ${fmt(amt)}`,'success');
+    if($('cdsc'))$('cdsc').value='';if($('camt'))$('camt').value='';
+    iCash();
+  }
+}
 
 window.addEventListener('load',()=>{loadDB();$('ls').style.display='flex';$('app').style.display='none';});
 </script>
