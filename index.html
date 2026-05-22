@@ -3,1671 +3,525 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>SL Collection POS</title>
+<title>SL Collection — POS</title>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-:root{--br:#5C2E0E;--br2:#7A3D18;--cr:#FAF6F0;--cr2:#F2EAE0;--cr3:#E8D8C8;--go:#C8922A;--gn:#1E6B3C;--rd:#B02020;--bl:#1A4A7A;--tx:#1E0E04;--tx2:#5C3820;--tx3:#9B7055;--bd:#D8C4B0;--bd2:#EAD8C4;--sh:0 2px 12px rgba(92,46,14,.10)}
+:root{--ink:#1A0A00;--ink2:#3D1F08;--ink3:#6B3E1A;--cream:#FAF6F0;--cream2:#F2E9DC;--cream3:#E8D4BC;--gold:#B8860B;--gold2:#D4A017;--gold3:#F0C040;--rust:#8B3A1A;--sage:#2D4A2D;--sage2:#3D6B3D;--red:#8B1A1A;--red2:#C02020;--border:#D4C4A8;--border2:#E8D8C0;--shadow:0 2px 16px rgba(26,10,0,.08);--shadow2:0 8px 40px rgba(26,10,0,.14);--r:12px;--r2:18px;}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-body{font-family:'Segoe UI',sans-serif;background:var(--cr);color:var(--tx);max-width:480px;margin:0 auto;min-height:100vh}
-#ls{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:linear-gradient(160deg,var(--br) 0%,var(--br2) 100%)}
-#app{display:none;min-height:100vh;padding-bottom:72px}
-.logo{color:white;font-size:2rem;font-weight:700;text-align:center;margin-bottom:4px}
-.sub{color:rgba(255,255,255,.5);font-size:.7rem;letter-spacing:.2em;text-transform:uppercase;margin-bottom:36px}
-.lc{background:white;border-radius:18px;padding:26px 20px;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
-.lc h2{font-size:.8rem;font-weight:700;color:var(--tx2);margin-bottom:18px;text-align:center;text-transform:uppercase;letter-spacing:.1em}
-.le{color:var(--rd);font-size:.7rem;text-align:center;margin-top:8px;display:none}
-.tb{background:var(--br);padding:12px 14px 0;position:sticky;top:0;z-index:100}
-.tr{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.brand{color:white;font-size:1rem;font-weight:700}
-.brand span{display:block;font-size:.58rem;opacity:.5;font-weight:300;letter-spacing:.05em;margin-top:1px}
-.up{background:rgba(255,255,255,.15);color:white;font-size:.62rem;font-weight:600;padding:4px 10px;border-radius:20px}
-.eb{background:rgba(255,255,255,.1);color:white;border:none;border-radius:6px;padding:4px 9px;font-size:.6rem;cursor:pointer;margin-left:6px}
-.nav{display:flex;gap:2px;overflow-x:auto;scrollbar-width:none}
-.nav::-webkit-scrollbar{display:none}
-.nt{color:rgba(255,255,255,.45);font-size:.6rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:7px 11px;border-radius:8px 8px 0 0;cursor:pointer;white-space:nowrap;flex-shrink:0}
-.nt.active{background:var(--cr);color:var(--br)}
-.ct{padding:14px}
-.sc{display:none}.sc.active{display:block}
-.card{background:white;border-radius:12px;padding:14px;margin-bottom:12px;border:1px solid var(--bd2);box-shadow:var(--sh)}
-.ctitle{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--br);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--bd2)}
-.sg{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
-.sc2{background:white;border-radius:12px;padding:12px;border-left:3px solid var(--br);box-shadow:var(--sh)}
-.sc2.gn{border-left-color:var(--gn)}.sc2.go{border-left-color:var(--go)}.sc2.rd{border-left-color:var(--rd)}
-.sl{font-size:.58rem;text-transform:uppercase;letter-spacing:.08em;color:var(--tx3);font-weight:600}
-.sv{font-size:1.1rem;font-weight:700;color:var(--tx);margin-top:4px}
-.ss{font-size:.58rem;color:var(--tx3);margin-top:2px}
+html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--cream);color:var(--ink);max-width:480px;margin:0 auto}
+body{min-height:100vh}
+.serif{font-family:'Cormorant Garamond',serif}
+.t-xs{font-size:.6rem}.t-sm{font-size:.72rem}.t-base{font-size:.85rem}.t-lg{font-size:1rem}.t-xl{font-size:1.2rem}.t-2xl{font-size:1.5rem}.t-3xl{font-size:2rem}
+.fw-5{font-weight:500}.fw-6{font-weight:600}.fw-7{font-weight:700}
+.upper{text-transform:uppercase;letter-spacing:.1em}
+.c-ink2{color:var(--ink2)}.c-ink3{color:var(--ink3)}.c-gold{color:var(--gold)}.c-sage{color:var(--sage)}.c-red{color:var(--red)}
+.flex{display:flex}.col{flex-direction:column}.items-c{align-items:center}.just-b{justify-content:space-between}.just-c{justify-content:center}.gap-1{gap:4px}.gap-2{gap:8px}.gap-3{gap:12px}.flex-1{flex:1}.w-full{width:100%}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+/* LOGIN */
+#login-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:24px;background:linear-gradient(150deg,var(--ink) 0%,var(--ink2) 60%,var(--rust) 100%);position:relative;overflow:hidden}
+.login-brand{text-align:center;margin-bottom:40px}
+.login-brand .name{font-family:'Cormorant Garamond',serif;font-size:2.8rem;font-weight:600;color:white;letter-spacing:.04em;line-height:1}
+.login-brand .sub{font-size:.62rem;color:rgba(255,255,255,.4);letter-spacing:.35em;text-transform:uppercase;margin-top:8px}
+.login-card{background:white;border-radius:24px;padding:32px 24px;width:100%;max-width:340px;box-shadow:0 32px 80px rgba(0,0,0,.4)}
+.login-card h2{font-size:.72rem;font-weight:600;color:var(--ink3);margin-bottom:24px;text-align:center;text-transform:uppercase;letter-spacing:.15em}
+.login-err{color:var(--red2);font-size:.68rem;text-align:center;margin-top:10px;display:none}
+/* TOPBAR */
+#topbar{background:var(--ink);padding:10px 14px 0;position:sticky;top:0;z-index:100;box-shadow:0 2px 20px rgba(0,0,0,.3)}
+.topbar-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.brand-top{font-family:'Cormorant Garamond',serif;color:white;font-size:1.05rem;font-weight:600;letter-spacing:.03em}
+.brand-top span{display:block;font-family:'DM Sans',sans-serif;font-size:.55rem;color:rgba(255,255,255,.4);letter-spacing:.08em;font-weight:300;margin-top:1px}
+.user-chip{background:rgba(255,255,255,.1);color:white;font-size:.6rem;font-weight:500;padding:4px 11px;border-radius:20px;border:1px solid rgba(255,255,255,.1)}
+.exit-btn{background:none;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.6);border-radius:7px;padding:4px 10px;font-size:.6rem;cursor:pointer;margin-left:6px;font-family:'DM Sans',sans-serif}
+/* NAV */
+.nav-tabs{display:flex;gap:1px;overflow-x:auto;scrollbar-width:none;padding-bottom:0}
+.nav-tabs::-webkit-scrollbar{display:none}
+.nav-tab{color:rgba(255,255,255,.4);font-size:.58rem;font-weight:500;letter-spacing:.07em;text-transform:uppercase;padding:8px 12px;border-radius:9px 9px 0 0;cursor:pointer;white-space:nowrap;flex-shrink:0;transition:all .2s}
+.nav-tab.active{background:var(--cream);color:var(--ink);font-weight:700}
+/* CONTENT */
+#content{padding:14px;padding-bottom:80px}
+/* SYNC */
+.sync-bar{display:flex;align-items:center;gap:6px;font-size:.58rem;color:var(--ink3);margin-bottom:12px}
+.sync-dot{width:6px;height:6px;border-radius:50%;background:var(--sage)}.sync-dot.syncing{background:var(--gold);animation:pulse 1s infinite}.sync-dot.error{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* CARDS */
+.card{background:white;border-radius:var(--r);padding:14px;margin-bottom:12px;border:1px solid var(--border2);box-shadow:var(--shadow)}
+.card-title{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:var(--ink3);margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid var(--border2)}
+/* STATS */
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.stat-card{background:white;border-radius:var(--r);padding:12px 14px;border-left:3px solid var(--ink3);box-shadow:var(--shadow)}
+.stat-card.gold{border-left-color:var(--gold)}.stat-card.sage{border-left-color:var(--sage)}.stat-card.red{border-left-color:var(--red)}.stat-card.rust{border-left-color:var(--rust)}
+.stat-lbl{font-size:.56rem;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3);font-weight:600}
+.stat-val{font-size:1.1rem;font-weight:700;color:var(--ink);margin-top:4px;font-family:'Cormorant Garamond',serif}
+.stat-sub{font-size:.56rem;color:var(--ink3);margin-top:2px}
+/* FORMS */
 .fg{margin-bottom:12px}
-.lb{font-size:.62rem;font-weight:600;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;display:block}
-.ip,.sl2{width:100%;border:1.5px solid var(--bd);border-radius:10px;padding:10px 12px;font-size:.85rem;font-family:inherit;color:var(--tx);background:white;outline:none;transition:border-color .2s}
-.ip:focus,.sl2:focus{border-color:var(--br)}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-.btn{border:none;border-radius:10px;padding:11px 16px;font-size:.8rem;font-weight:600;font-family:inherit;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.lbl{font-size:.6rem;font-weight:600;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:5px;display:block}
+.inp,.sel{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 13px;font-size:.85rem;font-family:'DM Sans',sans-serif;color:var(--ink);background:white;outline:none;transition:border-color .2s}
+.inp:focus,.sel:focus{border-color:var(--gold)}
+/* BUTTONS */
+.btn{border:none;border-radius:10px;padding:12px 18px;font-size:.78rem;font-weight:600;font-family:'DM Sans',sans-serif;cursor:pointer;transition:all .15s;display:inline-flex;align-items:center;justify-content:center;gap:7px}
 .btn:active{transform:scale(.97)}
-.bp{background:var(--br);color:white}
-.bg{background:var(--gn);color:white}
-.br{background:var(--rd);color:white}
-.bo{background:var(--go);color:white}
-.bgh{background:var(--cr2);color:var(--tx2);border:1px solid var(--bd)}
-.bw{width:100%}
-.bsm{padding:7px 12px;font-size:.7rem;border-radius:8px}
-.pg{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px}
-.pl{border:1.5px solid var(--bd);border-radius:20px;padding:5px 12px;font-size:.68rem;font-weight:600;cursor:pointer;color:var(--tx3);background:white;transition:all .15s;white-space:nowrap}
-.pl.active{background:var(--br);color:white;border-color:var(--br)}
-.stl{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--br);margin-bottom:10px;display:flex;justify-content:space-between;align-items:center}
-.bdg{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.58rem;font-weight:700}
-.bdg-br{background:var(--cr2);color:var(--br)}
-.pr{background:white;border:1.5px solid var(--bd2);border-radius:12px;padding:11px 12px;margin-bottom:7px;cursor:pointer;display:flex;align-items:center;gap:10px}
-.pr:active{border-color:var(--br);background:var(--cr)}
-.pth{width:48px;height:48px;border-radius:8px;background:var(--cr2);display:flex;align-items:center;justify-content:center;font-size:1.4rem;flex-shrink:0;overflow:hidden}
-.pth img{width:100%;height:100%;object-fit:cover}
-.psk{font-size:.58rem;font-weight:700;font-family:monospace;background:var(--br);color:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:3px}
-.pnm{font-size:.78rem;font-weight:600;color:var(--tx)}
-.pat{font-size:.6rem;color:var(--tx3);margin-top:2px}
-.pct{font-size:.6rem;background:var(--cr2);color:var(--tx3);padding:2px 7px;border-radius:4px;margin-top:3px;display:inline-block}
-.pad{width:34px;height:34px;border-radius:8px;background:var(--gn);color:white;display:flex;align-items:center;justify-content:center;font-size:1.2rem;flex-shrink:0;font-weight:700}
-.ci{background:white;border:1px solid var(--bd2);border-radius:12px;padding:10px 12px;margin-bottom:8px}
-.cit{display:flex;align-items:center;gap:10px}
-.cth{width:38px;height:38px;border-radius:7px;background:var(--cr2);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;overflow:hidden}
-.cth img{width:100%;height:100%;object-fit:cover}
-.cnm{font-size:.73rem;font-weight:600;color:var(--tx)}
-.cvr{font-size:.6rem;color:var(--tx3)}
-.crm{background:none;border:none;color:var(--rd);font-size:1rem;cursor:pointer;padding:2px 5px;margin-left:auto}
-.cb{display:flex;gap:8px;align-items:center;margin-top:8px}
-.qc{display:flex;align-items:center;gap:6px;background:var(--cr2);border-radius:8px;padding:3px 8px}
-.qb{background:none;border:none;font-size:1rem;cursor:pointer;color:var(--br);font-weight:700;width:22px;height:22px;display:flex;align-items:center;justify-content:center}
-.qn{font-size:.8rem;font-weight:700;color:var(--tx);min-width:20px;text-align:center}
-.pi{flex:1;border:1.5px solid var(--bd);border-radius:8px;padding:6px 10px;font-size:.82rem;font-weight:700;color:var(--br);font-family:inherit;outline:none;background:white}
-.pi:focus{border-color:var(--br)}
-.mp{font-size:.6rem;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap}
-.bs{background:white;border:1px solid var(--bd2);border-radius:12px;padding:12px;margin-bottom:12px}
-.br2{display:flex;justify-content:space-between;font-size:.72rem;color:var(--tx3);margin-bottom:5px}
-.br2.tot{font-size:.9rem;font-weight:700;color:var(--tx);border-top:1px solid var(--bd2);padding-top:7px;margin-top:5px}
-.br2.mgn{color:var(--gn);font-weight:600}
-.rc{background:white;border-radius:12px;padding:14px;border:2px solid var(--go);margin-bottom:14px}
-.rr{display:flex;justify-content:space-between;font-size:.75rem;color:var(--tx);margin-bottom:6px}
-.rr.mt{font-weight:700;color:var(--gn);border-top:1px dashed var(--bd2);padding-top:7px;margin-top:5px}
-.rr.df{font-weight:700;color:var(--rd);border-top:1px dashed var(--bd2);padding-top:7px;margin-top:5px}
-.lp{background:white;border:1px solid var(--bd2);border-radius:12px;padding:12px;margin-bottom:8px;cursor:pointer}
-.lp:active{background:var(--cr)}
-.pb{font-size:.9rem;font-weight:700}
-.tr2{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:7px 10px;border-top:1px solid var(--cr2)}
-.tr2.hd{background:var(--br);color:white;border-top:none;border-radius:8px 8px 0 0}
-.tr2.hd div{font-size:.58rem;font-weight:700}
-.it{border:1px solid var(--bd2);border-radius:12px;overflow:hidden;margin-bottom:14px}
-.mi{padding:9px 0;border-bottom:1px solid var(--cr2);display:flex;align-items:center;gap:8px}
-.md{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.mf{flex:1}
-.mt2{font-size:.7rem;font-weight:600;color:var(--tx)}
-.mm{font-size:.58rem;color:var(--tx3);margin-top:1px}
-.mq{font-size:.75rem;font-weight:700}
-.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--br);color:white;padding:10px 20px;border-radius:20px;font-size:.78rem;font-weight:500;opacity:0;transition:all .3s;z-index:1000;white-space:nowrap;max-width:90vw;pointer-events:none}
+.btn-ink{background:var(--ink);color:white}.btn-gold{background:var(--gold);color:white}.btn-sage{background:var(--sage);color:white}.btn-red{background:var(--red);color:white}.btn-ghost{background:var(--cream2);color:var(--ink2);border:1px solid var(--border)}
+.btn-full{width:100%}.btn-sm{padding:7px 13px;font-size:.68rem;border-radius:8px}.btn-xs{padding:4px 9px;font-size:.6rem;border-radius:6px}
+/* PILLS */
+.pill-row{display:flex;gap:5px;flex-wrap:wrap}
+.pill{border:1.5px solid var(--border);border-radius:20px;padding:5px 13px;font-size:.65rem;font-weight:600;cursor:pointer;color:var(--ink3);background:white;transition:all .15s;white-space:nowrap}
+.pill.on{background:var(--ink);color:white;border-color:var(--ink)}
+/* BADGES */
+.bdg{display:inline-block;padding:2px 8px;border-radius:12px;font-size:.56rem;font-weight:700}
+.bdg-ink{background:var(--cream2);color:var(--ink2)}.bdg-gold{background:#FDF5E4;color:var(--gold)}.bdg-sage{background:#E8F0E8;color:var(--sage)}.bdg-red{background:#FDEAEA;color:var(--red)}
+/* PRODUCTS */
+.prod-card{background:white;border:1.5px solid var(--border2);border-radius:var(--r);padding:11px 12px;margin-bottom:8px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:all .15s}
+.prod-card:active{border-color:var(--gold);background:var(--cream)}
+.prod-thumb{width:50px;height:50px;border-radius:9px;background:var(--cream2);display:flex;align-items:center;justify-content:center;font-size:1.5rem;flex-shrink:0;overflow:hidden;border:1px solid var(--border2)}
+.prod-thumb img{width:100%;height:100%;object-fit:cover}
+.prod-sku{font-size:.55rem;font-weight:700;font-family:monospace;background:var(--ink);color:white;padding:2px 6px;border-radius:4px;display:inline-block;margin-bottom:3px}
+.prod-name{font-size:.78rem;font-weight:600;color:var(--ink)}
+.prod-attrs{font-size:.58rem;color:var(--ink3);margin-top:2px}
+.prod-cost{font-size:.58rem;background:var(--cream2);color:var(--ink3);padding:2px 7px;border-radius:4px;margin-top:3px;display:inline-block}
+.prod-add{width:36px;height:36px;border-radius:9px;background:var(--sage);color:white;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;font-weight:700}
+/* CART */
+.cart-item{background:white;border:1px solid var(--border2);border-radius:var(--r);padding:11px 13px;margin-bottom:9px}
+.cart-top{display:flex;align-items:center;gap:9px}
+.cart-thumb{width:40px;height:40px;border-radius:8px;background:var(--cream2);display:flex;align-items:center;justify-content:center;font-size:1rem;flex-shrink:0;overflow:hidden}
+.cart-thumb img{width:100%;height:100%;object-fit:cover}
+.cart-name{font-size:.73rem;font-weight:600;color:var(--ink)}.cart-var{font-size:.58rem;color:var(--ink3)}
+.cart-rm{background:none;border:none;color:var(--red2);font-size:.9rem;cursor:pointer;padding:3px 6px;margin-left:auto;border-radius:6px}
+.cart-bot{display:flex;gap:8px;align-items:center;margin-top:9px}
+.qty-ctrl{display:flex;align-items:center;gap:5px;background:var(--cream2);border-radius:8px;padding:3px 8px;border:1px solid var(--border2)}
+.qty-btn{background:none;border:none;font-size:.9rem;cursor:pointer;color:var(--ink);font-weight:700;width:22px;height:22px;display:flex;align-items:center;justify-content:center}
+.qty-num{font-size:.8rem;font-weight:700;min-width:20px;text-align:center}
+.price-inp{flex:1;border:1.5px solid var(--border);border-radius:8px;padding:7px 10px;font-size:.85rem;font-weight:700;color:var(--gold);font-family:'DM Sans',sans-serif;outline:none}
+.price-inp:focus{border-color:var(--gold)}
+.margin-pill{font-size:.58rem;font-weight:700;padding:3px 8px;border-radius:6px;white-space:nowrap}
+.cost-row{display:flex;justify-content:space-between;align-items:center;background:var(--cream2);border-radius:7px;padding:5px 10px;margin-top:7px}
+/* BILL SUM */
+.bill-sum-box{background:white;border:1px solid var(--border2);border-radius:var(--r);padding:13px;margin-bottom:13px}
+.bill-row{display:flex;justify-content:space-between;font-size:.72rem;color:var(--ink3);margin-bottom:5px}
+.bill-row.total{font-size:.92rem;font-weight:700;color:var(--ink);border-top:1px solid var(--border2);padding-top:8px;margin-top:5px}
+.bill-row.profit{color:var(--sage);font-weight:600}
+/* RECONCILE */
+.rec-card{background:white;border-radius:var(--r);padding:14px;border:1.5px solid var(--gold);margin-bottom:14px}
+.rec-row{display:flex;justify-content:space-between;font-size:.75rem;color:var(--ink);margin-bottom:6px}
+.rec-row.match{font-weight:700;color:var(--sage);border-top:1px dashed var(--border2);padding-top:7px;margin-top:5px}
+/* INV TABLE */
+.inv-hdr{display:grid;grid-template-columns:1.8fr .6fr .8fr .8fr;background:var(--ink);color:white;padding:7px 12px;border-radius:9px 9px 0 0}
+.inv-hdr div{font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.inv-row{display:grid;grid-template-columns:1.8fr .6fr .8fr .8fr;padding:9px 12px;border-top:1px solid var(--cream2);background:white;cursor:pointer}
+.inv-row:active{background:var(--cream)}
+.inv-foot{display:grid;grid-template-columns:1.8fr .6fr .8fr .8fr;padding:8px 12px;background:var(--cream2);border-top:1px solid var(--border)}
+/* LEDGER */
+.party-card{background:white;border:1px solid var(--border2);border-radius:var(--r);padding:13px;margin-bottom:9px;cursor:pointer}
+.party-card:active{background:var(--cream)}
+.party-bal{font-size:.92rem;font-weight:700;font-family:'Cormorant Garamond',serif}
+.stmt-row{display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:7px 11px;border-top:1px solid var(--cream2)}
+.stmt-hdr{background:var(--ink);color:white;border-radius:9px 9px 0 0;border-top:none}
+/* REPORT */
+.rpt-hdr{background:var(--ink);color:white;padding:9px 13px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center}
+.rpt-hdr div{font-size:.63rem;font-weight:700}
+.rpt-row{display:flex;justify-content:space-between;padding:8px 13px;border-bottom:1px solid var(--cream2);background:white;font-size:.72rem}
+.rpt-row:last-child{border-bottom:none}
+.rpt-foot{display:flex;justify-content:space-between;padding:9px 13px;background:var(--cream2);border-radius:0 0 10px 10px;font-size:.75rem;font-weight:700;color:var(--ink2)}
+/* TOAST */
+.toast{position:fixed;bottom:76px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:white;padding:10px 22px;border-radius:22px;font-size:.76rem;font-weight:500;opacity:0;transition:all .3s;z-index:1000;white-space:nowrap;max-width:92vw;pointer-events:none;box-shadow:var(--shadow2)}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-.toast.success{background:var(--gn)}.toast.error{background:var(--rd)}.toast.warning{background:var(--go)}
-.mo{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:flex-end}
-.mo.show{display:flex}
-.mb{background:white;border-radius:20px 20px 0 0;padding:20px;width:100%;max-height:85vh;overflow-y:auto}
-.mt3{font-size:1.1rem;font-weight:700;color:var(--br);margin-bottom:16px}
-.mc{background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--tx3);padding:2px 5px}
-.sp{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:white;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.sb{display:flex;align-items:center;gap:5px;font-size:.6rem;color:var(--tx3);margin-bottom:10px}
-.sd{width:7px;height:7px;border-radius:50%;background:var(--gn)}
-.sd.sy{background:var(--go);animation:pu 1s infinite}
-.sd.er{background:var(--rd)}
-@keyframes pu{0%,100%{opacity:1}50%{opacity:.3}}
-.em{text-align:center;padding:28px 20px;color:var(--tx3)}
-.ei{font-size:2.4rem;margin-bottom:10px}
-.wb{background:#FFF8E4;border:1.5px solid var(--go);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:.72rem;color:var(--br)}
-.ib{background:var(--cr2);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:.7rem;color:var(--tx2)}
-.sp2{background:var(--cr2);border:1.5px solid var(--br);border-radius:10px;padding:11px 14px;margin-bottom:12px}
-.sc3{font-family:monospace;font-size:.9rem;font-weight:700;color:var(--br);letter-spacing:.05em}
-.pu{border:2px dashed var(--br);border-radius:12px;padding:18px;text-align:center;background:var(--cr);cursor:pointer;position:relative}
-.pu input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
-.pi2{font-size:1.8rem;margin-bottom:5px}
-.pu p{font-size:.68rem;color:var(--tx3)}
-.st{font-size:.7rem;color:var(--gn);font-weight:600;margin-top:4px}
-.ob{background:white;border:2px solid var(--go);border-radius:14px;padding:14px;margin-bottom:14px}
-.rh{background:var(--br);color:white;padding:8px 12px;border-radius:10px 10px 0 0;display:flex;justify-content:space-between;align-items:center}
-.rh div{font-size:.65rem;font-weight:700}
-.rw{display:flex;justify-content:space-between;padding:7px 12px;border-bottom:1px solid var(--cr2);background:white;font-size:.72rem}
-.rw:last-child{border-bottom:none}
-.rf{display:flex;justify-content:space-between;padding:8px 12px;background:var(--cr2);border-radius:0 0 10px 10px;font-size:.75rem;font-weight:700;color:var(--br)}
-.df{display:flex;gap:8px;margin-bottom:12px}
+.toast.ok{background:var(--sage)}.toast.err{background:var(--red)}.toast.warn{background:var(--gold)}
+/* MODAL */
+.mo-overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:200;display:none;align-items:flex-end}
+.mo-overlay.show{display:flex}
+.mo-box{background:white;border-radius:22px 22px 0 0;padding:22px;width:100%;max-height:88vh;overflow-y:auto}
+.mo-title{font-family:'Cormorant Garamond',serif;font-size:1.15rem;color:var(--ink);margin-bottom:16px}
+.mo-close{background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--ink3);padding:3px 7px}
+/* SPINNER */
+.spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.3);border-radius:50%;border-top-color:white;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+/* MISC */
+.ob-card{background:white;border:2px solid var(--gold);border-radius:var(--r2);padding:16px;margin-bottom:16px}
+.photo-up{border:2px dashed var(--border);border-radius:var(--r);padding:20px;text-align:center;background:var(--cream);cursor:pointer;position:relative}
+.photo-up input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%}
+.sku-prev{background:var(--cream2);border:1.5px solid var(--gold);border-radius:var(--r);padding:12px 15px;margin-bottom:13px}
+.sku-code{font-family:monospace;font-size:.95rem;font-weight:700;color:var(--gold);letter-spacing:.06em}
+.payable-prev{background:#FDF5E4;border:1.5px solid var(--gold);border-radius:var(--r);padding:11px 13px;margin-bottom:13px}
+.warn-box{background:#FFF8E4;border:1.5px solid var(--gold);border-radius:10px;padding:10px 13px;margin-bottom:12px;font-size:.7rem;color:var(--ink2)}
+.info-box{background:var(--cream2);border:1px solid var(--border);border-radius:10px;padding:10px 13px;margin-bottom:12px;font-size:.68rem;color:var(--ink2)}
+.empty{text-align:center;padding:32px 20px;color:var(--ink3)}
+.empty-ico{font-size:2.6rem;margin-bottom:10px}
+.age-fresh{color:#2D6B2D;background:#E8F5E8;border-radius:6px;padding:2px 7px;font-size:.56rem;font-weight:700}
+.age-age{color:#7A6000;background:#FFF8D6;border-radius:6px;padding:2px 7px;font-size:.56rem;font-weight:700}
+.age-slow{color:#8B4500;background:#FFF0D6;border-radius:6px;padding:2px 7px;font-size:.56rem;font-weight:700}
+.age-dead{color:#8B1A1A;background:#FDEAEA;border-radius:6px;padding:2px 7px;font-size:.56rem;font-weight:700}
+.date-flt{display:flex;gap:8px;margin-bottom:13px}
+.date-flt .inp{font-size:.75rem;padding:8px 11px;flex:1}
 </style>
 </head>
 <body>
 
-<div id="ls">
-  <div class="logo">SL Collection</div>
-  <div class="sub">POS · Rawalpindi</div>
-  <div class="lc">
+<div id="login-screen">
+  <div class="login-brand">
+    <div class="name">SL Collection</div>
+    <div class="sub">Point of Sale · Rawalpindi</div>
+  </div>
+  <div class="login-card">
     <h2>Sign In</h2>
-    <div class="fg"><label class="lb">Username</label><input class="ip" id="un" type="text" placeholder="username" autocomplete="off"></div>
-    <div class="fg"><label class="lb">Password</label><input class="ip" id="pw" type="password" placeholder="password"></div>
-    <button class="btn bp bw" id="lbtn" onclick="doLogin()">Sign In</button>
-    <div class="le" id="lerr">❌ Invalid credentials</div>
+    <div class="fg"><label class="lbl">Email</label><input class="inp" id="l-email" type="email" placeholder="owner@slcollection.com" autocomplete="off"></div>
+    <div class="fg"><label class="lbl">Password</label><input class="inp" id="l-pw" type="password" placeholder="••••••••"></div>
+    <button class="btn btn-ink btn-full" id="l-btn" onclick="doLogin()">Sign In</button>
+    <div class="login-err" id="l-err">❌ Invalid credentials</div>
   </div>
 </div>
 
-<div id="app">
-  <div class="tb">
-    <div class="tr">
-      <div class="brand">SL Collection <span>POS · Rawalpindi</span></div>
-      <div style="display:flex;align-items:center">
-        <div class="up" id="upill">👤 Staff</div>
-        <button class="eb" onclick="doLogout()">Exit</button>
+<div id="app" style="display:none">
+  <div id="topbar">
+    <div class="topbar-row">
+      <div class="brand-top">SL Collection <span>POS · Rawalpindi</span></div>
+      <div class="flex items-c">
+        <div class="user-chip" id="user-chip">👤 Staff</div>
+        <button class="exit-btn" onclick="doLogout()">Exit</button>
       </div>
     </div>
-    <div class="nav" id="nav"></div>
+    <div class="nav-tabs" id="nav-tabs"></div>
   </div>
-  <div class="ct" id="ct"></div>
+  <div id="content"></div>
 </div>
 
 <div class="toast" id="toast"></div>
-<div class="mo" id="mo"><div class="mb" id="mb">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-    <div class="mt3" id="mtitle"></div>
-    <button class="mc" onclick="closeModal()">✕</button>
+<div class="mo-overlay" id="mo-overlay">
+  <div class="mo-box" id="mo-box">
+    <div class="flex just-b items-c" style="margin-bottom:14px">
+      <div class="mo-title" id="mo-title"></div>
+      <button class="mo-close" onclick="closeMo()">✕</button>
+    </div>
+    <div id="mo-content"></div>
   </div>
-  <div id="mc"></div>
-</div></div>
+</div>
 
 <script>
-const SCRIPT_URL='https://script.google.com/macros/s/AKfycbwMZpDqE8KLqfp2nV8XaGDkyYWItaMJrGNTOZqcq3BU9vO2R0FmTwOA0JoI81VAGvSvAg/exec';
-const USERS={owner:{pw:'sl786',role:'owner',name:'Owner'},staff:{pw:'staff123',role:'staff',name:'Staff'}};
+const{createClient}=supabase;
+const sb=createClient('https://fqubaesqzfmxvbtqconu.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxdWJhZXNxemZteHZidHFjb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODIwNTMsImV4cCI6MjA5NDc1ODA1M30.vqDRl0LGYOukQBRK7aegaXgCKxi-r65IwyNZKvGnUIk');
+
+// STATE
+let CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',purSrc='cash',pPhoto=null,bPhoto=null,bCat='',lTab='customer',rTab='sales',products=[],accounts=[],parties=[],itimer=null,lastRepData=[],lastRepTitle='Report',lostBy='owner';
+
+// UTILS
+const $=id=>document.getElementById(id);
+const fmt=n=>'₨'+Number(n||0).toLocaleString('en-PK');
+const today=()=>new Date().toISOString().split('T')[0];
 const CATS=['3PC','2PC','Shirt','Trouser','Dupatta','Abaya','Scarf'];
 const CEMI={'3PC':'👗','2PC':'👘','Shirt':'👚','Trouser':'👖','Dupatta':'🧣','Abaya':'🖤','Scarf':'🧤'};
 const CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF'};
 const CLCOD={black:'BLK',white:'WHT',blue:'BLU','navy blue':'NVY',navy:'NVY',red:'RED',green:'GRN',pink:'PNK',yellow:'YLW',orange:'ORG',purple:'PRP',grey:'GRY',gray:'GRY',brown:'BRN',maroon:'MRN',beige:'BGE',cream:'CRM',multi:'MLT',printed:'PRT',embroidered:'EMB'};
 
-let CU=null,db={products:[],transactions:[],lines:[],ledger:[],accounts:[],movements:[]},cart=[],payMode='Cash',purPayMode='Cash',purSrc='Cash',pPhoto=null,bPhoto=null,sq=[],lostBy='Owner',rTab='sales',lTab='customers',bCat='';
-
-// UTILS
-const $=id=>document.getElementById(id);
-const fmt=n=>'₨'+Number(n||0).toLocaleString('en-PK');
-const td=()=>new Date().toLocaleDateString('en-PK');
-const tn=()=>new Date().toLocaleTimeString('en-PK',{hour:'2-digit',minute:'2-digit'});
-const uid=()=>Date.now()+Math.random().toString(36).substr(2,5);
-const sv=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
-const ld=(k,d=[])=>{try{return JSON.parse(localStorage.getItem(k)||'null')||d;}catch(e){return d;}};
-const ce=c=>CEMI[c]||'📦';
-
 function toast(msg,type='',dur=3000){const t=$('toast');t.textContent=msg;t.className=`toast show ${type}`;setTimeout(()=>t.className='toast',dur);}
-function openModal(title,html){$('mtitle').textContent=title;$('mc').innerHTML=html;$('mo').classList.add('show');}
-function closeModal(){$('mo').classList.remove('show');}
+function openMo(title,html){$('mo-title').textContent=title;$('mo-content').innerHTML=html;$('mo-overlay').classList.add('show');}
+function closeMo(){$('mo-overlay').classList.remove('show');}
+function emo(c){return CEMI[c]||'📦';}
+function colCode(c){if(!c)return'CLR';const l=c.toLowerCase().trim();if(CLCOD[l])return CLCOD[l];for(const[k,v]of Object.entries(CLCOD)){if(l.includes(k))return v;}return c.replace(/[^a-zA-Z]/g,'').toUpperCase().substring(0,3)||'CLR';}
+function szCode(s){if(!s)return'STD';const m={SMALL:'S',MEDIUM:'M',LARGE:'L','EXTRA LARGE':'XL','FREE SIZE':'FRE'};return m[s.toUpperCase().trim()]||s.toUpperCase().substring(0,3);}
+function ageBadge(d){if(d>=90)return'<span class="age-dead">🔴 Dead</span>';if(d>=60)return'<span class="age-slow">🟠 Slow</span>';if(d>=30)return'<span class="age-age">🟡 Ageing</span>';return'<span class="age-fresh">🟢 Fresh</span>';}
+function setSyncStatus(s){document.querySelectorAll('.sync-dot').forEach(d=>{d.className='sync-dot'+(s==='syncing'?' syncing':s==='error'?' error':'');});document.querySelectorAll('.sync-txt').forEach(t=>{t.textContent=s==='syncing'?'Connecting..':s==='error'?'⚠️ Offline':'✅ Live';});}
 
-function getColCode(c){if(!c)return'CLR';const l=c.toLowerCase().trim();if(CLCOD[l])return CLCOD[l];for(const[k,v]of Object.entries(CLCOD)){if(l.includes(k))return v;}return c.replace(/[^a-zA-Z]/g,'').toUpperCase().substring(0,3)||'CLR';}
-function getSzCode(s){if(!s)return'STD';const m={SMALL:'S',MEDIUM:'M',LARGE:'L','EXTRA LARGE':'XL','FREE SIZE':'FRE'};return m[s.toUpperCase().trim()]||s.toUpperCase().substring(0,3);}
-
-// DB
-function loadDB(){db.products=ld('sl3_products',[]);db.transactions=ld('sl3_txns',[]);db.lines=ld('sl3_lines',[]);db.ledger=ld('sl3_ledger',[]);db.accounts=ld('sl3_accounts',defaultAccounts());db.movements=ld('sl3_movs',[]);}
-function saveDB(){sv('sl3_products',db.products);sv('sl3_txns',db.transactions);sv('sl3_lines',db.lines);sv('sl3_ledger',db.ledger);sv('sl3_accounts',db.accounts);sv('sl3_movs',db.movements);}
-function defaultAccounts(){return[{id:'ca1',type:'Cash',name:'Cash Drawer',bal:0},{id:'ba1',type:'Bank',name:'HBL',bal:0},{id:'em1',type:'EMoney',name:'EasyPaisa',bal:0},{id:'em2',type:'EMoney',name:'JazzCash',bal:0}];}
-
-// LEDGER ENGINE
-function postEntry(txnId,date,accType,accName,dr,cr,notes){
-  const e={id:uid(),txnId,date,accType,accName,dr:Number(dr)||0,cr:Number(cr)||0,notes,user:CU?.name||'System',ts:Date.now()};
-  db.ledger.push(e);
-  const acc=db.accounts.find(a=>a.name===accName&&a.type===accType);
-  if(acc){acc.bal+=cr-dr;}else{db.accounts.push({id:uid(),type:accType,name:accName,bal:cr-dr});}
-  return e;
-}
-
-// ATOMIC
-function atomic(ops){
-  const snap={products:JSON.stringify(db.products),transactions:JSON.stringify(db.transactions),lines:JSON.stringify(db.lines),ledger:JSON.stringify(db.ledger),accounts:JSON.stringify(db.accounts),movements:JSON.stringify(db.movements)};
-  try{ops.forEach(op=>op());saveDB();return true;}
-  catch(e){db.products=JSON.parse(snap.products);db.transactions=JSON.parse(snap.transactions);db.lines=JSON.parse(snap.lines);db.ledger=JSON.parse(snap.ledger);db.accounts=JSON.parse(snap.accounts);db.movements=JSON.parse(snap.movements);saveDB();toast('Transaction failed: '+e.message,'error');console.error(e);return false;}
-}
-
-// SYNC
-async function syncBatch(entries){
-  const rows=entries.map(e=>{
-    const d={...e.data};delete d.photo;delete d.billPhoto;
-    return{sheet:e.sheet,row:Object.values(d).map(v=>v==null?'':String(v).substring(0,500))};
-  });
-  try{
-    const body=JSON.stringify({action:'batchAppend',entries:rows});
-    await fetch(SCRIPT_URL,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body,
-      mode:'no-cors'
-    });
-    setSyncOk();
-  }catch(e){
-    console.warn('Sync failed:',e.message);
-    sq.push(...entries);setSyncErr();
-  }
-}
-
-async function syncSingle(sheetName,data){
-  const clean={...data};delete clean.photo;delete clean.billPhoto;
-  const row=Object.values(clean).map(v=>v==null?'':String(v).substring(0,500));
-  try{
-    await fetch(SCRIPT_URL,{
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'},
-      body:JSON.stringify({action:'append',sheet:sheetName,row}),
-      mode:'no-cors'
-    });
-    setSyncOk();
-  }catch(e){sq.push({sheet:sheetName,data});setSyncErr();}
-}
-async function flushQueue(){if(!sq.length)return;const tmp=[...sq];sq=[];await syncBatch(tmp);}
-setInterval(flushQueue,30000);
-window.addEventListener('online',flushQueue);
-function setSyncOk(){document.querySelectorAll('.sd').forEach(d=>{d.className='sd';});document.querySelectorAll('.st2').forEach(t=>t.textContent='✅ Synced');}
-function setSyncErr(){document.querySelectorAll('.sd').forEach(d=>{d.className='sd er';});document.querySelectorAll('.st2').forEach(t=>t.textContent=`⚠️ ${sq.length} pending`);}
-
-async function loadFromSheets(){
-  try{
-    // Use JSONP to bypass CORS for GET requests
-    const data = await new Promise((resolve, reject) => {
-      const cbName = 'sl_cb_' + Date.now();
-      const script = document.createElement('script');
-      const timer = setTimeout(() => {
-        reject(new Error('Timeout'));
-        script.remove();
-        delete window[cbName];
-      }, 8000);
-      window[cbName] = (result) => {
-        clearTimeout(timer);
-        script.remove();
-        delete window[cbName];
-        resolve(result);
-      };
-      script.src = `${SCRIPT_URL}?action=getAllData&callback=${cbName}`;
-      script.onerror = () => { clearTimeout(timer); reject(new Error('Script error')); };
-      document.head.appendChild(script);
-    });
-
-    if(data && data.success && data.data){
-      const pr=data.data['Products']||[];
-      if(pr.length>1){
-        const h=pr[0];
-        const parsed=pr.slice(1).filter(x=>x[0]).map(row=>{
-          const o={};h.forEach((col,i)=>o[String(col)]=row[i]||'');
-          return{
-            code:o['Product Code']||'',name:o['Product Name']||'',
-            category:o['Category']||'',size:o['Size']||'',colour:o['Colour']||'',
-            noOfDesigns:o['No of Designs']||'',noOfColours:o['No of Colours']||'',
-            costPrice:Number(o['Cost Price'])||0,supplier:o['Supplier']||'',
-            stock:Number(o['Stock Qty'])||0,photo:''
-          };
-        });
-        if(parsed.length>0){db.products=parsed;sv('sl3_products',db.products);}
-      }
-      // Load customers from sheet
-      const cu=data.data['Customers']||[];
-      if(cu.length>1){
-        cu.slice(1).forEach(r=>{
-          if(r[0]&&r[1]){
-            const exists=db.accounts.find(a=>a.type==='Customer'&&a.name===r[1]);
-            if(!exists) db.accounts.push({id:uid(),type:'Customer',name:String(r[1]),phone:String(r[2]||''),bal:0});
-          }
-        });
-        sv('sl3_accounts',db.accounts);
-      }
-      // Load suppliers from sheet
-      const su=data.data['Suppliers']||[];
-      if(su.length>1){
-        su.slice(1).forEach(r=>{
-          if(r[0]&&r[1]){
-            const exists=db.accounts.find(a=>a.type==='Supplier'&&a.name===r[1]);
-            if(!exists) db.accounts.push({id:uid(),type:'Supplier',name:String(r[1]),phone:'',bal:0});
-          }
-        });
-        sv('sl3_accounts',db.accounts);
-      }
-      setSyncOk();
-      toast('✅ Data synced from Google Sheets','success');
-    }
-  }catch(e){
-    console.warn('Sheets load failed:',e.message);
-    setSyncErr();
-    // Use cached data — system still works offline
-  }
-}
-
-// SKU
-async function genSKU(cat,col,sz){
-  const c=CCOD[cat]||cat.substring(0,3).toUpperCase();
-  const co=getColCode(col);const s=getSzCode(sz);const pfx=`${c}-${co}-${s}`;
-  const ex=db.products.filter(p=>p.code&&p.code.startsWith(pfx));
-  const ctrs=ld('sl3_skuc',{});
-  const n=Math.max(ex.length,ctrs[pfx]||0)+1;
-  ctrs[pfx]=n;sv('sl3_skuc',ctrs);
-  const sku=`${pfx}-${String(n).padStart(3,'0')}`;
-  if(db.products.find(p=>p.code===sku))return genSKU(cat,col,sz);
-  return sku;
-}
-
-async function nextBillNo(){const n=db.transactions.filter(t=>t.type==='Sale').length+1;return`BILL-${String(n).padStart(4,'0')}`;}
-
-// AUTH
-let itimer;
-function resetTimer(){clearTimeout(itimer);if(CU){itimer=setTimeout(()=>{toast('Session expired','warning');setTimeout(doLogout,2000);},30*60*1000);}}
+// INACTIVITY
+function resetTimer(){clearTimeout(itimer);if(CU)itimer=setTimeout(()=>{toast('Session expired','warn');setTimeout(doLogout,2000);},30*60*1000);}
 ['click','touchstart','keypress'].forEach(e=>document.addEventListener(e,resetTimer,true));
 
+// AUTH
 async function doLogin(){
-  const un=$('un').value.trim().toLowerCase();const pw=$('pw').value;
-  const u=USERS[un];if(!u||u.pw!==pw){$('lerr').style.display='block';return;}
-  CU={...u,username:un};
-  const btn=$('lbtn');btn.innerHTML='<div class="sp"></div> Loading...';btn.disabled=true;
-  $('ls').style.display='none';$('app').style.display='block';
-  $('upill').textContent=`${CU.role==='owner'?'👑':'👤'} ${CU.name}`;
-  loadDB();setupNav();await loadFromSheets();
+  const email=$('l-email').value.trim(),pw=$('l-pw').value;
+  if(!email||!pw){$('l-err').style.display='block';return;}
+  const btn=$('l-btn');btn.innerHTML='<div class="spin"></div> Signing in...';btn.disabled=true;
+  const{data,error}=await sb.auth.signInWithPassword({email,password:pw});
+  if(error){$('l-err').style.display='block';$('l-err').textContent='❌ '+error.message;btn.innerHTML='Sign In';btn.disabled=false;return;}
+  CU=data.user;await loadProfile();await initApp();
   btn.innerHTML='Sign In';btn.disabled=false;
-  resetTimer();toast(`Welcome, ${CU.name}!`,'success');
 }
-$('pw').addEventListener('keypress',e=>{if(e.key==='Enter')doLogin();});
+$('l-pw').addEventListener('keypress',e=>{if(e.key==='Enter')doLogin();});
 
-function doLogout(){CU=null;cart=[];clearTimeout(itimer);$('app').style.display='none';$('ls').style.display='flex';$('un').value='';$('pw').value='';$('lerr').style.display='none';}
+async function loadProfile(){const{data}=await sb.from('users').select('*').eq('auth_id',CU.id).single();CUP=data;}
+
+async function doLogout(){await sb.auth.signOut();CU=null;CUP=null;cart=[];clearTimeout(itimer);$('app').style.display='none';$('login-screen').style.display='flex';$('l-email').value='';$('l-pw').value='';$('l-err').style.display='none';}
+
+sb.auth.getSession().then(async({data:{session}})=>{if(session){CU=session.user;await loadProfile();await initApp();}});
+
+async function initApp(){
+  $('login-screen').style.display='none';$('app').style.display='block';
+  $('user-chip').textContent=(CUP?.role==='owner'?'👑':'👤')+' '+(CUP?.full_name||'User');
+  await loadMasterData();setupNav();setupRealtime();resetTimer();
+  toast(`Welcome, ${CUP?.full_name||'User'}!`,'ok');
+}
+
+async function loadMasterData(){
+  const[pv,ac,pa]= await Promise.all([
+    sb.from('product_variants').select('*,products(name,category_id,categories(name,code))').eq('is_active',true),
+    sb.from('cashflow_accounts').select('*').eq('is_active',true).order('sort_order'),
+    sb.from('parties').select('*').eq('is_active',true).order('name')
+  ]);
+  products=(pv.data||[]).map(v=>({id:v.id,sku:v.sku,name:v.products?.name||'',category:v.products?.categories?.name||'',categoryCode:v.products?.categories?.code||'',colour:v.colour||'',size:v.size||'',no_of_designs:v.no_of_designs,no_of_colours:v.no_of_colours,purchase_price:Number(v.purchase_price)||0,photo_url:v.photo_url||'',product_id:v.product_id,stock:0,status:'fresh',age_days:0,last_purchase_date:null}));
+  accounts=ac.data||[];parties=pa.data||[];
+  const{data:inv}=await sb.from('inventory').select('variant_id,qty_available,stock_status,age_days,last_purchase_date');
+  (inv||[]).forEach(i=>{const p=products.find(p=>p.id===i.variant_id);if(p){p.stock=Number(i.qty_available)||0;p.status=i.stock_status||'fresh';p.age_days=i.age_days||0;p.last_purchase_date=i.last_purchase_date;}});
+}
+
+function setupRealtime(){
+  sb.channel('pos').on('postgres_changes',{event:'*',schema:'public',table:'inventory'},payload=>{const p=products.find(p=>p.id===payload.new?.variant_id);if(p){p.stock=Number(payload.new?.qty_available)||0;p.status=payload.new?.stock_status||'fresh';p.age_days=payload.new?.age_days||0;}setSyncStatus('ok');}).on('postgres_changes',{event:'*',schema:'public',table:'transactions'},()=>setSyncStatus('ok')).subscribe(s=>setSyncStatus(s==='SUBSCRIBED'?'ok':'syncing'));
+}
 
 // NAV
 function setupNav(){
   const ot=[{id:'dash',l:'📊'},{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'},{id:'led',l:'📒 Ledger'},{id:'rep',l:'📈 Reports'},{id:'cash',l:'💵 Cash'},{id:'assets',l:'🏪 Assets'}];
   const st=[{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'}];
-  const tabs=CU.role==='owner'?ot:st;
-  $('nav').innerHTML=tabs.map((t,i)=>`<div class="nt ${i===0?'active':''}" onclick="showTab('${t.id}',this)">${t.l}</div>`).join('');
+  const tabs=CUP?.role==='owner'?ot:st;
+  $('nav-tabs').innerHTML=tabs.map((t,i)=>`<div class="nav-tab ${i===0?'active':''}" onclick="showTab('${t.id}',this)">${t.l}</div>`).join('');
   showTab(tabs[0].id,null,true);
 }
 
-function showTab(id,el,init){
-  if(el){document.querySelectorAll('.nt').forEach(t=>t.classList.remove('active'));el.classList.add('active');}
-  const c=$('ct');
+function showTab(id,el){
+  if(el){document.querySelectorAll('.nav-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');}
+  const c=$('content');
   switch(id){
-    case 'dash':c.innerHTML=rDash();iDash();break;
-    case 'bill':c.innerHTML=rBill();iBill();break;
-    case 'inv':c.innerHTML=rInv();renderInvList();break;
-    case 'buy':c.innerHTML=rBuy();break;
-    case 'led':c.innerHTML=rLed();break;
-    case 'rep':c.innerHTML=rRep();iRep();break;
-    case 'cash':c.innerHTML=rCash();iCash();break;
-    case 'assets':c.innerHTML=rAssets();break;
+    case'dash':c.innerHTML=rDash();iDash();break;
+    case'bill':c.innerHTML=rBill();iBill();break;
+    case'inv':c.innerHTML=rInv();iInv();break;
+    case'buy':c.innerHTML=rBuy();break;
+    case'led':c.innerHTML=rLed();iLed();break;
+    case'rep':c.innerHTML=rRep();iRep();break;
+    case'cash':c.innerHTML=rCash();iCash();break;
+    case'assets':c.innerHTML=rAssets();iAssets();break;
   }
 }
 
 // ── DASHBOARD ──
-function rDash(){
-  return`<div class="sb"><div class="sd"></div><span class="st2">Checking...</span></div>
-  <div class="ob" id="obc" style="display:none"><div class="ctitle">⚠️ Set Today's Opening Balance</div><div style="display:flex;gap:8px"><input class="ip" id="obi" type="number" placeholder="₨ Cash in drawer"><button class="btn bo bsm" onclick="setOB()">Set</button></div><div style="font-size:.6rem;color:var(--tx3);margin-top:5px">Required for accurate reconciliation</div></div>
-  <div class="sg" id="dstats"></div>
-  <div class="rc" id="drec"></div>
-  <div class="stl">🕒 Today's Sales</div>
-  <div id="dsales"></div>`;
+function rDash(){return`<div class="sync-bar"><div class="sync-dot syncing"></div><span class="sync-txt">Connecting...</span></div><div class="ob-card" id="ob-card" style="display:none"><div class="card-title">⚠️ Opening Balance</div><div class="flex gap-2"><input class="inp flex-1" id="ob-inp" type="number" placeholder="₨ Cash in drawer"><button class="btn btn-gold btn-sm" onclick="setOB()">Set</button></div></div><div class="stat-grid" id="d-stats"></div><div class="rec-card" id="d-rec"></div><div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">🕒 Today's Sales</div><div id="d-sales"></div>`;}
+
+async function iDash(){
+  const cashAcc=accounts.find(a=>a.name==='Cash Drawer');
+  if(cashAcc){const{data:ob}=await sb.from('opening_balances').select('*').eq('balance_date',today()).eq('account_id',cashAcc.id).maybeSingle();if(!ob)$('ob-card').style.display='block';}
+  const{data:s}=await sb.rpc('get_dashboard_summary',{p_date:today()});
+  if(s)renderDashStats(s);
+  const{data:sales}=await sb.from('sales').select('*,transactions(transaction_no)').eq('sale_date',today()).order('created_at',{ascending:false}).limit(15);
+  renderDaySales(sales||[]);
 }
-function iDash(){chkOB();refDash();}
-function chkOB(){const ob=ld('sl3_ob',{});if(ob.date!==td())$('obc').style.display='block';}
-function setOB(){
-  const a=Number($('obi')?.value||0);
-  sv('sl3_ob',{date:td(),amount:a});
-  const ok=atomic([()=>{postEntry('OB'+Date.now(),td(),'Cash','Cash Drawer',0,a,'Opening Balance');}]);
-  if(ok){$('obc').style.display='none';syncBatch([{sheet:'Cash Register',data:{date:td(),nature:'Opening Balance',category:'Opening Balance',amountIn:a,amountOut:0,user:CU.name}}]);toast(`✅ Opening balance: ${fmt(a)}`,'success');refDash();}
+
+function renderDashStats(s){
+  const ds=$('d-stats');if(!ds)return;
+  ds.innerHTML=`<div class="stat-card"><div class="stat-lbl">Today Sales</div><div class="stat-val">${fmt(s.today_sales)}</div><div class="stat-sub">${s.today_bills} bills</div></div><div class="stat-card sage"><div class="stat-lbl">Today Profit</div><div class="stat-val">${fmt(s.today_profit)}</div><div class="stat-sub">${s.today_sales>0?((s.today_profit/s.today_sales)*100).toFixed(1):0}%</div></div><div class="stat-card gold"><div class="stat-lbl">Cash Balance</div><div class="stat-val">${fmt(s.cash_balance)}</div></div><div class="stat-card red"><div class="stat-lbl">Expenses</div><div class="stat-val">${fmt(s.today_expenses)}</div></div><div class="stat-card"><div class="stat-lbl">Monthly Sales</div><div class="stat-val">${fmt(s.monthly_sales)}</div></div><div class="stat-card sage"><div class="stat-lbl">Monthly Profit</div><div class="stat-val">${fmt(s.monthly_profit)}</div></div><div class="stat-card rust"><div class="stat-lbl">Receivables</div><div class="stat-val">${fmt(s.total_receivables)}</div></div><div class="stat-card red"><div class="stat-lbl">Payables</div><div class="stat-val">${fmt(s.total_payables)}</div></div>`;
+  const dr=$('d-rec');if(!dr)return;
+  const ob=accounts.find(a=>a.name==='Cash Drawer')?.opening_balance||0;
+  dr.innerHTML=`<div class="t-xs upper fw-7 c-gold" style="margin-bottom:9px">💵 Cash Reconciliation</div><div class="rec-row"><span>Opening Balance</span><span>${fmt(ob)}</span></div><div class="rec-row"><span>+ Sales</span><span>${fmt(s.today_sales)}</span></div><div class="rec-row"><span>- Expenses</span><span>- ${fmt(s.today_expenses)}</span></div><div class="rec-row match"><span>✅ Expected</span><span>${fmt(ob+Number(s.today_sales)-Number(s.today_expenses))}</span></div>${s.low_stock_count>0?`<div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border2);font-size:.68rem;color:var(--red)">⚠️ ${s.low_stock_count} low · ${s.dead_stock_count} dead stock</div>`:''}`;
 }
-function refDash(){
-  const sales=db.transactions.filter(t=>(t.type==='Sale'||t.type==='Aged Sale')&&t.date===td()&&t.status==='done');
-  const monthlySales=db.transactions.filter(t=>(t.type==='Sale'||t.type==='Aged Sale')&&t.date&&t.date.endsWith(new Date().getFullYear().toString().slice(-2))&&t.status==='done');
-  const ts=sales.reduce((s,t)=>s+Number(t.total||0),0);
-  const tm=sales.reduce((s,t)=>s+Number(t.margin||0),0);
-  const mts=monthlySales.reduce((s,t)=>s+Number(t.total||0),0);
-  const mtm=monthlySales.reduce((s,t)=>s+Number(t.margin||0),0);
-  const ob=ld('sl3_ob',{}).amount||0;
-  const cashAcc=db.accounts.find(a=>a.name==='Cash Drawer'&&a.type==='Cash');
-  const cashBal=cashAcc?cashAcc.bal:ob+ts;
-  const exp=db.ledger.filter(e=>e.accType==='Expense'&&e.date===td()&&e.accName!=='COGS').reduce((s,e)=>s+e.dr,0);
 
-  // Receivables & Payables
-  const totalRec=db.ledger.filter(e=>e.accType==='Customer').reduce((s,e)=>s+(e.dr-e.cr),0);
-  const totalPay=db.ledger.filter(e=>e.accType==='Supplier').reduce((s,e)=>s+(e.cr-e.dr),0);
+function renderDaySales(sales){
+  const c=$('d-sales');if(!c)return;
+  if(!sales.length){c.innerHTML='<div class="empty"><div class="empty-ico">🧾</div><p class="t-sm">No sales today</p></div>';return;}
+  c.innerHTML=sales.map(s=>`<div class="card" style="padding:11px 13px;margin-bottom:9px"><div class="flex just-b items-c"><div><div class="t-sm fw-6">${s.transactions?.transaction_no||''}</div><div class="t-xs c-ink3">${s.customer_name} · ${s.payment_mode}</div></div><div style="text-align:right"><div class="t-sm fw-7">${fmt(s.total_amount)}</div><div class="t-xs c-sage fw-6">+${fmt(s.gross_profit)}</div></div></div></div>`).join('');
+}
 
-  // Stock alerts
-  const lowStock=db.products.filter(p=>Number(p.stock)>0&&Number(p.stock)<=2).length;
-  const deadStock=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=90).length;
-
-  // Top selling (from lines)
-  const prodSales={};
-  db.lines.forEach(l=>{if(!prodSales[l.name])prodSales[l.name]=0;prodSales[l.name]+=Number(l.qty||0);});
-  const topProds=Object.entries(prodSales).sort((a,b)=>b[1]-a[1]).slice(0,3);
-
-  const ds=$('dstats');
-  if(ds)ds.innerHTML=`
-    <div class="sc2"><div class="sl">Today Sales</div><div class="sv">${fmt(ts)}</div><div class="ss">${sales.length} bills</div></div>
-    <div class="sc2 gn"><div class="sl">Today Margin</div><div class="sv">${fmt(tm)}</div><div class="ss">${ts>0?((tm/ts)*100).toFixed(1):0}%</div></div>
-    <div class="sc2 go"><div class="sl">Cash Balance</div><div class="sv">${fmt(cashBal)}</div><div class="ss">In drawer</div></div>
-    <div class="sc2 rd"><div class="sl">Expenses</div><div class="sv">${fmt(exp)}</div><div class="ss">Today</div></div>
-    <div class="sc2"><div class="sl">Monthly Sales</div><div class="sv">${fmt(mts)}</div><div class="ss">${monthlySales.length} bills</div></div>
-    <div class="sc2 gn"><div class="sl">Monthly Profit</div><div class="sv">${fmt(mtm)}</div></div>
-    <div class="sc2 rd"><div class="sl">Receivables</div><div class="sv">${fmt(Math.max(0,totalRec))}</div><div class="ss">Outstanding</div></div>
-    <div class="sc2 go"><div class="sl">Payables</div><div class="sv">${fmt(Math.max(0,totalPay))}</div><div class="ss">To suppliers</div></div>
-  `;
-
-  const dr=$('drec');
-  if(dr)dr.innerHTML=`
-    <div style="font-size:.65rem;font-weight:700;color:var(--go);margin-bottom:10px;text-transform:uppercase;letter-spacing:.08em">💵 Cash Reconciliation — Today</div>
-    <div class="rr"><span>Opening Balance</span><span>${fmt(ob)}</span></div>
-    <div class="rr"><span>+ Sales (Cash)</span><span>${fmt(ts)}</span></div>
-    <div class="rr"><span>- Expenses</span><span>- ${fmt(exp)}</span></div>
-    <div class="rr mt"><span>✅ Expected in Drawer</span><span>${fmt(ob+ts-exp)}</span></div>
-    ${(lowStock||deadStock)?`<div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--bd2)">
-      ${lowStock?`<div style="font-size:.68rem;color:var(--rd);font-weight:600">⚠️ ${lowStock} items low stock</div>`:''}
-      ${deadStock?`<div style="font-size:.68rem;color:var(--go);font-weight:600">🔴 ${deadStock} dead stock items</div>`:''}
-    </div>`:''}
-  `;
-
-  const dsl=$('dsales');
-  if(dsl){
-    let html='';
-    if(topProds.length){
-      html+=`<div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">🏆 Top Products</div>`;
-      html+=topProds.map((p,i)=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--cr2);font-size:.72rem"><span>${i+1}. ${p[0]}</span><span style="font-weight:700;color:var(--br)">${p[1]} sold</span></div>`).join('');
-      html+='<div style="margin-top:12px"></div>';
-    }
-    if(!sales.length){html+='<div class="em"><div class="ei">🧾</div><p>No sales today</p></div>';}
-    else{
-      html+=`<div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">🕒 Today\'s Sales</div>`;
-      html+=sales.slice().reverse().map(t=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.time} · ${t.party||'Walk-in'} · ${t.payMode}</div></div><div style="text-align:right"><div style="font-size:.73rem;font-weight:700;color:var(--br)">${fmt(t.total)}</div><div style="font-size:.6rem;color:var(--gn)">+${fmt(t.margin)}</div></div></div></div>`).join('');
-    }
-    dsl.innerHTML=html;
-  }
+async function setOB(){
+  const amt=Number($('ob-inp')?.value||0);
+  const cashAcc=accounts.find(a=>a.name==='Cash Drawer');if(!cashAcc)return;
+  await sb.from('opening_balances').upsert({balance_date:today(),account_id:cashAcc.id,amount:amt,set_by:CUP?.id},{onConflict:'balance_date,account_id'});
+  await sb.from('cashflow_accounts').update({opening_balance:amt,current_balance:amt}).eq('id',cashAcc.id);
+  accounts=accounts.map(a=>a.id===cashAcc.id?{...a,opening_balance:amt,current_balance:amt}:a);
+  $('ob-card').style.display='none';toast(`✅ Opening balance: ${fmt(amt)}`,'ok');iDash();
 }
 
 // ── BILLING ──
-function rBill(){
-  return`<div class="card">
-    <div class="ctitle">🧾 New Sale</div>
+function rBill(){return`<div class="card"><div class="card-title">🧾 New Sale</div><div class="fg"><label class="lbl">Customer <span id="cust-req" style="color:var(--red);display:none">* Required</span></label><div class="flex gap-2"><input class="inp flex-1" id="b-cust" placeholder="Walk-in Customer" oninput="onCustInput()"><button class="btn btn-ghost btn-sm" onclick="pickParty('customer')">📋</button><button class="btn btn-ghost btn-sm" onclick="newPartyModal('customer')">➕</button></div><div id="cust-bal" style="display:none;font-size:.6rem;margin-top:4px"></div></div><div class="fg"><label class="lbl">Payment</label><div class="pill-row" id="pay-pills"><div class="pill on" onclick="setPayMode('cash',this)">💵 Cash</div><div class="pill" onclick="setPayMode('bank',this)">🏦 Bank</div><div class="pill" onclick="setPayMode('emoney',this)">📱 E-Money</div><div class="pill" onclick="setPayMode('credit',this)">📋 Credit</div><div class="pill" onclick="setPayMode('split',this)">⚡ Split</div></div></div><div id="pay-det"></div><div id="acc-bal-info"></div><div class="fg" style="margin-bottom:0"><label class="lbl"><input type="checkbox" id="is-acq" style="accent-color:var(--gold);margin-right:5px">Acquaintance sale</label></div></div><div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">🔍 Add Products</div><input class="inp" id="b-srch" placeholder="SKU, name, colour, size..." oninput="srchProds()" style="margin-bottom:8px"><div class="pill-row" id="cat-pills" style="margin-bottom:10px"><div class="pill on" onclick="setBCat('',this)">All</div>${CATS.map(c=>`<div class="pill" onclick="setBCat('${c}',this)">${c}</div>`).join('')}</div><div id="b-warn" class="warn-box" style="display:none"></div><div id="b-results"></div><div class="flex just-b items-c" style="margin-top:6px;margin-bottom:8px"><div class="t-xs upper fw-7 c-ink3">🛒 Cart <span class="bdg bdg-ink" id="cart-badge">0</span></div></div><div id="cart-items"></div><div id="bill-sum" style="display:none"></div><div id="bill-acts" style="display:none"></div>`;}
+function iBill(){srchProds();renderCart();}
 
-    <!-- Customer Selection — MANDATORY for Credit -->
-    <div class="fg">
-      <label class="lb">Customer <span id="cust-required" style="color:var(--rd);display:none">*Required for Credit</span></label>
-      <div style="display:flex;gap:8px">
-        <input class="ip" id="bcust" placeholder="Walk-in Customer" style="flex:1" oninput="updCustField()">
-        <button class="btn bgh bsm" onclick="pickCust()" title="Select existing">📋</button>
-        <button class="btn bgh bsm" onclick="createNewCust()" title="Create new ledger">➕</button>
-      </div>
-      <div id="cust-balance" style="font-size:.62rem;color:var(--gn);margin-top:4px;display:none"></div>
-    </div>
-
-    <!-- Payment Method -->
-    <div class="fg">
-      <label class="lb">Payment Method</label>
-      <div class="pg" id="ppills">
-        <div class="pl active" onclick="setPay('Cash',this)">💵 Cash</div>
-        <div class="pl" onclick="setPay('Bank',this)">🏦 Bank</div>
-        <div class="pl" onclick="setPay('EMoney',this)">📱 E-Money</div>
-        <div class="pl" onclick="setPay('Credit',this)">📋 Credit</div>
-        <div class="pl" onclick="setPay('Split',this)">⚡ Split</div>
-      </div>
-    </div>
-    <div id="pdet"></div>
-
-    <!-- Account Balance Indicator -->
-    <div id="acc-balance-info" style="display:none" class="ib"></div>
-
-    <div class="fg" style="margin-bottom:0">
-      <label class="lb"><input type="checkbox" id="isacq" style="accent-color:var(--br);margin-right:5px">Sale to Acquaintance (tracked separately)</label>
-    </div>
-  </div>
-  <div class="stl">🔍 Add Products</div>
-  <input class="ip" id="bsrch" placeholder="SKU, name, category, colour..." oninput="srchProd()" style="margin-bottom:8px">
-  <div class="pg" id="cpills" style="margin-bottom:10px">
-    <div class="pl active" onclick="setBCat('',this)">All</div>
-    ${CATS.map(c=>`<div class="pl" onclick="setBCat('${c}',this)">${c}</div>`).join('')}
-  </div>
-  <div class="wb" id="bwarn" style="display:none"></div>
-  <div id="presults"></div>
-  <div class="stl" style="margin-top:4px">🛒 Cart <span class="bdg bdg-br" id="cbadge">0</span></div>
-  <div id="citems"></div>
-  <div id="bsum" style="display:none"></div>
-  <div id="bacts" style="display:none"></div>`;
+function setPayMode(m,el){
+  payMode=m;document.querySelectorAll('#pay-pills .pill').forEach(p=>p.classList.remove('on'));el.classList.add('on');
+  const cr=$('cust-req');if(cr)cr.style.display=(m==='credit'||m==='split')?'inline':'none';
+  const d=$('pay-det');if(!d)return;
+  const cashAcc=accounts.find(a=>a.name==='Cash Drawer');
+  if(m==='cash'){const i=$('acc-bal-info');if(i)i.innerHTML=`<div class="info-box">💵 Cash Drawer: <strong style="color:${(cashAcc?.current_balance||0)>0?'var(--sage)':'var(--red)'}">${fmt(cashAcc?.current_balance||0)}</strong></div>`;d.innerHTML='';}
+  else if(m==='bank'){d.innerHTML=`<div class="fg"><label class="lbl">Bank Account</label><select class="sel" id="b-bank" onchange="showAccBal('bank',this.value)"><option value="">Select...</option>${accounts.filter(a=>a.account_type==='bank').map(b=>`<option value="${b.id}">${b.name} — ${fmt(b.current_balance)}</option>`).join('')}</select></div><div id="bank-bal"></div>`;}
+  else if(m==='emoney'){d.innerHTML=`<div class="fg"><label class="lbl">E-Money</label><select class="sel" id="b-emoney" onchange="showAccBal('emoney',this.value)"><option value="">Select...</option>${accounts.filter(a=>a.account_type==='emoney').map(e=>`<option value="${e.id}">${e.name} — ${fmt(e.current_balance)}</option>`).join('')}</select></div><div id="emoney-bal"></div>`;}
+  else if(m==='credit'){d.innerHTML=`<div class="info-box" style="border-color:var(--rust);color:var(--rust)">📋 Posted to Customer Receivable. Customer name required.</div>`;}
+  else if(m==='split'){d.innerHTML=`<div class="g2"><div class="fg"><label class="lbl">Cash ₨</label><input class="inp" id="split-cash" type="number" placeholder="0" oninput="updSplit()"></div><div class="fg"><label class="lbl">Balance via</label><select class="sel" id="split-src"><option value="credit">📋 Credit</option><option value="bank">🏦 Bank</option><option value="emoney">📱 EMoney</option></select></div></div><div id="split-prev"></div>`;}
+  if(m!=='cash'){const i=$('acc-bal-info');if(i)i.innerHTML='';}
 }
 
-function updCustField(){
-  const name=($('bcust')?.value||'').trim();
-  const bal=$('cust-balance');
-  if(!bal) return;
-  if(name && name !== 'Walk-in Customer'){
-    const entries=db.ledger.filter(e=>e.accType==='Customer'&&e.accName===name);
-    if(entries.length){
-      const balance=entries.reduce((s,e)=>s+e.cr-e.dr,0);
-      bal.style.display='block';
-      bal.textContent=`Outstanding balance: ${fmt(Math.abs(balance))} ${balance>0?'(receivable)':''}`;
-      bal.style.color=balance>0?'var(--rd)':'var(--gn)';
-    } else bal.style.display='none';
-  } else bal.style.display='none';
-}
+function showAccBal(type,id){const acc=accounts.find(a=>a.id===id);if(!acc)return;const el=$(type==='bank'?'bank-bal':'emoney-bal');if(el)el.innerHTML=`<div class="info-box" style="color:${acc.current_balance>0?'var(--sage)':'var(--red)'}">Balance: <strong>${fmt(acc.current_balance)}</strong>${acc.current_balance<=0?' ⚠️ Insufficient!':''}</div>`;}
+function updSplit(){const cash=Number($('split-cash')?.value||0);const tot=cart.reduce((s,c)=>s+c.price*c.qty,0);const p=$('split-prev');if(p&&tot>0)p.innerHTML=`<div class="info-box">💵 Cash: ${fmt(cash)} + Credit: ${fmt(Math.max(0,tot-cash))}</div>`;}
+function onCustInput(){const nm=($('b-cust')?.value||'').trim();const balEl=$('cust-bal');if(!balEl)return;const p=parties.find(p=>p.name===nm&&p.party_type==='customer');if(p&&p.current_balance!==0){balEl.style.display='block';balEl.innerHTML=`<span style="color:${p.current_balance>0?'var(--rust)':'var(--sage)'}">Outstanding: ${fmt(Math.abs(p.current_balance))} ${p.current_balance>0?'(owes you)':'(credit)'}</span>`;}else balEl.style.display='none';}
+function setBCat(c,el){bCat=c;document.querySelectorAll('#cat-pills .pill').forEach(p=>p.classList.remove('on'));el.classList.add('on');srchProds();}
 
-function setPay(m,el){
-  payMode=m;
-  document.querySelectorAll('#ppills .pl').forEach(p=>p.classList.remove('active'));
-  el.classList.add('active');
-  const d=$('pdet');const accInfo=$('acc-balance-info');const cr=$('cust-required');
-  if(cr) cr.style.display=(m==='Credit'||m==='Split')?'inline':'none';
-  if(!d) return;
-
-  // Get available accounts
-  const banks=db.accounts.filter(a=>a.type==='Bank');
-  const emoney=db.accounts.filter(a=>a.type==='EMoney');
-  const cashBal=getAccBal('Cash','Cash Drawer');
-
-  if(m==='Cash'){
-    if(accInfo){accInfo.style.display='block';accInfo.innerHTML=`💵 Cash Drawer Balance: <strong style="color:${cashBal>0?'var(--gn)':'var(--rd)'}">${fmt(cashBal)}</strong>`;}
-    d.innerHTML='';
-  } else if(m==='Bank'){
-    if(accInfo) accInfo.style.display='none';
-    d.innerHTML=`<div class="fg"><label class="lb">Select Bank Account</label>
-      <select class="sl2" id="bbank" onchange="showAccBal('Bank',this.value)">
-        <option value="">Select bank...</option>
-        ${banks.map(b=>`<option value="${b.name}">${b.name} — ${fmt(b.bal)}</option>`).join('')}
-        <option value="__new__">➕ Add New Bank</option>
-      </select>
-    </div><div id="bank-bal-info"></div>`;
-  } else if(m==='EMoney'){
-    if(accInfo) accInfo.style.display='none';
-    d.innerHTML=`<div class="fg"><label class="lb">Select E-Money Account</label>
-      <select class="sl2" id="bemoney" onchange="showAccBal('EMoney',this.value)">
-        <option value="">Select provider...</option>
-        ${emoney.map(e=>`<option value="${e.name}">${e.name} — ${fmt(e.bal)}</option>`).join('')}
-        <option value="EasyPaisa">EasyPaisa</option>
-        <option value="JazzCash">JazzCash</option>
-        <option value="NayaPay">NayaPay</option>
-        <option value="SadaPay">SadaPay</option>
-        <option value="__new__">➕ Add New</option>
-      </select>
-    </div><div id="emoney-bal-info"></div>`;
-  } else if(m==='Credit'){
-    if(accInfo) accInfo.style.display='none';
-    d.innerHTML=`<div class="ib" style="color:var(--rd);border-color:var(--rd)">📋 Full amount will be posted to Customer Receivable Ledger. Customer name is required.</div>`;
-  } else if(m==='Split'){
-    if(accInfo) accInfo.style.display='none';
-    d.innerHTML=`<div class="g2">
-      <div class="fg"><label class="lb">Cash Amount ₨</label><input class="ip" id="splitcash" type="number" placeholder="0" oninput="updSplitPreview()"></div>
-      <div class="fg"><label class="lb">Source for Rest</label>
-        <select class="sl2" id="splitsrc" onchange="updSplitPreview()">
-          <option value="Credit">📋 Credit</option>
-          <option value="Bank">🏦 Bank</option>
-          <option value="EMoney">📱 E-Money</option>
-        </select>
-      </div>
-    </div>
-    <div id="split-preview" class="ib" style="display:none"></div>`;
-  }
-}
-
-function showAccBal(type, name){
-  if(!name || name==='__new__'){
-    if(name==='__new__') createNewAccount(type);
-    return;
-  }
-  const acc=db.accounts.find(a=>a.type===type&&a.name===name);
-  const bal=acc?acc.bal:0;
-  const infoId=type==='Bank'?'bank-bal-info':'emoney-bal-info';
-  const info=$(infoId);
-  if(info) info.innerHTML=`<div class="ib" style="color:${bal>0?'var(--gn)':'var(--rd)'}">Balance: <strong>${fmt(bal)}</strong>${bal<=0?' ⚠️ Insufficient!':''}</div>`;
-}
-
-function getAccBal(type, name){
-  const acc=db.accounts.find(a=>a.type===type&&a.name===name);
-  if(acc) return acc.bal;
-  const entries=db.ledger.filter(e=>e.accType===type&&e.accName===name);
-  return entries.reduce((s,e)=>s+e.cr-e.dr,0);
-}
-
-function updSplitPreview(){
-  const cash=Number($('splitcash')?.value||0);
-  const src=$('splitsrc')?.value||'Credit';
-  const tot=cart.reduce((s,c)=>s+c.price*c.qty,0);
-  const rest=Math.max(0,tot-cash);
-  const p=$('split-preview');
-  if(p&&tot>0){p.style.display='block';p.innerHTML=`💵 Cash: ${fmt(cash)} + ${src==='Credit'?'📋 Credit':'src==="Bank"?"🏦 Bank":"📱 E-Money"'}: ${fmt(rest)}`;}
-}
-
-function createNewCust(){
-  openModal('➕ Create Customer Ledger',`
-    <div class="fg"><label class="lb">Customer Name *</label><input class="ip" id="nc-name" placeholder="Full name"></div>
-    <div class="fg"><label class="lb">Phone</label><input class="ip" id="nc-phone" placeholder="03XX-XXXXXXX"></div>
-    <div class="fg"><label class="lb">Opening Balance ₨ (if any)</label><input class="ip" id="nc-bal" type="number" placeholder="0"></div>
-    <button class="btn bp bw" onclick="saveNewCust()">✅ Create & Select</button>
-  `);
-}
-
-function saveNewCust(){
-  const name=$('nc-name')?.value?.trim();const phone=$('nc-phone')?.value?.trim();const bal=Number($('nc-bal')?.value||0);
-  if(!name){toast('Enter customer name','error');return;}
-  if(db.accounts.find(a=>a.name===name&&a.type==='Customer')){toast('Customer already exists','warning');closeModal();if($('bcust'))$('bcust').value=name;return;}
-  db.accounts.push({id:uid(),type:'Customer',name,phone,bal});
-  if(bal>0) postEntry('OB'+Date.now(),td(),'Customer',name,0,bal,`Opening balance`);
-  saveDB();
-  syncBatch([{sheet:'Customers',data:{date:td(),party:name,phone,type:'Opening Balance',amount:bal,notes:'New customer',user:CU.name}}]);
-  closeModal();if($('bcust'))$('bcust').value=name;updCustField();
-  toast(`✅ Customer "${name}" created!`,'success');
-}
-
-function createNewAccount(type){
-  openModal(`➕ Add ${type} Account`,`
-    <div class="fg"><label class="lb">Account Name *</label><input class="ip" id="na-name" placeholder="${type==='Bank'?'HBL, MCB, UBL...':'EasyPaisa, JazzCash...'}"></div>
-    <div class="fg"><label class="lb">Current Balance ₨</label><input class="ip" id="na-bal" type="number" placeholder="0"></div>
-    <button class="btn bp bw" onclick="saveNewAccount('${type}')">✅ Add Account</button>
-  `);
-}
-
-function saveNewAccount(type){
-  const name=$('na-name')?.value?.trim();const bal=Number($('na-bal')?.value||0);
-  if(!name){toast('Enter account name','error');return;}
-  db.accounts.push({id:uid(),type,name,bal});
-  if(bal>0) postEntry('OB'+Date.now(),td(),type,name,0,bal,'Opening balance');
-  saveDB();closeModal();
-  toast(`✅ ${type} account "${name}" added!`,'success');
-  setPay(payMode,document.querySelector(`#ppills .pl.active`)||{classList:{add:()=>{}}});
-}
-
-function iBill(){srchProd();renderCart();}
-
-function setPay(m,el){payMode=m;document.querySelectorAll('#ppills .pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');
-  const d=$('pdet');if(!d)return;
-  if(m==='Bank')d.innerHTML=`<div class="fg"><label class="lb">Bank Name</label><input class="ip" id="bbank" placeholder="HBL, MCB..."></div>`;
-  else if(m==='Partial')d.innerHTML=`<div class="g2"><div class="fg"><label class="lb">Cash Amount</label><input class="ip" id="pcash" type="number" placeholder="₨0"></div><div class="fg"><label class="lb">Source</label><select class="sl2" id="psrc"><option>Cash</option><option>Bank</option><option>EasyPaisa</option><option>JazzCash</option></select></div></div>`;
-  else d.innerHTML='';
-}
-
-function setBCat(c,el){bCat=c;document.querySelectorAll('#cpills .pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');srchProd();}
-
-function srchProd(){
-  const q=($('bsrch')?.value||'').toLowerCase().trim();
-  const res=$('presults');if(!res)return;
-  const filtered=db.products.filter(p=>{
+function srchProds(){
+  const q=($('b-srch')?.value||'').toLowerCase().trim();
+  const res=$('b-results');if(!res)return;
+  const filtered=products.filter(p=>{
     const mc=!bCat||p.category===bCat;
-    const mq=!q||(p.code||'').toLowerCase().includes(q)||(p.name||'').toLowerCase().includes(q)||(p.category||'').toLowerCase().includes(q)||(p.size||'').toLowerCase().includes(q)||(p.colour||'').toLowerCase().includes(q);
-    return mc&&mq&&Number(p.stock)>0;
+    const mq=!q||(p.sku||'').toLowerCase().includes(q)||(p.name||'').toLowerCase().includes(q)||(p.colour||'').toLowerCase().includes(q)||(p.size||'').toLowerCase().includes(q);
+    return mc&&mq&&(p.stock||0)>0;
   });
-  const w=$('bwarn');
-  if(filtered.length>1){const cs=filtered.map(p=>Number(p.costPrice));const hd=cs.some((c,i)=>cs.indexOf(c)!==i);if(w)w.style.display=hd?'block':'none';if(hd&&w)w.textContent='⚠️ Multiple items share a similar cost. Confirm using SKU, size and colour.';}
-  else if(w)w.style.display='none';
-  if(!filtered.length){res.innerHTML='<div class="em"><div class="ei">🔍</div><p>No items found</p></div>';return;}
-  res.innerHTML=filtered.map(p=>`<div class="pr" onclick="addCart('${p.code}')"><div class="pth">${p.photo?`<img src="${p.photo}">`:(ce(p.category))}</div><div style="flex:1;min-width:0"><div class="psk">${p.code}</div><div class="pnm">${p.name}</div><div class="pat">${p.category}${p.size?' · '+p.size:''}${p.colour?' · '+p.colour:''} · Stock: <strong style="color:${Number(p.stock)<=2?'var(--rd)':'var(--gn)'}">${p.stock}</strong></div><div class="pct">Cost: ${fmt(p.costPrice)} 🔒</div></div><div class="pad">+</div></div>`).join('');
+  if(!filtered.length){res.innerHTML='<div class="empty"><div class="empty-ico">🔍</div><p class="t-sm">No items in stock</p></div>';return;}
+  res.innerHTML=filtered.map(p=>`<div class="prod-card" onclick="addToCart('${p.id}')"><div class="prod-thumb">${p.photo_url?`<img src="${p.photo_url}">`:(emo(p.category))}</div><div style="flex:1;min-width:0"><div class="prod-sku">${p.sku}</div><div class="prod-name">${p.name}</div><div class="prod-attrs">${p.category}${p.colour?' · '+p.colour:''}${p.size?' · '+p.size:''} · Stock: <strong style="color:${(p.stock||0)<=2?'var(--red)':'var(--sage)'}">${p.stock||0}</strong></div><div class="prod-cost">Cost: ${fmt(p.purchase_price)} 🔒 ${ageBadge(p.age_days||0)}</div></div><div class="prod-add">+</div></div>`).join('');
 }
 
-function addCart(sku){
-  const p=db.products.find(p=>p.code===sku);if(!p){toast('Not found','error');return;}
-  const inCart=cart.filter(c=>c.sku===sku).reduce((s,c)=>s+c.qty,0);
-  if(inCart>=Number(p.stock)){toast(`Only ${p.stock} in stock!`,'error');return;}
-  const ex=cart.find(c=>c.sku===sku);
-  if(ex)ex.qty++;else cart.push({sku,name:p.name,category:p.category,size:p.size,colour:p.colour,cost:Number(p.costPrice),price:0,qty:1,photo:p.photo||''});
-  renderCart();toast(`✅ ${p.name}`,'success');
+function addToCart(id){
+  const p=products.find(p=>p.id===id);if(!p)return;
+  const inCart=cart.filter(c=>c.id===id).reduce((s,c)=>s+c.qty,0);
+  if(inCart>=(p.stock||0)){toast(`Only ${p.stock||0} in stock!`,'err');return;}
+  const ex=cart.find(c=>c.id===id);
+  if(ex)ex.qty++;else cart.push({id,sku:p.sku,name:p.name,category:p.category,colour:p.colour,size:p.size,cost:p.purchase_price,price:0,qty:1,photo:p.photo_url||''});
+  renderCart();toast(`✅ ${p.name}`,'ok');
 }
-
-function remCart(sku){cart=cart.filter(c=>c.sku!==sku);renderCart();}
-function updQty(sku,d){const it=cart.find(c=>c.sku===sku);if(!it)return;const p=db.products.find(p=>p.code===sku);const nq=it.qty+d;if(nq<=0){remCart(sku);return;}if(p&&nq>Number(p.stock)){toast('Not enough stock!','error');return;}it.qty=nq;renderCart();}
-function updPrice(sku,v){const it=cart.find(c=>c.sku===sku);if(it){it.price=Number(v)||0;}updSum();}
+function remCart(id){cart=cart.filter(c=>c.id!==id);renderCart();}
+function updQty(id,d){const it=cart.find(c=>c.id===id);if(!it)return;const p=products.find(p=>p.id===id);const nq=it.qty+d;if(nq<=0){remCart(id);return;}if(p&&nq>(p.stock||0)){toast('Not enough stock!','err');return;}it.qty=nq;renderCart();}
+function updPrice(id,v){const it=cart.find(c=>c.id===id);if(it){it.price=Number(v)||0;}updBillSum();}
 
 function renderCart(){
-  const badge=$('cbadge');if(badge)badge.textContent=cart.length;
-  const items=$('citems');if(!items)return;
-  if(!cart.length){items.innerHTML='<div class="em"><div class="ei">🛒</div><p>Add products above</p></div>';const bs=$('bsum');if(bs)bs.style.display='none';const ba=$('bacts');if(ba)ba.style.display='none';return;}
+  const badge=$('cart-badge');if(badge)badge.textContent=cart.length;
+  const items=$('cart-items');if(!items)return;
+  if(!cart.length){items.innerHTML='<div class="empty"><div class="empty-ico">🛒</div><p class="t-sm">Search and tap a product</p></div>';const s=$('bill-sum');if(s)s.style.display='none';const a=$('bill-acts');if(a)a.style.display='none';return;}
   items.innerHTML=cart.map(it=>{
     const mg=it.price>0?(it.price-it.cost)*it.qty:null;
     const mgp=it.price>0&&it.cost>0?Math.round(((it.price-it.cost)/it.cost)*100):null;
-    const mc=mg===null?'#ccc':mg>=0?'#E8F5EE':'#FDEAEA';
-    const mtc=mg===null?'var(--tx3)':mg>=0?'var(--gn)':'var(--rd)';
-    return`<div class="ci"><div class="cit"><div class="cth">${it.photo?`<img src="${it.photo}">`:(ce(it.category))}</div><div style="flex:1"><div class="cnm">${it.name}</div><div class="cvr">${it.category}${it.size?' · '+it.size:''}${it.colour?' · '+it.colour:''}</div></div><button class="crm" onclick="remCart('${it.sku}')">✕</button></div>
-    <div class="cb"><div class="qc"><button class="qb" onclick="updQty('${it.sku}',-1)">−</button><span class="qn">${it.qty}</span><button class="qb" onclick="updQty('${it.sku}',1)">+</button></div><input class="pi" type="number" placeholder="Sale ₨" value="${it.price||''}" oninput="updPrice('${it.sku}',this.value)"><div class="mp" style="background:${mc};color:${mtc}">${mg===null?'—':fmt(mg)}</div></div>
-    <div style="display:flex;justify-content:space-between;align-items:center;background:var(--cr2);border-radius:7px;padding:4px 9px;margin-top:6px"><span style="font-size:.6rem;color:var(--tx3)">🔒 Cost: <strong>${fmt(it.cost)}</strong></span>${mgp!==null?`<span style="font-size:.6rem;font-weight:700;color:${mgp>=0?'var(--gn)':'var(--rd)'}">${mgp>=0?'▲':'▼'} ${Math.abs(mgp)}%</span>`:''}
-    <span style="font-size:.55rem;color:var(--tx3)">Internal</span></div></div>`;
+    const mc=mg===null?'var(--cream2)':mg>=0?'#E8F5E8':'#FDEAEA';
+    const mtc=mg===null?'var(--ink3)':mg>=0?'var(--sage)':'var(--red)';
+    return`<div class="cart-item"><div class="cart-top"><div class="cart-thumb">${it.photo?`<img src="${it.photo}">`:(emo(it.category))}</div><div style="flex:1"><div class="cart-name">${it.name}</div><div class="cart-var">${it.category}${it.colour?' · '+it.colour:''}${it.size?' · '+it.size:''}</div></div><button class="cart-rm" onclick="remCart('${it.id}')">✕</button></div><div class="cart-bot"><div class="qty-ctrl"><button class="qty-btn" onclick="updQty('${it.id}',-1)">−</button><span class="qty-num">${it.qty}</span><button class="qty-btn" onclick="updQty('${it.id}',1)">+</button></div><input class="price-inp" type="number" placeholder="Sale ₨" value="${it.price||''}" oninput="updPrice('${it.id}',this.value)"><div class="margin-pill" style="background:${mc};color:${mtc}">${mg===null?'—':fmt(mg)}</div></div><div class="cost-row"><span class="t-xs c-ink3">🔒 Cost: <strong>${fmt(it.cost)}</strong></span>${mgp!==null?`<span class="t-xs fw-7" style="color:${mgp>=0?'var(--sage)':'var(--red)'}">${mgp>=0?'▲':'▼'} ${Math.abs(mgp)}%</span>`:''}<span class="t-xs c-ink3">Internal</span></div></div>`;
   }).join('');
-  updSum();
+  updBillSum();
 }
 
-function updSum(){
+function updBillSum(){
   const tot=cart.reduce((s,c)=>s+c.price*c.qty,0);
   const cst=cart.reduce((s,c)=>s+c.cost*c.qty,0);
   const mg=tot-cst;
-  const bs=$('bsum');const ba=$('bacts');
+  const bs=$('bill-sum');const ba=$('bill-acts');
   if(!bs||!ba)return;
   if(!cart.length){bs.style.display='none';ba.style.display='none';return;}
   bs.style.display='block';
-  bs.innerHTML=`<div class="br2"><span>Subtotal</span><span>${fmt(tot)}</span></div><div class="br2 tot"><span>Total</span><span>${fmt(tot)}</span></div><div class="br2 mgn"><span>💰 Margin</span><span>${fmt(mg)}</span></div>`;
+  bs.innerHTML=`<div class="bill-sum-box"><div class="bill-row"><span>Subtotal</span><span>${fmt(tot)}</span></div><div class="bill-row total"><span>Total</span><span>${fmt(tot)}</span></div><div class="bill-row profit"><span>💰 Margin</span><span>${fmt(mg)}</span></div></div>`;
   ba.style.display='block';
-  ba.innerHTML=`<button class="btn bg bw" id="cbtn" onclick="completeSale()" style="margin-bottom:8px">✅ Complete Sale</button><div class="g2"><button class="btn bgh bw" onclick="openReturn()">🔄 Return</button><button class="btn bgh bw" onclick="openExp()">💸 Expense</button></div>`;
+  ba.innerHTML=`<button class="btn btn-sage btn-full" id="comp-btn" onclick="completeSale()" style="margin-bottom:8px">✅ Complete Sale</button><div class="g2"><button class="btn btn-ghost btn-full" onclick="openReturnModal()">🔄 Return</button><button class="btn btn-ghost btn-full" onclick="openExpModal()">💸 Expense</button></div>`;
 }
 
 async function completeSale(){
-  if(!cart.length){toast('Cart empty','error');return;}
-  const mp=cart.find(c=>!c.price||c.price<=0);if(mp){toast(`Enter price for: ${mp.name}`,'error');return;}
-  for(const it of cart){if(it.price<it.cost){if(!confirm(`⚠️ ${it.name} price ₨${it.price} below cost ₨${it.cost}. Loss! Continue?`))return;}}
-
-  const cust=($('bcust')?.value||'').trim()||'Walk-in Customer';
-
-  // ── VALIDATION ──
+  if(!cart.length){toast('Cart empty','err');return;}
+  const mp=cart.find(c=>!c.price||c.price<=0);if(mp){toast(`Enter price: ${mp.name}`,'err');return;}
+  for(const it of cart){if(it.price<it.cost){if(!confirm(`⚠️ ${it.name} ₨${it.price} below cost ₨${it.cost}. Loss! Continue?`))return;}}
+  const cust=($('b-cust')?.value||'').trim()||'Walk-in Customer';
+  if((payMode==='credit'||payMode==='split')&&cust==='Walk-in Customer'){toast('Enter customer name','err');$('b-cust')?.focus();return;}
+  const btn=$('comp-btn');if(btn){btn.innerHTML='<div class="spin"></div>';btn.disabled=true;}
   const tot=cart.reduce((s,c)=>s+c.price*c.qty,0);
-
-  // 1. Credit/Split requires customer name
-  if((payMode==='Credit'||payMode==='Split')&&(cust===''||cust==='Walk-in Customer')){
-    toast('⚠️ Customer name required for credit sales','error');
-    $('bcust')?.focus();return;
-  }
-
-  // 2. Balance validation
-  if(payMode==='Cash'){
-    const cashBal=getAccBal('Cash','Cash Drawer');
-    // Cash sales ADD to drawer — no balance check needed (we are receiving cash)
-    // But if refund scenario, check. For sales: OK
-  } else if(payMode==='Bank'){
-    const bankName=$('bbank')?.value||'';
-    if(!bankName||bankName==='__new__'){toast('Select a bank account','error');return;}
-    // Bank sale adds to bank balance — no check needed
-  } else if(payMode==='EMoney'){
-    const emoneyName=$('bemoney')?.value||'';
-    if(!emoneyName||emoneyName==='__new__'){toast('Select E-Money provider','error');return;}
-  } else if(payMode==='Split'){
-    const splitCash=Number($('splitcash')?.value||0);
-    const cashBal=getAccBal('Cash','Cash Drawer');
-    // Only validate if paying from cash
-    if(splitCash>0){
-      // cash sale - no balance check (receiving cash)
-    }
-  }
-
-  // 3. Auto-create customer if credit sale and customer doesn't exist
-  if((payMode==='Credit'||payMode==='Split')&&cust!=='Walk-in Customer'){
-    const custExists=db.accounts.find(a=>a.type==='Customer'&&a.name===cust);
-    if(!custExists){
-      if(confirm(`Customer "${cust}" not found. Create new ledger?`)){
-        db.accounts.push({id:uid(),type:'Customer',name:cust,phone:'',bal:0});
-        saveDB();toast(`✅ Customer "${cust}" ledger created`,'success');
-      } else return;
-    }
-  }
-
-  const btn=$('cbtn');if(btn){btn.innerHTML='<div class="sp"></div>';btn.disabled=true;}
-  const billNo=await nextBillNo();
   const cst=cart.reduce((s,c)=>s+c.cost*c.qty,0);
   const mg=tot-cst;
-  const isAcq=$('isacq')?.checked||false;
-  const bankName=$('bbank')?.value||'';
-  const emoneyName=$('bemoney')?.value||'';
-  const splitCash=Number($('splitcash')?.value||0);
-  const splitSrc=$('splitsrc')?.value||'Credit';
-  const splitRest=payMode==='Split'?Math.max(0,tot-splitCash):0;
-  const d=td();const t=tn();
-
-  const ok=atomic([
-    // 1. Transaction header
-    ()=>{
-      db.transactions.push({id:billNo,date:d,time:t,type:'Sale',party:cust,payMode,
-        total:tot,cost:cst,margin:mg,isAcq,bankName,emoneyName,
-        splitCash,splitSrc,splitRest,user:CU.name,status:'done'});
-    },
-    // 2. Lines + inventory deduction
-    ()=>{
-      cart.forEach(it=>{
-        db.lines.push({id:uid(),txnId:billNo,sku:it.sku,name:it.name,category:it.category,
-          qty:it.qty,cost:it.cost,price:it.price,lineTotal:it.price*it.qty,
-          margin:(it.price-it.cost)*it.qty});
-        const pr=db.products.find(p=>p.code===it.sku);
-        if(!pr) throw new Error(`Product not found: ${it.sku}`);
-        if(Number(pr.stock)<it.qty) throw new Error(`Insufficient stock: ${it.name}`);
-        pr.stock=Number(pr.stock)-it.qty;
-        db.movements.push({id:uid(),date:d,time:t,sku:it.sku,name:it.name,
-          category:it.category,type:'Sale',qtyChange:-it.qty,cost:it.cost,price:it.price,
-          value:it.cost*it.qty,margin:(it.price-it.cost)*it.qty,txnId:billNo,user:CU.name});
-      });
-    },
-    // 3. Double-entry ledger postings
-    ()=>{
-      if(payMode==='Cash'){
-        // Dr nothing (cash received) / Cr Cash Drawer (asset increases)
-        postEntry(billNo,d,'Cash','Cash Drawer',0,tot,`Sale ${billNo} — Cash`);
-      } else if(payMode==='Bank'){
-        postEntry(billNo,d,'Bank',bankName,0,tot,`Sale ${billNo} — Bank`);
-      } else if(payMode==='EMoney'){
-        postEntry(billNo,d,'EMoney',emoneyName,0,tot,`Sale ${billNo} — ${emoneyName}`);
-      } else if(payMode==='Credit'){
-        // Dr Customer (they owe us) / Cr Sales Revenue
-        postEntry(billNo,d,'Customer',cust,tot,0,`Credit Sale ${billNo}`);
-      } else if(payMode==='Split'){
-        // Cash portion
-        if(splitCash>0) postEntry(billNo,d,'Cash','Cash Drawer',0,splitCash,`Split Cash ${billNo}`);
-        // Remaining portion
-        if(splitRest>0){
-          if(splitSrc==='Credit') postEntry(billNo,d,'Customer',cust,splitRest,0,`Split Credit ${billNo}`);
-          else if(splitSrc==='Bank') postEntry(billNo,d,'Bank',bankName||'Bank',0,splitRest,`Split Bank ${billNo}`);
-          else if(splitSrc==='EMoney') postEntry(billNo,d,'EMoney',emoneyName||'E-Money',0,splitRest,`Split EMoney ${billNo}`);
-        }
-      }
-      // COGS entry
-      postEntry(billNo,d,'Expense','COGS',cst,0,`COGS ${billNo}`);
-      if(isAcq) db.movements.push({id:uid(),date:d,type:'AcqSale',txnId:billNo,cust,tot,mg,user:CU.name});
-    }
-  ]);
-
-  if(ok){
-    const se=[];
-    cart.forEach(it=>se.push({sheet:'Sales',data:{
-      billNo,date:d,time:t,user:CU.name,sku:it.sku,name:it.name,
-      category:it.category,qty:it.qty,cost:it.cost,price:it.price,
-      saleAmt:it.price*it.qty,margin:(it.price-it.cost)*it.qty,
-      cust,payMode,isAcq:isAcq?'Yes':'No'}}));
-
-    // Cash register
-    if(payMode==='Cash') se.push({sheet:'Cash Register',data:{date:d,nature:`Sale ${billNo}`,category:'Sales',amountIn:tot,amountOut:0,user:CU.name}});
-    if(payMode==='Split'&&splitCash>0) se.push({sheet:'Cash Register',data:{date:d,nature:`Split Sale ${billNo}`,category:'Sales',amountIn:splitCash,amountOut:0,user:CU.name}});
-
-    // Customer ledger (credit portion)
-    if(payMode==='Credit') se.push({sheet:'Customers',data:{date:d,party:cust,type:'Sale Credit (Receivable)',amount:tot,notes:`Bill: ${billNo}`,user:CU.name}});
-    if(payMode==='Split'&&splitSrc==='Credit'&&splitRest>0) se.push({sheet:'Customers',data:{date:d,party:cust,type:'Split Credit',amount:splitRest,notes:`Bill: ${billNo}`,user:CU.name}});
-
-    // Bank ledger
-    if(payMode==='Bank') se.push({sheet:'Bank Accounts',data:{date:d,bankName,type:'Sale Receipt',amountIn:tot,amountOut:0,notes:`Bill: ${billNo}`,user:CU.name}});
-
-    syncBatch(se);
-    toast(`✅ ${billNo} — ${fmt(tot)} | Margin: ${fmt(mg)}`,'success',4000);
-    cart=[];
-    if($('bcust'))$('bcust').value='';
-    if($('isacq'))$('isacq').checked=false;
-    if($('cust-balance'))$('cust-balance').style.display='none';
-    renderCart();srchProd();
-    if(document.querySelector('.nt.active')?.textContent?.includes('📊')) refDash();
+  const isAcq=$('is-acq')?.checked||false;
+  const bankId=$('b-bank')?.value||null;
+  const emoneyId=$('b-emoney')?.value||null;
+  const splitCash=Number($('split-cash')?.value||0);
+  const cashAcc=accounts.find(a=>a.name==='Cash Drawer');
+  let custPartyId=null;
+  if(payMode==='credit'||payMode==='split'){
+    let p=parties.find(p=>p.name===cust&&p.party_type==='customer');
+    if(!p){const{data:np}=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP?.id}).select().single();if(np){parties.push(np);p=np;}}
+    custPartyId=p?.id||null;
   }
+  try{
+    const{data:billNo}=await sb.rpc('generate_transaction_no',{p_prefix:'BILL'});
+    const{data:txn,error:te}=await sb.from('transactions').insert({transaction_no:billNo,transaction_type:'sale',transaction_date:today(),party_id:custPartyId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP?.id}).select().single();
+    if(te)throw te;
+    const{data:sale,error:se}=await sb.from('sales').insert({transaction_id:txn.id,customer_party_id:custPartyId,customer_name:cust,sale_date:today(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:payMode==='cash'?cashAcc?.id:payMode==='bank'?bankId:payMode==='emoney'?emoneyId:cashAcc?.id,split_cash_amount:payMode==='split'?splitCash:0,split_secondary_amount:payMode==='split'?Math.max(0,tot-splitCash):0,gross_profit:mg,is_acquaintance_sale:isAcq}).select().single();
+    if(se)throw se;
+    const{error:ie}=await sb.from('sale_items').insert(cart.map(it=>({sale_id:sale.id,transaction_id:txn.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price})));
+    if(ie)throw ie;
+    const le=[];
+    if(payMode==='cash')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='bank')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:bankId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='emoney')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:emoneyId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='credit')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:tot,description:`Credit Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='split'){if(splitCash>0)le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:splitCash,description:`Split Cash ${billNo}`,created_by:CUP?.id});const rem=Math.max(0,tot-splitCash);if(rem>0)le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:rem,description:`Split Credit ${billNo}`,created_by:CUP?.id});}
+    le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'expense',amount:cst,description:`COGS ${billNo}`,created_by:CUP?.id});
+    if(le.length)await sb.from('ledger_entries').insert(le);
+    await loadMasterData();
+    toast(`✅ ${billNo} — ${fmt(tot)} | Margin: ${fmt(mg)}`,'ok',4000);
+    cart=[];if($('b-cust'))$('b-cust').value='';if($('is-acq'))$('is-acq').checked=false;renderCart();srchProds();
+  }catch(e){toast('Error: '+e.message,'err');console.error(e);}
   if(btn){btn.innerHTML='✅ Complete Sale';btn.disabled=false;}
 }
 
-function pickCust(){
-  const cs=[...new Set(db.ledger.filter(e=>e.accType==='Customer').map(e=>e.accName))];
-  if(!cs.length){toast('No existing customers','warning');return;}
-  openModal('Select Customer',cs.map(c=>`<div class="pr" onclick="selCust('${c}')">${c}</div>`).join(''));
-}
-function selCust(n){if($('bcust'))$('bcust').value=n;closeModal();}
-
-function openReturn(){openModal('🔄 Sales Return',`
-  <div class="fg"><label class="lb">Original Bill No</label><input class="ip" id="srb" placeholder="BILL-0001"></div>
-  <div class="fg"><label class="lb">Product</label><select class="sl2" id="srp"><option value="">Select...</option>${db.products.map(p=>`<option value="${p.code}">${p.name} (${p.code})</option>`).join('')}</select></div>
-  <div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="srq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Price ₨</label><input class="ip" id="srpr" type="number" placeholder="0"></div></div>
-  <div class="fg"><label class="lb">Refund</label><select class="sl2" id="srr"><option>Cash Refund</option><option>Customer Credit</option><option>Exchange Only</option></select></div>
-  <div class="fg"><label class="lb">Reason</label><input class="ip" id="srrn" placeholder="Defective..."></div>
-  <button class="btn bp bw" onclick="procReturn()">✅ Process</button>`);}
-
-function procReturn(){
-  const bill=$('srb')?.value?.trim();const sku=$('srp')?.value;const qty=Number($('srq')?.value||0);const pr=Number($('srpr')?.value||0);const ref=$('srr')?.value;const rsn=$('srrn')?.value||'';
-  if(!bill||!sku||!qty||!pr){toast('Fill all fields','error');return;}
-  const p=db.products.find(p=>p.code===sku);if(!p)return;
-  const rid=`RET-${Date.now()}`;const d=td();const t=tn();const amt=qty*pr;
-  const ok=atomic([()=>{
-    p.stock=Number(p.stock)+qty;
-    db.movements.push({id:uid(),date:d,time:t,sku,name:p.name,category:p.category,type:'Sale Return',qtyChange:qty,cost:p.costPrice,value:qty*Number(p.costPrice),txnId:rid,user:CU.name,reason:rsn});
-    db.transactions.push({id:rid,date:d,time:t,type:'Sale Return',party:bill,payMode:ref,total:-amt,user:CU.name,status:'done'});
-    if(ref==='Cash Refund'){postEntry(rid,d,'Cash','Cash Drawer',amt,0,`Return ${bill}`);}
-    else if(ref==='Customer Credit'){const c=$('bcust')?.value||'Customer';postEntry(rid,d,'Customer',c,amt,0,`Return Credit ${bill}`);}
-  }]);
-  if(ok){syncBatch([{sheet:'Sales',data:{billNo:rid,date:d,sku,name:p.name,qty:-qty,saleAmt:-amt,payMode:ref,notes:`Return of ${bill}: ${rsn}`,user:CU.name}}]);toast(`✅ Return done! Stock +${qty}`,'success');closeModal();srchProd();}
+function pickParty(type){const list=parties.filter(p=>p.party_type===type);if(!list.length){toast('No existing '+type,'warn');return;}openMo('Select '+type,list.map(p=>`<div class="prod-card" onclick="selectParty('${p.name.replace(/'/g,"\\'")}','${type}')">${p.name} ${p.current_balance!==0?`<span class="bdg ${p.current_balance>0?'bdg-gold':'bdg-sage'}">${fmt(Math.abs(p.current_balance))}</span>`:''}</div>`).join(''));}
+function selectParty(name,type){const inp=type==='customer'?$('b-cust'):$('pur-sup');if(inp)inp.value=name;closeMo();onCustInput();}
+function newPartyModal(type){openMo(`➕ New ${type}`,`<div class="fg"><label class="lbl">Name *</label><input class="inp" id="np-name" placeholder="Full name"></div><div class="fg"><label class="lbl">Phone</label><input class="inp" id="np-phone" placeholder="03XX-XXXXXXX"></div><div class="fg"><label class="lbl">Opening Balance ₨</label><input class="inp" id="np-bal" type="number" placeholder="0"></div><button class="btn btn-ink btn-full" onclick="saveNewParty('${type}')">✅ Create</button>`);}
+async function saveNewParty(type){
+  const name=$('np-name')?.value?.trim();if(!name){toast('Enter name','err');return;}
+  const phone=$('np-phone')?.value?.trim();const bal=Number($('np-bal')?.value||0);
+  const exists=parties.find(p=>p.name===name&&p.party_type===type);if(exists){toast('Already exists','warn');closeMo();return;}
+  const{data:p,error}=await sb.from('parties').insert({party_type:type,name,phone,opening_balance:bal,current_balance:bal,created_by:CUP?.id}).select().single();
+  if(error){toast('Error: '+error.message,'err');return;}
+  parties.push(p);if(type==='customer'&&$('b-cust'))$('b-cust').value=name;if(type==='supplier'&&$('pur-sup'))$('pur-sup').value=name;
+  closeMo();toast(`✅ ${type} created!`,'ok');onCustInput();
 }
 
-const EXP_CATS=[
-  'Sales Revenue','Sales Returns',
-  'Daily Operating Expenses','Inventory Purchases',
-  'Payments to Credit Wholesale Suppliers','Payments to Credit Dupatta Suppliers','Payments to Credit Abaya Suppliers',
-  'Credit Customer Receipts',
-  'Luqman Contribution to Shop','Luqman Withdrawals from Shop',
-  'Loan / Capital Introduced','Market Loan Repayments',
-  'Committee Savings – 1','Committee Savings – 2',
-  'Committee Savings – 1 Received',
-  'Amir Drawings / Personal Expenses',
-  'Utility Expenses','Rent Expense','Miscellaneous Expenses',
-  'Shopping Bag Expenses','Purchase-Related Expenses',
-  'Shop Maintenance Expenses','Other Operating Expenses',
-  'Office Expenses','Battery Expenses',
-  'Security Guard Expenses','Sweeper Expenses'
-];
+function openReturnModal(){openMo('🔄 Sales Return',`<div class="fg"><label class="lbl">Original Bill No</label><input class="inp" id="sr-bill" placeholder="BILL-0001"></div><div class="fg"><label class="lbl">Product</label><select class="sel" id="sr-sku"><option value="">Select...</option>${products.map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('')}</select></div><div class="g2"><div class="fg"><label class="lbl">Qty</label><input class="inp" id="sr-qty" type="number" placeholder="0"></div><div class="fg"><label class="lbl">Sale Price ₨</label><input class="inp" id="sr-price" type="number" placeholder="0"></div></div><div class="fg"><label class="lbl">Refund</label><select class="sel" id="sr-ref"><option value="cash">Cash Refund</option><option value="credit">Customer Credit</option><option value="exchange">Exchange Only</option></select></div><div class="fg"><label class="lbl">Reason</label><input class="inp" id="sr-rsn" placeholder="Defective..."></div><button class="btn btn-ink btn-full" onclick="processSaleReturn()">✅ Process</button>`);}
 
-function openExp(){openModal('💸 Expense / Cash Entry',`
-  <div class="fg"><label class="lb">Category</label>
-    <select class="sl2" id="ec">${EXP_CATS.map(c=>`<option>${c}</option>`).join('')}</select>
-  </div>
-  <div class="fg"><label class="lb">Description</label><input class="ip" id="ed" placeholder="Details..."></div>
-  <div class="fg"><label class="lb">Amount ₨</label><input class="ip" id="ea" type="number" placeholder="0"></div>
-  <div class="fg"><label class="lb">Direction</label>
-    <select class="sl2" id="edir"><option value="out">💸 Money Out (Expense/Payment)</option><option value="in">💰 Money In (Receipt/Income)</option></select>
-  </div>
-  <div class="fg"><label class="lb">Source / Account</label>
-    <select class="sl2" id="es"><option>Cash Drawer</option><option>Bank</option><option>EasyPaisa</option><option>JazzCash</option><option>Owner</option></select>
-  </div>
-  <div class="fg"><label class="lb">Date</label><input class="ip" id="edt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
-  <button class="btn br bw" onclick="saveExp()">💾 Save Entry</button>`);}
+async function processSaleReturn(){
+  const billNo=$('sr-bill')?.value?.trim();const varId=$('sr-sku')?.value;const qty=Number($('sr-qty')?.value||0);const price=Number($('sr-price')?.value||0);const refMode=$('sr-ref')?.value;const reason=$('sr-rsn')?.value||'';
+  if(!billNo||!varId||!qty||!price){toast('Fill all','err');return;}
+  const{data:origTxn}=await sb.from('transactions').select('id').eq('transaction_no',billNo).single();
+  if(!origTxn){toast('Bill not found','err');return;}
+  const{data:retNo}=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});
+  const cashAcc=accounts.find(a=>a.name==='Cash Drawer');const refAmt=qty*price;
+  try{
+    const{data:txn}=await sb.from('transactions').insert({transaction_no:retNo,transaction_type:'sale_return',transaction_date:today(),total_amount:refAmt,paid_amount:refAmt,payment_status:'paid',reference_transaction_id:origTxn.id,performed_by:CUP?.id,notes:reason}).select().single();
+    const{data:ret}=await sb.from('sale_returns').insert({transaction_id:txn.id,original_sale_transaction_id:origTxn.id,return_date:today(),return_type:refMode==='exchange'?'exchange':'refund',total_return_amount:refAmt,refund_mode:refMode==='cash'?'cash':'credit',refund_account_id:refMode==='cash'?cashAcc?.id:null,reason}).select().single();
+    await sb.from('sale_return_items').insert({sale_return_id:ret.id,variant_id:varId,qty,original_sale_price:price});
+    if(refMode==='cash'&&cashAcc)await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:cashAcc.id,amount:refAmt,description:`Return ${billNo}`,created_by:CUP?.id});
+    await loadMasterData();toast(`✅ Return: ${retNo}`,'ok');closeMo();srchProds();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
 
-function saveExp(){
-  const cat=$('ec')?.value;const desc=$('ed')?.value?.trim();const amt=Number($('ea')?.value||0);
-  const src=$('es')?.value;const dir=$('edir')?.value||'out';const edt=$('edt')?.value||td();
-  if(!amt||!desc){toast('Fill all','error');return;}
-  const id=`EXP-${Date.now()}`;
-  const ok=atomic([()=>{
-    const isOut=dir==='out';
-    postEntry(id,edt,'Expense',cat,isOut?amt:0,isOut?0:amt,desc);
-    if(src==='Cash Drawer') postEntry(id,edt,'Cash','Cash Drawer',isOut?amt:0,isOut?0:amt,`${cat}: ${desc}`);
-    else if(src==='Bank') postEntry(id,edt,'Bank',src,isOut?amt:0,isOut?0:amt,`${cat}: ${desc}`);
-    db.transactions.push({id,date:edt,time:tn(),type:isOut?'Expense':'Receipt',party:cat,payMode:src,total:amt,user:CU.name,status:'done'});
-  }]);
-  if(ok){
-    syncBatch([{sheet:'Cash Register',data:{date:edt,nature:desc,category:cat,amountIn:dir==='in'?amt:0,amountOut:dir==='out'?amt:0,source:src,user:CU.name}}]);
-    toast(`✅ ${dir==='out'?'Expense':'Receipt'}: ${fmt(amt)}`,'success');
-    closeModal();
-    if(document.querySelector('.nt.active')?.textContent?.includes('💵')) iCash();
-  }
+function openExpModal(){
+  const cats=['Daily Operating Expenses','Team Daily Expense','Rent Expense','Utility Expenses','Committee Savings 1','Committee Savings 2','Shopping Bag Expenses','Security Guard Expenses','Sweeper Expenses','Other Operating Expenses'];
+  openMo('💸 Expense',`<div class="fg"><label class="lbl">Category</label><select class="sel" id="exp-cat">${cats.map(c=>`<option>${c}</option>`).join('')}</select></div><div class="fg"><label class="lbl">Description</label><input class="inp" id="exp-desc" placeholder="Details..."></div><div class="fg"><label class="lbl">Amount ₨</label><input class="inp" id="exp-amt" type="number" placeholder="0"></div><div class="fg"><label class="lbl">Paid From</label><select class="sel" id="exp-src">${accounts.map(a=>`<option value="${a.id}">${a.name} (${fmt(a.current_balance)})</option>`).join('')}</select></div><button class="btn btn-red btn-full" onclick="saveExpense()">💾 Save</button>`);
+}
+async function saveExpense(){
+  const cat=$('exp-cat')?.value;const desc=$('exp-desc')?.value?.trim();const amt=Number($('exp-amt')?.value||0);const srcId=$('exp-src')?.value;
+  if(!amt||!desc){toast('Fill all','err');return;}
+  const{data:expCat}=await sb.from('expense_categories').select('id').eq('name',cat).single();
+  const{data:expNo}=await sb.rpc('generate_transaction_no',{p_prefix:'EXP'});
+  try{
+    const{data:txn}=await sb.from('transactions').insert({transaction_no:expNo,transaction_type:'expense',transaction_date:today(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:desc}).select().single();
+    await sb.from('cash_entries').insert({transaction_id:txn.id,category_id:expCat?.id,entry_date:today(),amount:amt,direction:'out',account_id:srcId,description:desc});
+    await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:srcId,amount:amt,description:`Expense: ${desc}`,created_by:CUP?.id});
+    toast(`✅ Expense: ${fmt(amt)}`,'ok');closeMo();await loadMasterData();
+  }catch(e){toast('Error: '+e.message,'err');}
 }
 
 // ── INVENTORY ──
-function getAgeDays(dateStr){
-  if(!dateStr) return 0;
-  try{
-    const parts=dateStr.split('/');
-    const d=parts.length===3?new Date(`${parts[2]}-${parts[1]}-${parts[0]}`):new Date(dateStr);
-    return Math.floor((Date.now()-d.getTime())/(1000*60*60*24));
-  }catch(e){return 0;}
-}
-function getAgeLabel(days){
-  if(days>=90) return{label:'🔴 Dead Stock',color:'var(--rd)',cls:'rd'};
-  if(days>=60) return{label:'🟠 Slow Moving',color:'var(--go)',cls:'go'};
-  if(days>=30) return{label:'🟡 Ageing',color:'#B8A000',cls:''};
-  return{label:'🟢 Fresh',color:'var(--gn)',cls:'gn'};
-}
-
 function rInv(){
-  // Get unique filter values
-  const suppliers=[...new Set(db.products.map(p=>p.supplier).filter(Boolean))];
-  const colours=[...new Set(db.products.map(p=>p.colour).filter(Boolean))];
-  const sizes=[...new Set(db.products.map(p=>p.size).filter(Boolean))];
-
-  // Alert counts
-  const lowStock=db.products.filter(p=>Number(p.stock)>0&&Number(p.stock)<=2).length;
-  const deadStock=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=90).length;
-  const slowMov=db.products.filter(p=>Number(p.stock)>0&&getAgeDays(p.dateAdded)>=60&&getAgeDays(p.dateAdded)<90).length;
-
-  const tq=db.products.filter(p=>Number(p.stock)>0).reduce((s,p)=>s+Number(p.stock),0);
-  const tv=db.products.filter(p=>Number(p.stock)>0).reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);
-
-  return`
-  <!-- Alerts -->
-  ${(lowStock||deadStock||slowMov)?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-    ${lowStock?`<div style="background:#FDEAEA;border:1px solid var(--rd);border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:var(--rd)">⚠️ Low Stock: ${lowStock} items</div>`:''}
-    ${deadStock?`<div style="background:#FFF0E8;border:1px solid var(--go);border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:var(--go)">🔴 Dead Stock: ${deadStock} items</div>`:''}
-    ${slowMov?`<div style="background:#FFF8E4;border:1px solid #B8A000;border-radius:8px;padding:6px 12px;font-size:.68rem;font-weight:700;color:#B8A000">🟠 Slow Moving: ${slowMov} items</div>`:''}
-  </div>`:''}
-
-  <!-- Summary Stats -->
-  <div class="sg">
-    <div class="sc2"><div class="sl">Active SKUs</div><div class="sv">${db.products.filter(p=>Number(p.stock)>0).length}</div></div>
-    <div class="sc2 gn"><div class="sl">Total Units</div><div class="sv">${tq}</div></div>
-    <div class="sc2 go"><div class="sl">Stock Value</div><div class="sv">${fmt(tv)}</div></div>
-    <div class="sc2 rd"><div class="sl">Alerts</div><div class="sv">${lowStock+deadStock+slowMov}</div></div>
-  </div>
-
-  <!-- Filters -->
-  <div class="card" style="padding:12px;margin-bottom:12px">
-    <div style="font-size:.65rem;font-weight:700;color:var(--br);margin-bottom:8px">🔍 Filters</div>
-    <div class="g2" style="margin-bottom:8px">
-      <div><label class="lb">Category</label>
-        <select class="sl2" id="inv-fcat" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-          <option value="">All</option>${CATS.map(c=>`<option>${c}</option>`).join('')}
-        </select>
-      </div>
-      <div><label class="lb">Supplier</label>
-        <select class="sl2" id="inv-fsup" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-          <option value="">All</option>${suppliers.map(s=>`<option>${s}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="g2" style="margin-bottom:8px">
-      <div><label class="lb">Colour</label>
-        <select class="sl2" id="inv-fcol" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-          <option value="">All</option>${colours.map(c=>`<option>${c}</option>`).join('')}
-        </select>
-      </div>
-      <div><label class="lb">Size</label>
-        <select class="sl2" id="inv-fsz" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-          <option value="">All</option>${sizes.map(s=>`<option>${s}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-    <div class="g2">
-      <div><label class="lb">Ageing</label>
-        <select class="sl2" id="inv-fage" onchange="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-          <option value="">All</option>
-          <option value="fresh">🟢 Fresh (&lt;30d)</option>
-          <option value="ageing">🟡 Ageing (30-60d)</option>
-          <option value="slow">🟠 Slow (60-90d)</option>
-          <option value="dead">🔴 Dead Stock (90d+)</option>
-        </select>
-      </div>
-      <div><label class="lb">Search</label>
-        <input class="ip" id="inv-fsrch" placeholder="Name/SKU..." oninput="renderInvList()" style="font-size:.75rem;padding:7px 10px">
-      </div>
-    </div>
-  </div>
-
-  ${CU?.role==='owner'?`<button class="btn bo bw" style="margin-bottom:12px" onclick="openStockTake()">🔍 Physical Verification</button>`:''}
-
-  <div id="inv-list-content"></div>
-  `;
+  const suppliers=[...new Set(products.map(p=>p.supplier).filter(Boolean))];
+  const colours=[...new Set(products.map(p=>p.colour).filter(Boolean))];
+  const active=products.filter(p=>(p.stock||0)>0);
+  const tv=active.reduce((s,p)=>s+p.purchase_price*(p.stock||0),0);
+  const dead=active.filter(p=>p.status==='dead_stock').length;
+  const low=active.filter(p=>(p.stock||0)<=2).length;
+  return`<div class="stat-grid"><div class="stat-card"><div class="stat-lbl">Active SKUs</div><div class="stat-val">${active.length}</div></div><div class="stat-card gold"><div class="stat-lbl">Stock Value</div><div class="stat-val">${fmt(tv)}</div></div><div class="stat-card red"><div class="stat-lbl">Low Stock</div><div class="stat-val">${low}</div></div><div class="stat-card rust"><div class="stat-lbl">Dead Stock</div><div class="stat-val">${dead}</div></div></div>
+  <div class="card" style="padding:12px"><div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">🔍 Filters</div><div class="g2" style="margin-bottom:8px"><div><label class="lbl">Category</label><select class="sel" id="if-cat" onchange="renderInvList()" style="font-size:.72rem;padding:7px 10px"><option value="">All</option>${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div><div><label class="lbl">Status</label><select class="sel" id="if-st" onchange="renderInvList()" style="font-size:.72rem;padding:7px 10px"><option value="">All</option><option value="fresh">🟢 Fresh</option><option value="ageing">🟡 Ageing</option><option value="slow_moving">🟠 Slow</option><option value="dead_stock">🔴 Dead</option></select></div></div><div class="g2"><div><label class="lbl">Colour</label><select class="sel" id="if-col" onchange="renderInvList()" style="font-size:.72rem;padding:7px 10px"><option value="">All</option>${colours.map(c=>`<option>${c}</option>`).join('')}</select></div><div><label class="lbl">Search</label><input class="inp" id="if-srch" placeholder="Name/SKU..." oninput="renderInvList()" style="font-size:.72rem;padding:7px 10px"></div></div></div>
+  ${CUP?.role==='owner'?`<button class="btn btn-gold btn-full" style="margin-bottom:12px" onclick="openStockTake()">🔍 Physical Verification</button>`:''}
+  <div id="inv-list"></div>`;
 }
+function iInv(){renderInvList();}
 
 function renderInvList(){
-  const fcat=$('inv-fcat')?.value||'';
-  const fsup=$('inv-fsup')?.value||'';
-  const fcol=$('inv-fcol')?.value||'';
-  const fsz=$('inv-fsz')?.value||'';
-  const fage=$('inv-fage')?.value||'';
-  const fsrch=($('inv-fsrch')?.value||'').toLowerCase();
-
-  let prods=db.products.filter(p=>{
-    if(Number(p.stock)<=0) return false; // hide zero stock
-    if(fcat&&p.category!==fcat) return false;
-    if(fsup&&p.supplier!==fsup) return false;
-    if(fcol&&p.colour!==fcol) return false;
-    if(fsz&&p.size!==fsz) return false;
-    if(fsrch&&!p.name.toLowerCase().includes(fsrch)&&!p.code.toLowerCase().includes(fsrch)) return false;
-    if(fage){
-      const days=getAgeDays(p.dateAdded);
-      if(fage==='fresh'&&days>=30) return false;
-      if(fage==='ageing'&&(days<30||days>=60)) return false;
-      if(fage==='slow'&&(days<60||days>=90)) return false;
-      if(fage==='dead'&&days<90) return false;
-    }
-    return true;
-  });
-
-  const c=$('inv-list-content');if(!c)return;
-  if(!prods.length){c.innerHTML='<div class="em"><div class="ei">📦</div><p>No items match filters</p></div>';return;}
-
-  // Group by category
-  const cats={};
-  prods.forEach(p=>{
-    if(!cats[p.category])cats[p.category]={items:[],qty:0,val:0};
-    cats[p.category].items.push(p);
-    cats[p.category].qty+=Number(p.stock);
-    cats[p.category].val+=Number(p.stock)*Number(p.costPrice);
-  });
-  const tv=prods.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0);
-
-  c.innerHTML=Object.entries(cats).map(([cat,data])=>`
-    <div style="margin-bottom:14px">
-      <div class="rh"><div>${ce(cat)} ${cat}</div><div>Qty: ${data.qty} · ${fmt(data.val)}</div></div>
-      <div style="border:1px solid var(--bd2);border-top:none;border-radius:0 0 10px 10px">
-        <div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;background:var(--cr2);padding:6px 10px">
-          <div style="font-size:.58rem;font-weight:700;color:var(--tx3)">ITEM</div>
-          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:center">QTY</div>
-          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:right">AGE</div>
-          <div style="font-size:.58rem;font-weight:700;color:var(--tx3);text-align:right">VALUE</div>
-        </div>
-        ${data.items.map(p=>{
-          const days=getAgeDays(p.dateAdded);
-          const age=getAgeLabel(days);
-          return`<div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;padding:8px 10px;border-top:1px solid var(--cr2);background:white;cursor:pointer" onclick="showMov('${p.code}')">
-            <div>
-              <div style="font-size:.7rem;font-weight:600">${p.name}</div>
-              <div style="font-size:.56rem;color:var(--tx3)">${p.colour||''}${p.size?' · '+p.size:''}</div>
-              <div style="font-family:monospace;font-size:.52rem;color:var(--tx3)">${p.code}</div>
-              <div style="font-size:.56rem;color:var(--tx3)">${p.supplier||''}</div>
-            </div>
-            <div style="text-align:center">
-              <span style="font-size:.88rem;font-weight:700;color:${Number(p.stock)<=2?'var(--rd)':'var(--gn)'}">${p.stock}</span>
-              ${Number(p.stock)<=2?'<div style="font-size:.5rem;color:var(--rd)">LOW</div>':''}
-            </div>
-            <div style="text-align:right">
-              <div style="font-size:.58rem;font-weight:700;color:${age.color}">${days}d</div>
-              <div style="font-size:.52rem;color:${age.color}">${age.label.split(' ')[0]}</div>
-            </div>
-            <div style="text-align:right;font-size:.7rem;font-weight:600">${fmt(Number(p.stock)*Number(p.costPrice))}</div>
-          </div>`;
-        }).join('')}
-        <div style="display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr;padding:7px 10px;background:var(--cr2)">
-          <div style="font-size:.65rem;font-weight:700;color:var(--br)">Total</div>
-          <div style="text-align:center;font-size:.72rem;font-weight:700;color:var(--br)">${data.qty}</div>
-          <div></div>
-          <div style="text-align:right;font-size:.72rem;font-weight:700;color:var(--br)">${fmt(data.val)}</div>
-        </div>
-      </div>
-    </div>
-  `).join('')+`
-  <div style="background:var(--br);color:white;border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:1.8fr 0.6fr 0.8fr 0.8fr">
-    <div style="font-size:.78rem;font-weight:700">GRAND TOTAL</div>
-    <div style="text-align:center;font-size:.78rem;font-weight:700">${prods.reduce((s,p)=>s+Number(p.stock),0)}</div>
-    <div></div>
-    <div style="text-align:right;font-size:.78rem;font-weight:700">${fmt(tv)}</div>
-  </div>`;
+  const fcat=$('if-cat')?.value||'',fst=$('if-st')?.value||'',fcol=$('if-col')?.value||'',fsrch=($('if-srch')?.value||'').toLowerCase();
+  const c=$('inv-list');if(!c)return;
+  let prods=products.filter(p=>{if((p.stock||0)<=0)return false;if(fcat&&p.category!==fcat)return false;if(fst&&p.status!==fst)return false;if(fcol&&p.colour!==fcol)return false;if(fsrch&&!p.name.toLowerCase().includes(fsrch)&&!p.sku.toLowerCase().includes(fsrch))return false;return true;});
+  if(!prods.length){c.innerHTML='<div class="empty"><div class="empty-ico">📦</div><p class="t-sm">No items match</p></div>';return;}
+  const cats={};prods.forEach(p=>{if(!cats[p.category])cats[p.category]={items:[],qty:0,val:0};cats[p.category].items.push(p);cats[p.category].qty+=p.stock||0;cats[p.category].val+=(p.stock||0)*p.purchase_price;});
+  const tv=prods.reduce((s,p)=>s+(p.stock||0)*p.purchase_price,0);
+  c.innerHTML=Object.entries(cats).map(([cat,d])=>`<div style="margin-bottom:14px"><div class="rpt-hdr"><div>${emo(cat)} ${cat}</div><div>Qty: ${d.qty} · ${fmt(d.val)}</div></div><div style="border:1px solid var(--border2);border-top:none;border-radius:0 0 10px 10px"><div class="inv-hdr"><div>Item</div><div style="text-align:center">Qty</div><div style="text-align:right">Age</div><div style="text-align:right">Value</div></div>${d.items.map(p=>`<div class="inv-row" onclick="showMovModal('${p.id}')"><div><div class="t-sm fw-6">${p.name}</div><div class="t-xs c-ink3">${p.colour||''}${p.size?' · '+p.size:''}</div><div style="font-family:monospace;font-size:.52rem;color:var(--ink3)">${p.sku}</div></div><div style="text-align:center"><span class="t-base fw-7" style="color:${(p.stock||0)<=2?'var(--red)':'var(--sage)'}">${p.stock||0}</span>${(p.stock||0)<=2?'<div class="t-xs" style="color:var(--red)">LOW</div>':''}</div><div style="text-align:right">${ageBadge(p.age_days||0)}<div class="t-xs c-ink3">${p.last_purchase_date||''}</div></div><div style="text-align:right" class="t-sm fw-6">${fmt((p.stock||0)*p.purchase_price)}</div></div>`).join('')}<div class="inv-foot"><div class="t-xs fw-7 c-ink2">Total</div><div style="text-align:center" class="t-sm fw-7 c-ink2">${d.qty}</div><div></div><div style="text-align:right" class="t-sm fw-7 c-ink2">${fmt(d.val)}</div></div></div></div>`).join('')+`<div style="background:var(--ink);color:white;border-radius:10px;padding:12px 15px;display:grid;grid-template-columns:1.8fr .6fr .8fr .8fr"><div class="t-sm fw-7">GRAND TOTAL</div><div style="text-align:center" class="t-sm fw-7">${prods.reduce((s,p)=>s+(p.stock||0),0)}</div><div></div><div style="text-align:right" class="t-sm fw-7">${fmt(tv)}</div></div>`;
 }
 
-function showMov(sku){
-  const p=db.products.find(p=>p.code===sku);if(!p)return;
-  const ms=db.movements.filter(m=>m.sku===sku);
-  const ti=ms.filter(m=>m.qtyChange>0).reduce((s,m)=>s+m.qtyChange,0);
-  const to=ms.filter(m=>m.qtyChange<0).reduce((s,m)=>s+Math.abs(m.qtyChange),0);
-  const tc={Purchase:'var(--gn)',Sale:'var(--br)','Sale Return':'var(--go)','Purchase Return':'var(--go)',Damaged:'var(--rd)','Lost - Owner':'var(--rd)','Lost - Staff':'var(--rd)','Stock Take':'var(--bl)'};
-  openModal(p.name,`<div style="display:flex;gap:10px;align-items:center;background:var(--cr2);border-radius:10px;padding:12px;margin-bottom:14px"><div style="width:48px;height:48px;border-radius:8px;background:var(--cr2);display:flex;align-items:center;justify-content:center;font-size:1.4rem">${ce(p.category)}</div><div><div style="font-weight:700">${p.name}</div><div style="font-size:.62rem;color:var(--tx3)">${p.category}${p.colour?' · '+p.colour:''}${p.size?' · '+p.size:''}</div><div style="font-family:monospace;font-size:.6rem;color:var(--br)">${p.code}</div></div></div>
-  <div class="g3" style="margin-bottom:14px"><div style="text-align:center;background:white;border-radius:8px;padding:8px;border:1px solid var(--bd2)"><div style="font-size:.58rem;color:var(--tx3)">IN</div><div style="font-size:1rem;font-weight:700;color:var(--gn)">${ti}</div></div><div style="text-align:center;background:white;border-radius:8px;padding:8px;border:1px solid var(--bd2)"><div style="font-size:.58rem;color:var(--tx3)">OUT</div><div style="font-size:1rem;font-weight:700;color:var(--rd)">${to}</div></div><div style="text-align:center;background:white;border-radius:8px;padding:8px;border:1px solid var(--bd2)"><div style="font-size:.58rem;color:var(--tx3)">BAL</div><div style="font-size:1rem;font-weight:700;color:var(--br)">${p.stock}</div></div></div>
-  ${!ms.length?'<div class="em"><p>No movements yet</p></div>':ms.slice().reverse().map(m=>`<div class="mi"><div class="md" style="background:${tc[m.type]||'var(--tx3)'}"></div><div class="mf"><div class="mt2">${m.type}</div><div class="mm">${m.date} ${m.time} · ${m.user}${m.reason?' · '+m.reason:''}</div></div><div class="mq" style="color:${m.qtyChange>0?'var(--gn)':'var(--rd)'}">${m.qtyChange>0?'+':''}${m.qtyChange}</div></div>`).join('')}`);
+async function showMovModal(varId){
+  const p=products.find(p=>p.id===varId);if(!p)return;
+  const{data:movs}=await sb.from('inventory_movements').select('*').eq('variant_id',varId).order('created_at',{ascending:false}).limit(30);
+  const tc={purchase:'var(--sage)',sale:'var(--rust)',sale_return:'var(--gold)',purchase_return:'var(--gold)',damaged:'var(--red)',lost_owner:'var(--red)',lost_staff:'var(--red)',stock_take:'var(--ink3)'};
+  openMo(p.name,`<div class="flex gap-2 items-c" style="background:var(--cream2);border-radius:10px;padding:12px;margin-bottom:14px"><div class="prod-thumb" style="width:50px;height:50px">${p.photo_url?`<img src="${p.photo_url}">`:(emo(p.category))}</div><div><div class="t-base fw-6">${p.name}</div><div class="t-xs c-ink3">${p.category}${p.colour?' · '+p.colour:''}${p.size?' · '+p.size:''}</div><div style="font-family:monospace;font-size:.6rem;color:var(--gold)">${p.sku}</div></div></div><div class="g3" style="margin-bottom:14px"><div style="text-align:center;background:white;border-radius:9px;padding:9px;border:1px solid var(--border2)"><div class="t-xs c-ink3">Stock</div><div class="t-xl fw-7 c-sage">${p.stock||0}</div></div><div style="text-align:center;background:white;border-radius:9px;padding:9px;border:1px solid var(--border2)"><div class="t-xs c-ink3">Age</div><div class="t-xl fw-7 c-ink2">${p.age_days||0}d</div></div><div style="text-align:center;background:white;border-radius:9px;padding:9px;border:1px solid var(--border2)"><div class="t-xs c-ink3">Value</div><div style="font-size:.75rem;font-weight:700;color:var(--gold)">${fmt((p.stock||0)*p.purchase_price)}</div></div></div>${!(movs||[]).length?'<div class="empty"><p>No movements yet</p></div>':(movs||[]).map(m=>`<div style="display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid var(--cream2)"><div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:${tc[m.movement_type]||'var(--ink3)'}"></div><div style="flex:1"><div class="t-sm fw-6">${(m.movement_type||'').replace(/_/g,' ')}</div><div class="t-xs c-ink3">${m.created_at?.split('T')[0]||''} · ${m.reason||''}</div></div><div class="t-sm fw-7" style="color:${m.qty_change>0?'var(--sage)':'var(--red)'}">${m.qty_change>0?'+':''}${m.qty_change}</div></div>`).join('')}`);
 }
 
 function openStockTake(){
-  openModal('🔍 Stock Verification',`<div class="ib">Enter physical count. System shows differences.</div><div>${db.products.map((p,i)=>`<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--cr2)"><div><div style="font-size:.72rem;font-weight:600">${p.name}</div><div style="font-size:.6rem;color:var(--tx3)">${p.code} · Book: <strong style="color:var(--br)">${p.stock}</strong></div></div><input type="number" id="sti${i}" placeholder="Physical" style="width:68px;border:1.5px solid var(--bd);border-radius:8px;padding:6px 8px;font-size:.8rem;text-align:center" oninput="updStDiff(${i})"><div id="std${i}" style="font-size:.72rem;font-weight:700;min-width:35px;text-align:right"></div></div>`).join('')}</div><button class="btn bp bw" style="margin-top:14px" onclick="saveStockTake()">✅ Save</button>`);
-}
-function updStDiff(i){const inp=$(`sti${i}`);const d=$(`std${i}`);if(!inp||!d)return;const ph=Number(inp.value);const bk=Number(db.products[i].stock);const df=ph-bk;if(inp.value===''){d.textContent='';return;}d.textContent=df===0?'✅':(df>0?`+${df}`:String(df));d.style.color=df===0?'var(--gn)':'var(--rd)';}
-function saveStockTake(){
-  let adj=0;const d=td();const t=tn();
-  const ok=atomic([()=>{db.products.forEach((p,i)=>{const inp=$(`sti${i}`);if(!inp||inp.value==='')return;const ph=Number(inp.value);const df=ph-Number(p.stock);if(df!==0){db.movements.push({id:uid(),date:d,time:t,sku:p.code,name:p.name,category:p.category,type:'Stock Take',qtyChange:df,cost:p.costPrice,value:Math.abs(df)*Number(p.costPrice),user:CU.name,reason:`Physical:${ph} Book:${p.stock}`});p.stock=ph;adj++;}});}]);
-  if(ok){closeModal();showTab('inv',document.querySelector('.nt.active'));toast(`✅ ${adj} items adjusted`,'success');}
-}
-
-// ── PURCHASE ──
-function rBuy(){
-  return`<div style="display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px"><div class="pl active" onclick="showBuyTab('new',this)">➕ New</div><div class="pl" onclick="showBuyTab('ret',this)">🔄 Return</div><div class="pl" onclick="showBuyTab('dmg',this)">💥 Damaged</div><div class="pl" onclick="showBuyTab('lst',this)">❌ Lost</div><div class="pl" onclick="showBuyTab('agd',this)">🏷️ Aged</div></div><div id="btab">${rNewPur()}</div>`;
-}
-function showBuyTab(t,el){document.querySelectorAll('#btab').forEach(()=>{});document.querySelectorAll('.pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');const c=$('btab');if(!c)return;switch(t){case'new':c.innerHTML=rNewPur();break;case'ret':c.innerHTML=rPurRet();break;case'dmg':c.innerHTML=rDmg();break;case'lst':c.innerHTML=rLst();break;case'agd':c.innerHTML=rAgd();break;}}
-
-function rNewPur(){
-  return`<div class="card"><div class="ctitle">📦 New Purchase</div>
-  <div class="fg"><label class="lb">📸 Product Photo</label><div class="pu" onclick="document.getElementById('pph').click()"><input type="file" id="pph" accept="image/*" onchange="hPhoto(this,'prod')" style="display:none"><div class="pi2" id="ppi">📸</div><p>Tap to upload</p><div class="st" id="ppn"></div></div></div>
-  <div class="fg"><label class="lb">Product Name *</label><input class="ip" id="pnm" placeholder="e.g. Embroidered Lawn 3PC"></div>
-  <div class="g2"><div class="fg"><label class="lb">Category *</label><select class="sl2" id="pcat" onchange="updSKU()"><option value="">Select...</option>${CATS.map(c=>`<option>${c}</option>`).join('')}</select></div><div class="fg"><label class="lb">Size</label><input class="ip" id="psz" placeholder="S/M/L/XL" oninput="updSKU()"></div></div>
-  <div class="g2"><div class="fg"><label class="lb">No of Designs</label><input class="ip" id="pds" type="number" placeholder="5"></div><div class="fg"><label class="lb">No of Colours</label><input class="ip" id="pnc" type="number" placeholder="3"></div></div>
-  <div class="fg"><label class="lb">Colour</label><input class="ip" id="pcl" placeholder="Navy Blue, Red..." oninput="updSKU()"></div>
-  <div class="sp2"><div style="font-size:.62rem;color:var(--tx3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.08em">🏷️ SKU Preview</div><div class="sc3" id="skuprev">Select category...</div><div style="font-size:.58rem;color:var(--tx3);margin-top:4px">Auto-generated on save</div></div>
-  <div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="pqt" type="number" placeholder="0" oninput="updPay()"></div><div class="fg"><label class="lb">Cost ₨ *</label><input class="ip" id="pcs" type="number" placeholder="0" oninput="updPay()"></div></div>
-  <div class="fg"><label class="lb">Supplier</label><input class="ip" id="psp" placeholder="Supplier name"></div>
-  <div class="ib">💡 Sale price negotiated with customer at billing — not entered here.</div>
-  <div class="fg"><label class="lb">Payment</label><div class="pg" id="ppills2"><div class="pl active" onclick="setPurPay('Cash',this)">💵 Cash</div><div class="pl" onclick="setPurPay('Credit',this)">📋 Credit</div><div class="pl" onclick="setPurPay('Partial',this)">⚡ Partial</div></div></div>
-  <div id="ppdet"></div>
-  <div id="pprev" style="display:none" class="wb"></div>
-  <div class="fg"><label class="lb">📎 Wholesaler Bill</label><div class="pu" onclick="document.getElementById('pbph').click()"><input type="file" id="pbph" accept="image/*" onchange="hPhoto(this,'bill')" style="display:none"><div class="pi2">🧾</div><p>Attach bill photo</p><div class="st" id="pbn"></div></div></div>
-  <button class="btn bo bw" onclick="savePur()">✅ Save Purchase + Update Inventory</button></div>`;
-}
-
-function updSKU(){const c=$('pcat')?.value||'';const cl=$('pcl')?.value||'';const s=$('psz')?.value||'';const p=$('skuprev');if(!p)return;if(!c){p.textContent='Select category...';return;}p.textContent=`${CCOD[c]||c.substring(0,3).toUpperCase()}-${getColCode(cl)}-${getSzCode(s)}-###`;}
-function setPurPay(m,el){
-  purPayMode=m;
-  document.querySelectorAll('#ppills2 .pl').forEach(p=>p.classList.remove('active'));
-  el.classList.add('active');
-  const d=$('ppdet');if(!d)return;
-  const cashBal=getAccBal('Cash','Cash Drawer');
-  const banks=db.accounts.filter(a=>a.type==='Bank');
-  const emoney=db.accounts.filter(a=>a.type==='EMoney');
-
-  if(m==='Cash'){
-    d.innerHTML=`<div class="ib" style="color:${cashBal>0?'var(--tx2)':'var(--rd)'}">💵 Cash Drawer: <strong>${fmt(cashBal)}</strong>${cashBal<=0?' ⚠️ Insufficient balance!':''}</div>`;
-  } else if(m==='Credit'){
-    d.innerHTML=`<div class="ib" style="color:var(--rd);border-color:var(--rd)">📋 Full amount posted to Supplier Payable. Supplier name required below.</div>`;
-  } else if(m==='Partial'){
-    d.innerHTML=`
-      <div class="fg"><label class="lb">Amount Paid Now ₨</label><input class="ip" id="ppd" type="number" placeholder="0" oninput="updPay()"></div>
-      <div class="fg"><label class="lb">Payment Source</label>
-        <div class="pg" id="psrcp">
-          <div class="pl active" onclick="setPurSrc('Cash',this)">💵 Cash</div>
-          <div class="pl" onclick="setPurSrc('Bank',this)">🏦 Bank</div>
-          <div class="pl" onclick="setPurSrc('EMoney',this)">📱 E-Money</div>
-          <div class="pl" onclick="setPurSrc('Owner',this)">👑 Owner</div>
-          <div class="pl" onclick="setPurSrc('Loan',this)">🤝 Loan</div>
-        </div>
-      </div>
-      <div id="psdet"></div>`;
-  }
-  updPay();
-}
-
-function setPurSrc(s,el){
-  purSrc=s;
-  document.querySelectorAll('#psrcp .pl').forEach(p=>p.classList.remove('active'));
-  el.classList.add('active');
-  const d=$('psdet');if(!d)return;
-  const cashBal=getAccBal('Cash','Cash Drawer');
-  const banks=db.accounts.filter(a=>a.type==='Bank');
-  const emoney=db.accounts.filter(a=>a.type==='EMoney');
-
-  if(s==='Cash'){
-    d.innerHTML=`<div class="ib" style="color:${cashBal>0?'var(--tx2)':'var(--rd)'}">💵 Available: <strong>${fmt(cashBal)}</strong>${cashBal<=0?' ⚠️ Insufficient!':''}</div>`;
-  } else if(s==='Bank'){
-    d.innerHTML=`<div class="fg"><label class="lb">Bank Account</label>
-      <select class="sl2" id="psbn" onchange="showPurAccBal('Bank',this.value)">
-        <option value="">Select bank...</option>
-        ${banks.map(b=>`<option value="${b.name}">${b.name} — ${fmt(b.bal)}</option>`).join('')}
-        <option value="__new__">➕ Add New Bank</option>
-      </select>
-    </div><div id="pur-bank-bal"></div>`;
-  } else if(s==='EMoney'){
-    d.innerHTML=`<div class="fg"><label class="lb">E-Money Provider</label>
-      <select class="sl2" id="psem" onchange="showPurAccBal('EMoney',this.value)">
-        <option value="">Select...</option>
-        ${emoney.map(e=>`<option value="${e.name}">${e.name} — ${fmt(e.bal)}</option>`).join('')}
-        <option value="EasyPaisa">EasyPaisa</option>
-        <option value="JazzCash">JazzCash</option>
-        <option value="NayaPay">NayaPay</option>
-        <option value="__new__">➕ Add New</option>
-      </select>
-    </div><div id="pur-emoney-bal"></div>`;
-  } else if(s==='Owner'){
-    d.innerHTML=`<div class="ib">👑 Will be posted to <strong>Owner Payable</strong> ledger automatically.</div>`;
-  } else if(s==='Loan'){
-    d.innerHTML=`<div class="fg"><label class="lb">Shopkeeper/Party Name</label><input class="ip" id="pssk" placeholder="Party name"></div><div class="ib">🤝 Will be posted to <strong>Market Loan</strong> ledger party-wise.</div>`;
-  }
-}
-
-function showPurAccBal(type, name){
-  if(name==='__new__'){createNewAccount(type);return;}
-  if(!name) return;
-  const acc=db.accounts.find(a=>a.type===type&&a.name===name);
-  const bal=acc?acc.bal:0;
-  const infoId=type==='Bank'?'pur-bank-bal':'pur-emoney-bal';
-  const info=$(infoId);
-  if(info) info.innerHTML=`<div class="ib" style="color:${bal>0?'var(--gn)':'var(--rd)'}">Balance: <strong>${fmt(bal)}</strong>${bal<=0?' ⚠️ Insufficient!':''}</div>`;
-}
-function updPay(){const q=Number($('pqt')?.value||0);const c=Number($('pcs')?.value||0);const tot=q*c;const pd=purPayMode==='Partial'?Number($('ppd')?.value||0):purPayMode==='Cash'?tot:0;const pay=Math.max(0,tot-pd);const p=$('pprev');if(!p)return;if(tot>0){p.style.display='block';p.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Total</span><span>${fmt(tot)}</span></div><div style="display:flex;justify-content:space-between;color:var(--gn)"><span>Paid</span><span>- ${fmt(pd)}</span></div><div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px dashed var(--bd2);margin-top:5px;padding-top:5px;color:var(--rd)"><span>Payable</span><span>${fmt(pay)}</span></div>`;}else p.style.display='none';}
-
-function hPhoto(inp,type){const file=inp.files[0];if(!file)return;const r=new FileReader();r.onload=e=>{const img=new Image();img.onload=()=>{const cv=document.createElement('canvas');const MAX=type==='prod'?300:400;let w=img.width,h=img.height;if(w>MAX){h=Math.round(h*MAX/w);w=MAX;}cv.width=w;cv.height=h;cv.getContext('2d').drawImage(img,0,0,w,h);const b64=cv.toDataURL('image/jpeg',.65);if(type==='prod'){pPhoto=b64;const i=$('ppi');if(i)i.textContent='✅';const n=$('ppn');if(n)n.textContent=file.name;}else{bPhoto=b64;const n=$('pbn');if(n)n.textContent='✅ '+file.name;}};img.src=e.target.result;};r.readAsDataURL(file);}
-
-async function savePur(){
-  const nm=$('pnm')?.value?.trim();const cat=$('pcat')?.value;const qty=Number($('pqt')?.value||0);const cst=Number($('pcs')?.value||0);const sup=$('psp')?.value?.trim()||'Unknown';const sz=$('psz')?.value?.trim()||'';const cl=$('pcl')?.value?.trim()||'';
-  if(!nm||!cat||!qty||!cst){toast('Fill: Name, Category, Qty, Cost','error');return;}
-  const tot=qty*cst;const sku=await genSKU(cat,cl,sz);const d=td();const t=tn();const pid=`PUR-${Date.now()}`;
-  let pd=0,pybl=0,psrc='',pprov='';
-  if(purPayMode==='Cash'){pd=tot;psrc='Cash';}
-  else if(purPayMode==='Credit'){pybl=tot;psrc='Credit';}
-  else{pd=Number($('ppd')?.value||0);pybl=Math.max(0,tot-pd);psrc=purSrc;if(purSrc==='Bank')pprov=$('psbn')?.value||'Bank';else if(purSrc==='EMoney')pprov=$('psem')?.value||'EMoney';else if(purSrc==='Loan')pprov=$('pssk')?.value||'Shopkeeper';else if(purSrc==='Owner')pprov='Owner';}
-  const prod={code:sku,name:nm,category:cat,size:sz,colour:cl,noOfDesigns:$('pds')?.value||'',noOfColours:$('pnc')?.value||'',costPrice:cst,supplier:sup,photo:'',stock:qty,dateAdded:d};
-  if(pPhoto){const ph=ld('sl3_photos',{});ph[sku]=pPhoto;try{sv('sl3_photos',ph);prod.photo=pPhoto;}catch(e){}}
-  const ok=atomic([
-    ()=>{
-      if(db.products.find(p=>p.code===sku)) throw new Error(`SKU ${sku} already exists. Please try again.`);
-      db.products.push({...prod});
-    },
-    ()=>{db.transactions.push({id:pid,date:d,time:t,type:'Purchase',party:sup,payMode:purPayMode,total:tot,paid:pd,payable:pybl,psrc,pprov,user:CU.name,status:'done'});},
-    ()=>{db.movements.push({id:uid(),date:d,time:t,sku,name:nm,category:cat,type:'Purchase',qtyChange:qty,cost:cst,value:tot,txnId:pid,user:CU.name,reason:`Supplier: ${sup}`});},
-    ()=>{
-      postEntry(pid,d,'Asset','Inventory',tot,0,`Purchase ${sku}`);
-      if(purPayMode==='Cash'){postEntry(pid,d,'Cash','Cash Drawer',tot,0,`Purchase ${sku}`);}
-      else if(purPayMode==='Credit'){postEntry(pid,d,'Supplier',sup,0,tot,`Purchase Credit ${sku}`);}
-      else{if(pd>0){if(psrc==='Cash')postEntry(pid,d,'Cash','Cash Drawer',pd,0,`Purchase partial ${sku}`);else if(psrc==='Bank')postEntry(pid,d,'Bank',pprov,pd,0,`Purchase partial ${sku}`);else if(psrc==='EMoney')postEntry(pid,d,'EMoney',pprov,pd,0,`Purchase partial ${sku}`);else if(psrc==='Owner')postEntry(pid,d,'Owner','Owner Account',0,pd,`Owner paid ${sku}`);else if(psrc==='Loan')postEntry(pid,d,'Loan',pprov,0,pd,`Loan for ${sku}`);}if(pybl>0)postEntry(pid,d,'Supplier',sup,0,pybl,`Purchase payable ${sku}`);}
-    }
-  ]);
-  if(ok){
-    const se=[{sheet:'Products',data:{sku,name:nm,category:cat,size:sz,colour:cl,noOfDesigns:prod.noOfDesigns,noOfColours:prod.noOfColours,costPrice:cst,supplier:sup,stock:qty,dateAdded:d,user:CU.name}},{sheet:'Purchases',data:{pid,date:d,sku,name:nm,category:cat,qty,costPrice:cst,total:tot,payType:purPayMode,paid:pd,payable:pybl,psrc,pprov,supplier:sup,user:CU.name}}];
-    if(pybl>0)se.push({sheet:'Suppliers',data:{date:d,party:sup,type:'Purchase Credit',amount:pybl,notes:`${nm} x${qty}`,user:CU.name}});
-    if(pd>0&&psrc==='Cash')se.push({sheet:'Cash Register',data:{date:d,nature:`Purchase ${sku}`,category:'Purchase',amountIn:0,amountOut:pd,user:CU.name}});
-    syncBatch(se);
-    showSKUBanner(sku,nm,cat,sz,cl);
-    toast(`✅ SKU: ${sku} | Stock: ${qty}${pybl>0?` | Payable: ${fmt(pybl)}`:''}`,'success',5000);
-    resetPurForm();pPhoto=null;bPhoto=null;
-  }
-}
-
-function showSKUBanner(sku,nm,cat,sz,cl){const b=document.createElement('div');b.style.cssText='position:fixed;top:80px;left:50%;transform:translateX(-50%);background:var(--br);color:white;border-radius:14px;padding:14px 20px;z-index:500;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.3);min-width:240px';b.innerHTML=`<div style="font-size:.58rem;opacity:.7;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">✅ SKU Generated</div><div style="font-family:monospace;font-size:1.4rem;font-weight:700;color:#E8B84B;letter-spacing:.08em">${sku}</div><div style="font-size:.7rem;opacity:.8;margin-top:4px">${nm} · ${cat}${sz?' · '+sz:''}${cl?' · '+cl:''}</div><button onclick="this.parentElement.remove()" style="margin-top:8px;background:rgba(255,255,255,.15);color:white;border:none;border-radius:7px;padding:5px 14px;font-size:.68rem;cursor:pointer">Got it ✓</button>`;document.body.appendChild(b);setTimeout(()=>{if(b.parentElement)b.remove();},8000);}
-
-function resetPurForm(){['pnm','psz','pds','pnc','pcl','pqt','pcs','psp'].forEach(id=>{const e=$(id);if(e)e.value='';});if($('pcat'))$('pcat').value='';if($('ppi'))$('ppi').textContent='📸';if($('ppn'))$('ppn').textContent='';if($('pbn'))$('pbn').textContent='';if($('skuprev'))$('skuprev').textContent='Select category...';if($('pprev'))$('pprev').style.display='none';if($('ppdet'))$('ppdet').innerHTML='';const pp=$('ppills2');if(pp){pp.querySelectorAll('.pl').forEach((p,i)=>p.classList.toggle('active',i===0));}purPayMode='Cash';purSrc='Cash';}
-
-function rPurRet(){const opts=db.products.map(p=>`<option value="${p.code}">${p.name} (${p.code})</option>`).join('');return`<div class="card"><div class="ctitle">🔄 Purchase Return</div><div class="fg"><label class="lb">Product</label><select class="sl2" id="prp" onchange="fillPR()">${opts}</select></div><div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="prq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="prc" type="number" placeholder="0"></div></div><div class="fg"><label class="lb">Supplier</label><input class="ip" id="prs" placeholder="Supplier"></div><div class="fg"><label class="lb">Reason</label><input class="ip" id="prr" placeholder="Defective..."></div><button class="btn bp bw" onclick="savePurRet()">✅ Process Return</button></div>`;}
-function fillPR(){const p=db.products.find(p=>p.code===$('prp')?.value);if(p){if($('prc'))$('prc').value=p.costPrice;if($('prs'))$('prs').value=p.supplier||'';}}
-function savePurRet(){const sku=$('prp')?.value;const qty=Number($('prq')?.value||0);const cst=Number($('prc')?.value||0);const sup=$('prs')?.value||'';const rsn=$('prr')?.value||'';if(!sku||!qty||!cst){toast('Fill all','error');return;}const p=db.products.find(p=>p.code===sku);if(!p)return;const id=`PRET-${Date.now()}`;const d=td();const t=tn();const amt=qty*cst;const ok=atomic([()=>{p.stock=Math.max(0,Number(p.stock)-qty);db.movements.push({id:uid(),date:d,time:t,sku,name:p.name,category:p.category,type:'Purchase Return',qtyChange:-qty,cost:cst,value:amt,txnId:id,user:CU.name,reason:rsn});db.transactions.push({id,date:d,time:t,type:'Purchase Return',party:sup,payMode:'Cash',total:-amt,user:CU.name,status:'done'});postEntry(id,d,'Supplier',sup,amt,0,`Return: ${p.name} x${qty}`);postEntry(id,d,'Cash','Cash Drawer',0,amt,`Pur Return ${sku}`);postEntry(id,d,'Asset','Inventory',0,amt,`Return ${sku}`);}]);if(ok){syncBatch([{sheet:'Purchases',data:{pid:id,date:d,sku,qty:-qty,total:-amt,payType:'Purchase Return',supplier:sup,notes:rsn,user:CU.name}}]);toast(`✅ Return! Stock -${qty}. Payable -${fmt(amt)}`,'success');}}
-
-function rDmg(){const opts=db.products.map(p=>`<option value="${p.code}">${p.name} (${p.code})</option>`).join('');return`<div class="card"><div class="ctitle" style="color:var(--rd)">💥 Damaged Items</div><div class="fg"><label class="lb">Product</label><select class="sl2" id="dmp" onchange="const p=db.products.find(p=>p.code===this.value);if(p&&$('dmc'))$('dmc').value=p.costPrice;">${opts}</select></div><div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="dmq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="dmc" type="number" placeholder="0"></div></div><div class="fg"><label class="lb">Description</label><input class="ip" id="dmd" placeholder="Water damage, torn..."></div><button class="btn br bw" onclick="saveDmg()">💾 Record Damaged</button></div>`;}
-function saveDmg(){const sku=$('dmp')?.value;const qty=Number($('dmq')?.value||0);const cst=Number($('dmc')?.value||0);const desc=$('dmd')?.value||'';if(!sku||!qty)return;const p=db.products.find(p=>p.code===sku);if(!p)return;const id=`DMG-${Date.now()}`;const d=td();const t=tn();const ok=atomic([()=>{p.stock=Math.max(0,Number(p.stock)-qty);db.movements.push({id:uid(),date:d,time:t,sku,name:p.name,category:p.category,type:'Damaged',qtyChange:-qty,cost:cst,value:qty*cst,txnId:id,user:CU.name,reason:desc});postEntry(id,d,'Expense','Damaged Goods',qty*cst,0,desc);postEntry(id,d,'Asset','Inventory',0,qty*cst,`Damaged: ${p.name}`);}]);if(ok)toast(`💥 Recorded! Stock -${qty}. Loss: ${fmt(qty*cst)}`,'success');}
-
-function rLst(){const opts=db.products.map(p=>`<option value="${p.code}">${p.name} (${p.code})</option>`).join('');return`<div class="card"><div class="ctitle">❌ Lost Items</div><div class="fg"><label class="lb">Lost By</label><div class="pg"><div class="pl active" id="lbo" onclick="setLB('Owner',this)">👑 Owner</div><div class="pl" id="lbs" onclick="setLB('Staff',this)">👤 Staff</div></div></div><div class="fg"><label class="lb" id="lbl">Owner Name</label><input class="ip" id="lbp" placeholder="Name"></div><div class="fg"><label class="lb">Product</label><select class="sl2" id="lbpr">${opts}</select></div><div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="lbq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="lbc" type="number" placeholder="0"></div></div><div class="fg"><label class="lb">Notes</label><input class="ip" id="lbn" placeholder="Details..."></div><div class="ib" id="lbnt">👑 Posted to Owner Payable ledger.</div><button class="btn bp bw" onclick="saveLst()">💾 Record Lost</button></div>`;}
-function setLB(b,el){lostBy=b;document.querySelectorAll('#lbo,#lbs').forEach(p=>p.classList.remove('active'));el.classList.add('active');if($('lbl'))$('lbl').textContent=b==='Owner'?'Owner Name':'Staff Name';if($('lbnt'))$('lbnt').textContent=b==='Owner'?'👑 Posted to Owner Payable ledger.':'👤 Posted to Employee ledger.';}
-function saveLst(){const sku=$('lbpr')?.value;const qty=Number($('lbq')?.value||0);const cst=Number($('lbc')?.value||0);const per=$('lbp')?.value||lostBy;const nts=$('lbn')?.value||'';if(!sku||!qty)return;const p=db.products.find(p=>p.code===sku);if(!p)return;const id=`LST-${Date.now()}`;const d=td();const t=tn();const amt=qty*cst;const ok=atomic([()=>{p.stock=Math.max(0,Number(p.stock)-qty);db.movements.push({id:uid(),date:d,time:t,sku,name:p.name,category:p.category,type:`Lost - ${lostBy}`,qtyChange:-qty,cost:cst,value:amt,txnId:id,user:CU.name,reason:`${lostBy}: ${per}. ${nts}`});if(lostBy==='Owner')postEntry(id,d,'Owner','Owner Account',0,amt,`Item taken: ${p.name} x${qty}`);else postEntry(id,d,'Employee',per,0,amt,`Item taken: ${p.name} x${qty}`);postEntry(id,d,'Asset','Inventory',0,amt,`Lost: ${p.name}`);}]);if(ok)toast(`❌ Recorded! Stock -${qty}. Posted to ${lostBy} ledger`,'success');}
-
-function rAgd(){const opts=db.products.map(p=>`<option value="${p.code}">${p.name} (${p.code})</option>`).join('');return`<div class="card"><div class="ctitle">🏷️ Aged / Discounted Sale</div><div class="fg"><label class="lb">Product</label><select class="sl2" id="agp" onchange="const p=db.products.find(p=>p.code===this.value);if(p&&$('agc'))$('agc').value=p.costPrice;calcAg();">${opts}</select></div><div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="agq" type="number" placeholder="0" oninput="calcAg()"></div><div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="agc" type="number" placeholder="0" oninput="calcAg()"></div></div><div class="fg"><label class="lb">Discounted Price ₨</label><input class="ip" id="agpr" type="number" placeholder="0" oninput="calcAg()"></div><div id="agprev" style="display:none" class="wb"></div><div class="fg"><label class="lb">Reason</label><input class="ip" id="agr" placeholder="Old season..."></div><button class="btn bo bw" onclick="saveAgd()">✅ Record Sale</button></div>`;}
-function calcAg(){const q=Number($('agq')?.value||0);const c=Number($('agc')?.value||0);const pr=Number($('agpr')?.value||0);const p=$('agprev');if(!p)return;if(q>0&&c>0&&pr>0){const ls=(c-pr)*q;p.style.display='block';p.innerHTML=`<div style="display:flex;justify-content:space-between"><span>Cost</span><span>${fmt(c*q)}</span></div><div style="display:flex;justify-content:space-between;color:var(--gn)"><span>Sale</span><span>${fmt(pr*q)}</span></div><div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px dashed var(--bd2);margin-top:5px;padding-top:5px;color:${ls>0?'var(--rd)':'var(--gn)'}"><span>${ls>0?'Loss':'Gain'}</span><span>${fmt(Math.abs(ls))}</span></div>`;}else p.style.display='none';}
-function saveAgd(){const sku=$('agp')?.value;const qty=Number($('agq')?.value||0);const cst=Number($('agc')?.value||0);const pr=Number($('agpr')?.value||0);const rsn=$('agr')?.value||'';if(!sku||!qty||!pr)return;const p=db.products.find(p=>p.code===sku);if(!p)return;const id=`AGD-${Date.now()}`;const d=td();const t=tn();const mg=(pr-cst)*qty;const ok=atomic([()=>{p.stock=Math.max(0,Number(p.stock)-qty);db.movements.push({id:uid(),date:d,time:t,sku,name:p.name,category:p.category,type:'Aged Sale',qtyChange:-qty,cost:cst,price:pr,value:cst*qty,margin:mg,txnId:id,user:CU.name,reason:rsn});db.transactions.push({id,date:d,time:t,type:'Aged Sale',party:'Walk-in',payMode:'Cash',total:pr*qty,cost:cst*qty,margin:mg,user:CU.name,status:'done'});postEntry(id,d,'Cash','Cash Drawer',0,pr*qty,`Aged Sale: ${p.name}`);postEntry(id,d,'Expense','COGS',cst*qty,0,`Aged COGS ${sku}`);}]);if(ok){syncBatch([{sheet:'Sales',data:{billNo:id,date:d,sku,name:p.name,qty,cost:cst,price:pr,saleAmt:pr*qty,margin:mg,cust:'Aged Stock Sale',payMode:'Cash',notes:rsn,user:CU.name}}]);toast(`🏷️ Saved! ${mg<0?'Loss':'Margin'}: ${fmt(Math.abs(mg))}`,'success');}}
-
-// ── LEDGER ──
-const LTYPES={customers:{at:'Customer',crt:['Payment Received','Sale Return'],lbl:'Receivable',pc:'var(--gn)'},suppliers:{at:'Supplier',crt:['Purchase Return','Payment Made'],lbl:'Payable',pc:'var(--rd)'},owner:{at:'Owner',crt:['Owner Investment'],lbl:'Balance',pc:'var(--br)'},banks:{at:'Bank',crt:['Deposit','Transfer In'],lbl:'Balance',pc:'var(--gn)'},emoney:{at:'EMoney',crt:['Top Up','Payment Received'],lbl:'Balance',pc:'var(--gn)'},loans:{at:'Loan',crt:['Loan Received','Repayment Received'],lbl:'Balance',pc:'var(--br)'},employees:{at:'Employee',crt:['Salary','Advance Recovered'],lbl:'Balance',pc:'var(--rd)'}};
-
-function rLed(){
-  const tbs={customers:'👤 Customers',suppliers:'🏭 Suppliers',owner:'👑 Owner',banks:'🏦 Banks',emoney:'📱 E-Money',loans:'🤝 Loans',employees:'👥 Staff'};
-  return`<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px">${Object.entries(tbs).map(([k,v])=>`<div class="pl ${k===lTab?'active':''}" onclick="setLTab('${k}',this)" style="white-space:nowrap">${v}</div>`).join('')}</div><div id="lcont"></div><button class="btn bp bw" onclick="openAddEntry()">➕ Add Entry</button>`;
-}
-
-function setLTab(t,el){lTab=t;document.querySelectorAll('.pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');rLedContent();}
-
-function rLedContent(){
-  const c=$('lcont');if(!c)return;
-  const cfg=LTYPES[lTab];
-  const entries=db.ledger.filter(e=>e.accType===cfg.at);
-  const parties={};
-  entries.forEach(e=>{if(!parties[e.accName])parties[e.accName]={entries:[],bal:0};parties[e.accName].bal+=e.cr-e.dr;parties[e.accName].entries.push(e);});
-  if(!Object.keys(parties).length){c.innerHTML='<div class="em"><div class="ei">📒</div><p>No entries yet.<br>Tap ➕ Add Entry.</p></div>';return;}
-  const tot=Object.values(parties).reduce((s,p)=>s+p.bal,0);
-  c.innerHTML=`<div class="card" style="background:var(--br);border:none;margin-bottom:12px"><div style="font-size:.6rem;color:rgba(255,255,255,.6);text-transform:uppercase;letter-spacing:.1em">${cfg.lbl} Total</div><div style="font-size:1.4rem;font-weight:700;color:white;margin-top:4px">${fmt(Math.abs(tot))}</div><div style="font-size:.6rem;color:rgba(255,255,255,.6);margin-top:2px">${Object.keys(parties).length} parties</div></div>${Object.entries(parties).map(([nm,dt])=>`<div class="lp" onclick="showStatement('${nm.replace(/'/g,"\\'")}')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:.82rem;font-weight:700">${nm}</div><div style="font-size:.62rem;color:var(--tx3)">${dt.entries.length} transactions · Tap for statement</div></div><div style="text-align:right"><div class="pb" style="color:${dt.bal>=0?cfg.pc:'var(--rd)'}">${fmt(Math.abs(dt.bal))}</div><div style="font-size:.58rem;color:var(--tx3)">${cfg.lbl}</div></div></div>${dt.entries.length?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cr2);display:flex;justify-content:space-between;font-size:.62rem;color:var(--tx3)"><span>${dt.entries[dt.entries.length-1].date} · ${dt.entries[dt.entries.length-1].notes||''}</span><span style="font-weight:700;color:${dt.entries[dt.entries.length-1].cr>0?'var(--gn)':'var(--rd)'}">${dt.entries[dt.entries.length-1].cr>0?'+':'-'}${fmt(Math.max(dt.entries[dt.entries.length-1].cr,dt.entries[dt.entries.length-1].dr))}</span></div>`:''}</div>`).join('')}`;
-}
-
-function showStatement(party){
-  const cfg=LTYPES[lTab];const entries=db.ledger.filter(e=>e.accName===party&&e.accType===cfg.at);
-  let run=0;const rows=entries.map(e=>{run+=e.cr-e.dr;return{...e,run};});
-  openModal(party,`<div style="background:var(--cr2);border-radius:10px;padding:12px;margin-bottom:14px;display:flex;justify-content:space-between"><div><div style="font-size:.6rem;color:var(--tx3);text-transform:uppercase">${cfg.lbl}</div><div style="font-size:1.2rem;font-weight:700;color:${run>=0?cfg.pc:'var(--rd)'}">${fmt(Math.abs(run))}</div></div><div style="text-align:right"><div style="font-size:.6rem;color:var(--tx3)">Transactions</div><div style="font-size:1rem;font-weight:700">${entries.length}</div></div></div>
-  <div style="border:1px solid var(--bd2);border-radius:10px;overflow:hidden"><div class="tr2 hd"><div>Date/Type</div><div style="text-align:right">DR</div><div style="text-align:right">CR</div><div style="text-align:right">Bal</div></div>${rows.map(r=>`<div class="tr2"><div><div style="font-size:.65rem;font-weight:600">${r.date}</div><div style="font-size:.58rem;color:var(--tx3)">${r.notes||''}</div></div><div style="text-align:right;color:var(--rd);font-size:.7rem">${r.dr>0?fmt(r.dr):''}</div><div style="text-align:right;color:var(--gn);font-size:.7rem">${r.cr>0?fmt(r.cr):''}</div><div style="text-align:right;font-weight:700;font-size:.7rem;color:${r.run>=0?cfg.pc:'var(--rd)'}">${fmt(Math.abs(r.run))}</div></div>`).join('')}<div class="tr2" style="background:var(--cr2)"><div style="font-weight:700;color:var(--br)">Closing</div><div></div><div></div><div style="text-align:right;font-weight:700;color:${run>=0?cfg.pc:'var(--rd)'}">${fmt(Math.abs(run))}</div></div></div>`);
-}
-
-function openAddEntry(){
-  const cfg=LTYPES[lTab];
-  openModal(`➕ ${cfg.at} Entry`,`<div class="fg"><label class="lb">Party</label><input class="ip" id="lep" placeholder="Name"></div><div class="fg"><label class="lb">Date</label><input class="ip" id="led2" type="date" value="${new Date().toISOString().split('T')[0]}"></div><div class="fg"><label class="lb">Type</label><select class="sl2" id="let"><option>Sale Credit</option><option>Payment Received</option><option>Purchase Credit</option><option>Payment Made</option><option>Owner Investment</option><option>Owner Withdrawal</option><option>Deposit</option><option>Withdrawal</option><option>Loan Received</option><option>Repayment Made</option><option>Advance Given</option><option>Salary Paid</option></select></div><div class="fg"><label class="lb">Amount ₨</label><input class="ip" id="lea" type="number" placeholder="0"></div><div class="fg"><label class="lb">Notes</label><input class="ip" id="len" placeholder="Optional"></div><button class="btn bp bw" onclick="saveEntry()">💾 Save</button>`);
-}
-
-function saveEntry(){
-  const party=$('lep')?.value?.trim();const date=$('led2')?.value;const type=$('let')?.value;const amt=Number($('lea')?.value||0);const notes=$('len')?.value||'';
-  if(!party||!amt){toast('Fill party and amount','error');return;}
-  const cfg=LTYPES[lTab];const isCr=cfg.crt.includes(type);const id=`MAN-${Date.now()}`;
-  const ok=atomic([()=>{postEntry(id,date||td(),cfg.at,party,isCr?0:amt,isCr?amt:0,`${type}: ${notes}`);}]);
-  if(ok){syncBatch([{sheet:lTab==='customers'?'Customers':'Suppliers',data:{date:date||td(),party,type,amount:amt,notes,user:CU.name}}]);closeModal();toast(`✅ Entry saved!`,'success');rLedContent();}
-}
-
-function iCash(){rCashList();}
-function rCashList(){const c=$('clist');if(!c)return;const es=db.ledger.filter(e=>e.accType==='Cash').slice(-30).reverse();if(!es.length){c.innerHTML='<div class="em"><div class="ei">💵</div><p>No entries</p></div>';return;}c.innerHTML=es.map(e=>`<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.73rem;font-weight:600">${e.notes||''}</div><div style="font-size:.6rem;color:var(--tx3)">${e.date} · ${e.user||''}</div></div><div style="text-align:right">${e.cr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--gn)">+${fmt(e.cr)}</div>`:''}${e.dr>0?`<div style="font-size:.72rem;font-weight:700;color:var(--rd)">-${fmt(e.dr)}</div>`:''}</div></div></div>`).join('');}
-
-function iRep(){genRep();}
-
-// ── SHOP ASSETS ──
-const ASSET_TYPES=['China Fittings','Hangers','Fans','Chairs','Counters','Shelves','Mirrors','Lights','Racks','Other Fixtures'];
-
-function rAssets(){
-  const assets=ld('sl3_assets',[]);
-  const totalVal=assets.reduce((s,a)=>s+Number(a.cost||0)*Number(a.qty||1),0);
-  return`
-    <div class="sg">
-      <div class="sc2"><div class="sl">Total Assets</div><div class="sv">${assets.length}</div></div>
-      <div class="sc2 go"><div class="sl">Total Value</div><div class="sv">${fmt(totalVal)}</div></div>
-    </div>
-    <button class="btn bp bw" style="margin-bottom:12px" onclick="openAddAsset()">➕ Add Asset</button>
-    ${!assets.length?'<div class="em"><div class="ei">🏪</div><p>No assets recorded yet</p></div>':
-    `<div style="border:1px solid var(--bd2);border-radius:12px;overflow:hidden;margin-bottom:14px">
-      <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr;background:var(--br);color:white;padding:8px 12px">
-        <div style="font-size:.6rem;font-weight:700">ASSET</div>
-        <div style="font-size:.6rem;font-weight:700;text-align:center">QTY</div>
-        <div style="font-size:.6rem;font-weight:700;text-align:right">COST</div>
-        <div style="font-size:.6rem;font-weight:700;text-align:right">CONDITION</div>
-      </div>
-      ${assets.map((a,i)=>`
-        <div style="display:grid;grid-template-columns:1.5fr 0.8fr 0.8fr 0.8fr;padding:9px 12px;border-top:1px solid var(--cr2);background:white">
-          <div>
-            <div style="font-size:.72rem;font-weight:600">${a.name}</div>
-            <div style="font-size:.58rem;color:var(--tx3)">${a.type} · ${a.purchaseDate||''}</div>
-            ${a.notes?`<div style="font-size:.55rem;color:var(--tx3)">${a.notes}</div>`:''}
-          </div>
-          <div style="text-align:center;font-size:.82rem;font-weight:700">${a.qty||1}</div>
-          <div style="text-align:right;font-size:.7rem">${fmt(a.cost)}</div>
-          <div style="text-align:right">
-            <span style="font-size:.6rem;font-weight:700;padding:2px 6px;border-radius:6px;background:${a.condition==='Good'?'#E8F5EE':a.condition==='Fair'?'#FFF8E4':'#FDEAEA'};color:${a.condition==='Good'?'var(--gn)':a.condition==='Fair'?'var(--go)':'var(--rd)'}">${a.condition||'Good'}</span>
-          </div>
-        </div>
-      `).join('')}
-      <div style="display:flex;justify-content:space-between;padding:8px 12px;background:var(--cr2)">
-        <span style="font-size:.72rem;font-weight:700;color:var(--br)">Total Value</span>
-        <span style="font-size:.72rem;font-weight:700;color:var(--br)">${fmt(totalVal)}</span>
-      </div>
-    </div>`}
-  `;
-}
-
-function openAddAsset(){
-  openModal('➕ Add Shop Asset',`
-    <div class="fg"><label class="lb">Asset Name *</label><input class="ip" id="ast-nm" placeholder="e.g. Glass Counter"></div>
-    <div class="fg"><label class="lb">Type</label>
-      <select class="sl2" id="ast-tp">${ASSET_TYPES.map(t=>`<option>${t}</option>`).join('')}</select>
-    </div>
-    <div class="g2">
-      <div class="fg"><label class="lb">Quantity</label><input class="ip" id="ast-qt" type="number" value="1" placeholder="1"></div>
-      <div class="fg"><label class="lb">Cost ₨</label><input class="ip" id="ast-cs" type="number" placeholder="0"></div>
-    </div>
-    <div class="fg"><label class="lb">Purchase Date</label><input class="ip" id="ast-dt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
-    <div class="fg"><label class="lb">Condition</label>
-      <select class="sl2" id="ast-cd"><option>Good</option><option>Fair</option><option>Poor</option></select>
-    </div>
-    <div class="fg"><label class="lb">Notes</label><input class="ip" id="ast-nt" placeholder="Additional details..."></div>
-    <button class="btn bp bw" onclick="saveAsset()">✅ Save Asset</button>
-  `);
-}
-
-function saveAsset(){
-  const name=$('ast-nm')?.value?.trim();
-  if(!name){toast('Enter asset name','error');return;}
-  const assets=ld('sl3_assets',[]);
-  assets.push({
-    id:uid(),name,type:$('ast-tp')?.value,
-    qty:Number($('ast-qt')?.value||1),
-    cost:Number($('ast-cs')?.value||0),
-    purchaseDate:$('ast-dt')?.value,
-    condition:$('ast-cd')?.value||'Good',
-    notes:$('ast-nt')?.value||'',
-    addedBy:CU.name,addedDate:td()
-  });
-  sv('sl3_assets',assets);
-  syncBatch([{sheet:'Employees',data:{date:td(),name:'ASSET',type:name,amount:Number($('ast-cs')?.value||0),notes:$('ast-nt')?.value||'',user:CU.name}}]);
-  closeModal();showTab('assets',document.querySelector('.nt.active'));
-  toast(`✅ Asset "${name}" added!`,'success');
-}
-
-// ── EXPORT FUNCTIONS ──
-function exportCSV(data, filename){
-  if(!data.length) return toast('No data to export','error');
-  const headers=Object.keys(data[0]);
-  const rows=[headers.join(','),...data.map(r=>headers.map(h=>`"${String(r[h]||'').replace(/"/g,'""')}"`).join(','))];
-  const blob=new Blob([rows.join('\n')],{type:'text/csv'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename+'.csv';a.click();
-  toast(`✅ ${filename}.csv downloaded`,'success');
-}
-
-function printReport(title, html){
-  const w=window.open('','_blank');
-  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title>
-  <style>body{font-family:Arial,sans-serif;padding:20px;font-size:12px}
-  h1{color:#5C2E0E;font-size:18px;margin-bottom:4px}
-  .sub{color:#888;font-size:11px;margin-bottom:16px}
-  table{width:100%;border-collapse:collapse;margin-bottom:16px}
-  th{background:#5C2E0E;color:white;padding:6px 8px;text-align:left;font-size:11px}
-  td{padding:5px 8px;border-bottom:1px solid #eee;font-size:11px}
-  .total{font-weight:bold;background:#f5f0eb}
-  @media print{button{display:none}}</style></head><body>
-  <h1>${title}</h1><div class="sub">SL Collection POS · ${td()}</div>
-  ${html}
-  <br><button onclick="window.print()" style="background:#5C2E0E;color:white;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">🖨️ Print</button>
-  </body></html>`);
-  w.document.close();
-}
-
-// ── ENHANCED REPORTS ──
-function rRep(){
-  return`
-    <div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px">
-      <div class="pl active" onclick="setRTab('sales',this)">📊 Sales</div>
-      <div class="pl" onclick="setRTab('purchase',this)">📦 Purchase</div>
-      <div class="pl" onclick="setRTab('stock',this)">📋 Stock</div>
-      <div class="pl" onclick="setRTab('ageing',this)">⏳ Ageing</div>
-      <div class="pl" onclick="setRTab('cash',this)">💵 Cash</div>
-      <div class="pl" onclick="setRTab('pl',this)">📈 P&L</div>
-      <div class="pl" onclick="setRTab('ledger',this)">📒 Ledger</div>
-    </div>
-    <div class="df">
-      <input class="ip" id="rfrom" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1">
-      <input class="ip" id="rto" type="date" value="${new Date().toISOString().split('T')[0]}" style="flex:1">
-      <button class="btn bp bsm" onclick="genRep()">Go</button>
-    </div>
-    <div style="display:flex;gap:6px;margin-bottom:12px">
-      <button class="btn bgh bsm" onclick="exportCurrentReport()">📥 CSV</button>
-      <button class="btn bgh bsm" onclick="printCurrentReport()">🖨️ Print</button>
-    </div>
-    <div id="rcont"></div>
-  `;
-}
-
-let lastReportData=[];
-let lastReportTitle='Report';
-
-function setRTab(t,el){rTab=t;document.querySelectorAll('.pl').forEach(p=>p.classList.remove('active'));el.classList.add('active');genRep();}
-
-function exportCurrentReport(){exportCSV(lastReportData,lastReportTitle);}
-function printCurrentReport(){
-  const c=$('rcont');if(!c)return;
-  printReport(lastReportTitle,c.innerHTML);
-}
-
-function genRep(){
-  const from=$('rfrom')?.value||td();
-  const to=$('rto')?.value||td();
-  const c=$('rcont');if(!c)return;
-  const txns=db.transactions.filter(t=>t.date>=from&&t.date<=to&&t.status==='done');
-  switch(rTab){
-    case'sales':c.innerHTML=genSalesRep(txns,from,to);break;
-    case'purchase':c.innerHTML=genPurRep(txns,from,to);break;
-    case'stock':c.innerHTML=genStockRep();break;
-    case'ageing':c.innerHTML=genAgeRep();break;
-    case'cash':c.innerHTML=genCashRep(from,to);break;
-    case'pl':c.innerHTML=genPLRep(txns,from,to);break;
-    case'ledger':c.innerHTML=genLedgerRep(from,to);break;
-  }
-}
-
-function genPurRep(txns,from,to){
-  const purs=txns.filter(t=>t.type==='Purchase');
-  const total=purs.reduce((s,t)=>s+Number(t.total||0),0);
-  const paid=purs.reduce((s,t)=>s+Number(t.paid||t.total||0),0);
-  const payable=purs.reduce((s,t)=>s+Number(t.payable||0),0);
-  lastReportTitle=`Purchase_Report_${from}_to_${to}`;
-  lastReportData=purs.map(t=>({Date:t.date,ID:t.id,Supplier:t.party,Total:t.total,Paid:t.paid||t.total,Payable:t.payable||0,PayMode:t.payMode,User:t.user}));
-  return`
-    <div class="sg">
-      <div class="sc2"><div class="sl">Total Purchases</div><div class="sv">${fmt(total)}</div><div class="ss">${purs.length} entries</div></div>
-      <div class="sc2 gn"><div class="sl">Total Paid</div><div class="sv">${fmt(paid)}</div></div>
-      <div class="sc2 rd"><div class="sl">Payable</div><div class="sv">${fmt(payable)}</div></div>
-    </div>
-    <div style="margin-bottom:14px">
-      <div class="rh"><div>Purchase Transactions</div><div>${from} to ${to}</div></div>
-      ${!purs.length?'<div style="padding:12px;text-align:center;color:var(--tx3);background:white">No purchases in period</div>':
-      purs.slice().reverse().map(t=>`
-        <div class="rw">
-          <span><div style="font-size:.72rem;font-weight:600">${t.id}</div><div style="font-size:.6rem;color:var(--tx3)">${t.date} · ${t.party||''} · ${t.payMode}</div></span>
-          <span style="text-align:right"><div style="font-size:.72rem;font-weight:700">${fmt(t.total)}</div>${t.payable>0?`<div style="font-size:.6rem;color:var(--rd)">Payable: ${fmt(t.payable)}</div>`:''}</span>
-        </div>`).join('')}
-      <div class="rf"><span>Total</span><span>${fmt(total)}</span></div>
-    </div>`;
-}
-
-function genAgeRep(){
-  const prods=db.products.filter(p=>Number(p.stock)>0);
-  const aged90=prods.filter(p=>getAgeDays(p.dateAdded)>=90);
-  const aged60=prods.filter(p=>getAgeDays(p.dateAdded)>=60&&getAgeDays(p.dateAdded)<90);
-  const aged30=prods.filter(p=>getAgeDays(p.dateAdded)>=30&&getAgeDays(p.dateAdded)<60);
-  const fresh=prods.filter(p=>getAgeDays(p.dateAdded)<30);
-  lastReportTitle='Inventory_Ageing_Report';
-  lastReportData=prods.map(p=>({SKU:p.code,Name:p.name,Category:p.category,Colour:p.colour,Size:p.size,Supplier:p.supplier,Stock:p.stock,CostPrice:p.costPrice,TotalValue:Number(p.stock)*Number(p.costPrice),PurchaseDate:p.dateAdded,AgeDays:getAgeDays(p.dateAdded),Status:getAgeLabel(getAgeDays(p.dateAdded)).label}));
-  const renderGroup=(title,items,color)=>items.length?`
-    <div style="margin-bottom:14px">
-      <div class="rh" style="background:${color}"><div>${title} (${items.length} items)</div><div>${fmt(items.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0))}</div></div>
-      ${items.map(p=>`<div class="rw"><span><div style="font-size:.72rem;font-weight:600">${p.name}</div><div style="font-size:.6rem;color:var(--tx3)">${p.code} · ${p.supplier||''} · Added: ${p.dateAdded||'N/A'}</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:${color}">${getAgeDays(p.dateAdded)}d</div><div style="font-size:.6rem">Stock: ${p.stock} · ${fmt(Number(p.stock)*Number(p.costPrice))}</div></span></div>`).join('')}
-      <div class="rf"><span>Subtotal</span><span>${fmt(items.reduce((s,p)=>s+Number(p.stock)*Number(p.costPrice),0))}</span></div>
-    </div>`:'';
-  return`
-    <div class="sg">
-      <div class="sc2 rd"><div class="sl">Dead Stock</div><div class="sv">${aged90.length}</div><div class="ss">90+ days</div></div>
-      <div class="sc2 go"><div class="sl">Slow Moving</div><div class="sv">${aged60.length}</div><div class="ss">60-90 days</div></div>
-      <div class="sc2"><div class="sl">Ageing</div><div class="sv">${aged30.length}</div><div class="ss">30-60 days</div></div>
-      <div class="sc2 gn"><div class="sl">Fresh</div><div class="sv">${fresh.length}</div><div class="ss">&lt;30 days</div></div>
-    </div>
-    ${renderGroup('🔴 Dead Stock (90+ days)',aged90,'var(--rd)')}
-    ${renderGroup('🟠 Slow Moving (60-90 days)',aged60,'var(--go)')}
-    ${renderGroup('🟡 Ageing (30-60 days)',aged30,'#B8A000')}
-    ${renderGroup('🟢 Fresh Stock (<30 days)',fresh,'var(--gn)')}
-  `;
-}
-
-function genLedgerRep(from,to){
-  // Customer outstanding
-  const custParties={};
-  db.ledger.filter(e=>e.accType==='Customer').forEach(e=>{
-    if(!custParties[e.accName])custParties[e.accName]=0;
-    custParties[e.accName]+=e.dr-e.cr;
-  });
-  // Supplier outstanding
-  const supParties={};
-  db.ledger.filter(e=>e.accType==='Supplier').forEach(e=>{
-    if(!supParties[e.accName])supParties[e.accName]=0;
-    supParties[e.accName]+=e.cr-e.dr;
-  });
-  const totalRec=Object.values(custParties).reduce((s,v)=>s+Math.max(0,v),0);
-  const totalPay=Object.values(supParties).reduce((s,v)=>s+Math.max(0,v),0);
-  lastReportTitle='Ledger_Summary_Report';
-  lastReportData=[...Object.entries(custParties).map(([n,v])=>({Type:'Customer',Party:n,Balance:v,Status:v>0?'Receivable':'Paid'})),...Object.entries(supParties).map(([n,v])=>({Type:'Supplier',Party:n,Balance:v,Status:v>0?'Payable':'Paid'}))];
-  return`
-    <div class="sg">
-      <div class="sc2 gn"><div class="sl">Total Receivables</div><div class="sv">${fmt(totalRec)}</div></div>
-      <div class="sc2 rd"><div class="sl">Total Payables</div><div class="sv">${fmt(totalPay)}</div></div>
-    </div>
-    <div style="margin-bottom:14px">
-      <div class="rh"><div>👤 Customer Outstanding</div><div>${fmt(totalRec)}</div></div>
-      ${Object.entries(custParties).filter(([,v])=>v>0).map(([n,v])=>`<div class="rw"><span>${n}</span><span style="font-weight:700;color:var(--rd)">${fmt(v)}</span></div>`).join('')||'<div style="padding:10px;text-align:center;color:var(--tx3);background:white;font-size:.75rem">No outstanding</div>'}
-      <div class="rf"><span>Total</span><span>${fmt(totalRec)}</span></div>
-    </div>
-    <div style="margin-bottom:14px">
-      <div class="rh"><div>🏭 Supplier Payables</div><div>${fmt(totalPay)}</div></div>
-      ${Object.entries(supParties).filter(([,v])=>v>0).map(([n,v])=>`<div class="rw"><span>${n}</span><span style="font-weight:700;color:var(--rd)">${fmt(v)}</span></div>`).join('')||'<div style="padding:10px;text-align:center;color:var(--tx3);background:white;font-size:.75rem">No outstanding</div>'}
-      <div class="rf"><span>Total</span><span>${fmt(totalPay)}</span></div>
-    </div>
-  `;
-}
-
-// ── ENHANCED CASH ──
-function rCash(){
-  const cashBal=getAccBal('Cash','Cash Drawer');
-  const todayIn=db.ledger.filter(e=>e.accType==='Cash'&&e.date===td()).reduce((s,e)=>s+e.cr,0);
-  const todayOut=db.ledger.filter(e=>e.accType==='Cash'&&e.date===td()).reduce((s,e)=>s+e.dr,0);
-  return`
-    <div class="sb"><div class="sd"></div><span class="st2">Synced</span></div>
-    <!-- Running Balance Card -->
-    <div style="background:var(--br);color:white;border-radius:14px;padding:16px;margin-bottom:14px">
-      <div style="font-size:.6rem;opacity:.7;text-transform:uppercase;letter-spacing:.1em">Cash Drawer Balance</div>
-      <div style="font-size:2rem;font-weight:700;margin:6px 0">${fmt(cashBal)}</div>
-      <div style="display:flex;gap:16px;margin-top:4px">
-        <div><div style="font-size:.58rem;opacity:.7">Today In</div><div style="font-size:.85rem;font-weight:600;color:#90EE90">+${fmt(todayIn)}</div></div>
-        <div><div style="font-size:.58rem;opacity:.7">Today Out</div><div style="font-size:.85rem;font-weight:600;color:#FFB3B3">-${fmt(todayOut)}</div></div>
-        <div><div style="font-size:.58rem;opacity:.7">Net</div><div style="font-size:.85rem;font-weight:600">${fmt(todayIn-todayOut)}</div></div>
-      </div>
-    </div>
-    <div class="stl">➕ New Entry</div>
-    <div class="card">
-      <div class="fg"><label class="lb">Date</label><input class="ip" id="cdt" type="date" value="${new Date().toISOString().split('T')[0]}"></div>
-      <div class="fg"><label class="lb">Category</label>
-        <select class="sl2" id="ccat">${EXP_CATS.map(c=>`<option>${c}</option>`).join('')}</select>
-      </div>
-      <div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details..."></div>
-      <div class="fg"><label class="lb">Direction</label>
-        <select class="sl2" id="cdir"><option value="in">💰 Money In</option><option value="out">💸 Money Out</option></select>
-      </div>
-      <div class="fg"><label class="lb">Amount ₨</label><input class="ip" id="camt" type="number" placeholder="0"></div>
-      <button class="btn bp bw" onclick="saveCash()">💾 Save Entry</button>
-    </div>
-    <div class="stl">📜 Recent Entries <button class="btn bgh bsm" onclick="exportCashBook()">📥 Export</button></div>
-    <div id="clist"></div>
-  `;
-}
-
-function exportCashBook(){
-  const entries=db.ledger.filter(e=>e.accType==='Cash');
-  exportCSV(entries.map(e=>({Date:e.date,Description:e.notes,In:e.cr||0,Out:e.dr||0,User:e.user})),'Cash_Book');
-}
-
-function saveCash(){
-  const dt=$('cdt')?.value||td();const cat=$('ccat')?.value;
-  const dsc=$('cdsc')?.value?.trim();const amt=Number($('camt')?.value||0);
-  const dir=$('cdir')?.value||'out';
-  if(!amt||!dsc){toast('Fill all','error');return;}
-  const id=`CE-${Date.now()}`;const isIn=dir==='in';
-  const ok=atomic([()=>{
-    postEntry(id,dt,'Cash','Cash Drawer',isIn?0:amt,isIn?amt:0,`${cat}: ${dsc}`);
-    db.transactions.push({id,date:dt,time:tn(),type:isIn?'Cash Receipt':'Cash Payment',party:cat,payMode:'Cash',total:amt,user:CU.name,status:'done'});
-  }]);
-  if(ok){
-    syncBatch([{sheet:'Cash Register',data:{date:dt,nature:dsc,category:cat,amountIn:isIn?amt:0,amountOut:isIn?0:amt,user:CU.name}}]);
-    toast(`✅ ${isIn?'Receipt':'Payment'}: ${fmt(amt)}`,'success');
-    if($('cdsc'))$('cdsc').value='';if($('camt'))$('camt').value='';
-    iCash();
-  }
-}
-
-window.addEventListener('load',()=>{loadDB();$('ls').style.display='flex';$('app').style.display='none';});
-</script>
-</body>
-</html>
+  const ps=products.filter(p=>(p.stock||0)>0);
+  openMo('🔍 Physical Verification',
