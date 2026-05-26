@@ -177,6 +177,7 @@ body{min-height:100vh}
       <div class="brand-top">SL Collection <span>POS · Rawalpindi</span></div>
       <div class="flex items-c">
         <div class="user-chip" id="user-chip">👤 Staff</div>
+        <button class="exit-btn" onclick="syncQueue()" title="Sync offline data" id="sync-btn" style="display:none">🔄</button>
         <button class="exit-btn" onclick="doLogout()">Exit</button>
       </div>
     </div>
@@ -199,6 +200,163 @@ body{min-height:100vh}
 <script>
 const{createClient}=supabase;
 const sb=createClient('https://fqubaesqzfmxvbtqconu.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxdWJhZXNxemZteHZidHFjb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODIwNTMsImV4cCI6MjA5NDc1ODA1M30.vqDRl0LGYOukQBRK7aegaXgCKxi-r65IwyNZKvGnUIk');
+
+// ═══════════════════════════════════════════════════
+// OFFLINE MODE ENGINE
+// ═══════════════════════════════════════════════════
+const DB_KEY='sl_offline_db';
+const QUEUE_KEY='sl_sync_queue';
+const CACHE_KEY='sl_master_cache';
+let isOnline=navigator.onLine;
+let isSyncing=false;
+
+// Local storage helpers
+const lsGet=(k,def={})=>{try{return JSON.parse(localStorage.getItem(k))||def;}catch{return def;}};
+const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){console.warn('localStorage full:',e);}};
+
+// Offline queue — stores pending operations
+function queueOp(table,method,data,id=null){
+  const q=lsGet(QUEUE_KEY,[]);
+  q.push({id:id||`q_${Date.now()}_${Math.random().toString(36).substr(2,6)}`,table,method,data,ts:Date.now(),retries:0});
+  lsSet(QUEUE_KEY,q);
+  updateOfflineBanner();
+}
+
+// Network detection
+window.addEventListener('online',()=>{isOnline=true;updateOfflineBanner();syncQueue();toast('🌐 Back online — syncing...','ok');});
+window.addEventListener('offline',()=>{isOnline=false;updateOfflineBanner();toast('📵 Offline mode — sales saved locally','warn',5000);});
+
+function updateOfflineBanner(){
+  const q=lsGet(QUEUE_KEY,[]);
+  const pending=q.length;
+  let banner=$('offline-banner');
+  if(!banner){
+    banner=document.createElement('div');
+    banner.id='offline-banner';
+    banner.style.cssText='position:fixed;top:0;left:50%;transform:translateX(-50%);z-index:999;max-width:480px;width:100%;padding:7px 14px;font-size:.68rem;font-weight:600;text-align:center;transition:all .3s';
+    document.body.appendChild(banner);
+  }
+  if(!isOnline){
+    banner.style.background='#8B4500';banner.style.color='white';banner.style.display='block';
+    banner.textContent=`📵 OFFLINE MODE${pending>0?' — '+pending+' pending sync':''}`;
+  } else if(pending>0){
+    banner.style.background='var(--gold)';banner.style.color='white';banner.style.display='block';
+    banner.textContent=`🔄 ${pending} transactions pending sync — tap to sync`;
+    banner.onclick=()=>syncQueue();
+  } else {
+    banner.style.display='none';banner.onclick=null;
+  }
+}
+
+// Master data cache — products, accounts, parties cached locally
+function cacheToLocal(){
+  lsSet(CACHE_KEY,{products,accounts,parties,cachedAt:Date.now()});
+}
+
+function loadFromCache(){
+  const cache=lsGet(CACHE_KEY,null);
+  if(!cache)return false;
+  const ageHours=(Date.now()-cache.cachedAt)/(1000*3600);
+  if(ageHours>24){return false;} // Cache older than 24h — force refresh
+  products=cache.products||[];accounts=cache.accounts||[];parties=cache.parties||[];
+  return true;
+}
+
+// Local bill counter for offline mode
+function getNextOfflineBillNo(){
+  const counter=lsGet('sl_bill_counter',{bill:0,pur:0,exp:0});
+  counter.bill++;
+  lsSet('sl_bill_counter',counter);
+  return`BILL-OFF-${String(counter.bill).padStart(4,'0')}`;
+}
+function getNextOfflinePurNo(){
+  const counter=lsGet('sl_bill_counter',{bill:0,pur:0,exp:0});
+  counter.pur++;
+  lsSet('sl_bill_counter',counter);
+  return`PUR-OFF-${String(counter.pur).padStart(4,'0')}`;
+}
+
+// Sync queue to Supabase when back online
+async function syncQueue(){
+  if(!isOnline||isSyncing)return;
+  const q=lsGet(QUEUE_KEY,[]);
+  if(!q.length){updateOfflineBanner();return;}
+  isSyncing=true;setSyncStatus('syncing');
+  toast(`🔄 Syncing ${q.length} offline transactions...`,'warn',10000);
+  let synced=0,failed=0;
+  const remaining=[];
+  for(const op of q){
+    try{
+      if(op.method==='insert'){
+        const{error}=await sb.from(op.table).insert(op.data);
+        if(error)throw error;
+      } else if(op.method==='update'){
+        const{error}=await sb.from(op.table).update(op.data.updates).eq('id',op.data.id);
+        if(error)throw error;
+      } else if(op.method==='upsert'){
+        const{error}=await sb.from(op.table).upsert(op.data);
+        if(error)throw error;
+      }
+      synced++;
+    }catch(e){
+      op.retries=(op.retries||0)+1;
+      if(op.retries<3){remaining.push(op);}
+      else{console.error('Sync failed after 3 retries:',op.table,e.message);failed++;}
+    }
+  }
+  lsSet(QUEUE_KEY,remaining);
+  isSyncing=false;
+  setSyncStatus(remaining.length>0?'error':'ok');
+  updateOfflineBanner();
+  if(synced>0){
+    await loadMasterData();
+    cacheToLocal();
+    toast(`✅ ${synced} transactions synced!${failed>0?' '+failed+' failed':''}`,'ok',5000);
+  }
+  if(failed>0)toast(`⚠️ ${failed} transactions failed to sync — check internet`,'err',6000);
+}
+
+// Wrapped Supabase insert — goes offline if no connection
+async function sbInsert(table,data){
+  if(!isOnline){queueOp(table,'insert',data);return{data,error:null,offline:true};}
+  try{
+    const result=await sb.from(table).insert(data).select().single();
+    return result;
+  }catch(e){
+    // Network error — queue it
+    if(e.message?.includes('fetch')||e.message?.includes('network')){
+      queueOp(table,'insert',data);
+      return{data,error:null,offline:true};
+    }
+    return{data:null,error:e};
+  }
+}
+
+async function sbInsertMany(table,dataArr){
+  if(!isOnline){queueOp(table,'insert',dataArr);return{data:dataArr,error:null,offline:true};}
+  try{
+    const result=await sb.from(table).insert(dataArr).select();
+    return result;
+  }catch(e){
+    if(e.message?.includes('fetch')||e.message?.includes('network')){
+      queueOp(table,'insert',dataArr);
+      return{data:dataArr,error:null,offline:true};
+    }
+    return{data:null,error:e};
+  }
+}
+
+// ── LOCAL OFFLINE INVENTORY (for accurate stock display offline) ──
+function deductLocalStock(variantId,qty){
+  const p=products.find(p=>p.id===variantId);
+  if(p){p.stock=Math.max(0,(p.stock||0)-qty);}
+  cacheToLocal();
+}
+function addLocalStock(variantId,qty){
+  const p=products.find(p=>p.id===variantId);
+  if(p){p.stock=(p.stock||0)+qty;}
+  cacheToLocal();
+}
 
 // STATE
 let CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',purSrc='cash',pPhoto=null,bPhoto=null,bCat='',lTab='customer',rTab='sales',products=[],accounts=[],parties=[],itimer=null,lastRepData=[],lastRepTitle='Report',lostBy='owner';
@@ -247,19 +405,48 @@ async function initApp(){
   $('login-screen').style.display='none';$('app').style.display='block';
   $('user-chip').textContent=(CUP?.role==='owner'?'👑':'👤')+' '+(CUP?.full_name||'User');
   await loadMasterData();setupNav();setupRealtime();resetTimer();
-  toast(`Welcome, ${CUP?.full_name||'User'}!`,'ok');
+  updateOfflineBanner();
+  // Sync any pending offline transactions
+  if(isOnline){
+    const q=lsGet(QUEUE_KEY,[]);
+    if(q.length>0){
+      toast(`🔄 ${q.length} offline transactions pending sync...`,'warn',4000);
+      setTimeout(()=>syncQueue(),2000);
+    } else {
+      toast(`Welcome, ${CUP?.full_name||'User'}!`,'ok');
+    }
+  } else {
+    toast(`📵 Offline mode active — sales will sync when connected`,'warn',5000);
+  }
 }
 
 async function loadMasterData(){
-  const[pv,ac,pa]= await Promise.all([
-    sb.from('product_variants').select('*,products(name,category_id,categories(name,code))').eq('is_active',true),
-    sb.from('cashflow_accounts').select('*').eq('is_active',true).order('sort_order'),
-    sb.from('parties').select('*').eq('is_active',true).order('name')
-  ]);
-  products=(pv.data||[]).map(v=>({id:v.id,sku:v.sku,name:v.products?.name||'',category:v.products?.categories?.name||'',categoryCode:v.products?.categories?.code||'',colour:v.colour||'',size:v.size||'',no_of_designs:v.no_of_designs,no_of_colours:v.no_of_colours,purchase_price:Number(v.purchase_price)||0,photo_url:v.photo_url||'',product_id:v.product_id,stock:0,status:'fresh',age_days:0,last_purchase_date:null}));
-  accounts=ac.data||[];parties=pa.data||[];
-  const{data:inv}=await sb.from('inventory').select('variant_id,qty_available,stock_status,age_days,last_purchase_date');
-  (inv||[]).forEach(i=>{const p=products.find(p=>p.id===i.variant_id);if(p){p.stock=Number(i.qty_available)||0;p.status=i.stock_status||'fresh';p.age_days=i.age_days||0;p.last_purchase_date=i.last_purchase_date;}});
+  // If offline — use cached data
+  if(!isOnline){
+    const loaded=loadFromCache();
+    if(loaded){setSyncStatus('error');return;}
+    // No cache + offline = can't do much
+    toast('📵 Offline — using cached data','warn');return;
+  }
+  try{
+    const[pv,ac,pa]= await Promise.all([
+      sb.from('product_variants').select('*,products(name,category_id,categories(name,code))').eq('is_active',true),
+      sb.from('cashflow_accounts').select('*').eq('is_active',true).order('sort_order'),
+      sb.from('parties').select('*').eq('is_active',true).order('name')
+    ]);
+    products=(pv.data||[]).map(v=>({id:v.id,sku:v.sku,name:v.products?.name||'',category:v.products?.categories?.name||'',categoryCode:v.products?.categories?.code||'',colour:v.colour||'',size:v.size||'',no_of_designs:v.no_of_designs,no_of_colours:v.no_of_colours,purchase_price:Number(v.purchase_price)||0,photo_url:v.photo_url||'',product_id:v.product_id,stock:0,status:'fresh',age_days:0,last_purchase_date:null}));
+    accounts=ac.data||[];parties=pa.data||[];
+    const{data:inv}=await sb.from('inventory').select('variant_id,qty_available,stock_status,age_days,last_purchase_date');
+    (inv||[]).forEach(i=>{const p=products.find(p=>p.id===i.variant_id);if(p){p.stock=Number(i.qty_available)||0;p.status=i.stock_status||'fresh';p.age_days=i.age_days||0;p.last_purchase_date=i.last_purchase_date;}});
+    // Cache to local storage for offline use
+    cacheToLocal();
+  }catch(e){
+    // Network error — try cache
+    console.warn('loadMasterData failed, trying cache:',e.message);
+    const loaded=loadFromCache();
+    if(!loaded)toast('⚠️ Could not load data','err');
+    else toast('📵 Using cached data','warn');
+  }
 }
 
 function setupRealtime(){
@@ -429,24 +616,35 @@ async function completeSale(){
     custPartyId=p?.id||null;
   }
   try{
-    const{data:billNo}=await sb.rpc('generate_transaction_no',{p_prefix:'BILL'});
-    const{data:txn,error:te}=await sb.from('transactions').insert({transaction_no:billNo,transaction_type:'sale',transaction_date:today(),party_id:custPartyId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP?.id}).select().single();
-    if(te)throw te;
-    const{data:sale,error:se}=await sb.from('sales').insert({transaction_id:txn.id,customer_party_id:custPartyId,customer_name:cust,sale_date:today(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:payMode==='cash'?cashAcc?.id:payMode==='bank'?bankId:payMode==='emoney'?emoneyId:cashAcc?.id,split_cash_amount:payMode==='split'?splitCash:0,split_secondary_amount:payMode==='split'?Math.max(0,tot-splitCash):0,gross_profit:mg,is_acquaintance_sale:isAcq}).select().single();
-    if(se)throw se;
-    const{error:ie}=await sb.from('sale_items').insert(cart.map(it=>({sale_id:sale.id,transaction_id:txn.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price})));
-    if(ie)throw ie;
+    const billNoResult=isOnline?await sb.rpc('generate_transaction_no',{p_prefix:'BILL'}):null;
+    const billNo=billNoResult?.data||getNextOfflineBillNo();
+    const txnData={transaction_no:billNo,transaction_type:'sale',transaction_date:today(),party_id:custPartyId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP?.id};
+    const{data:txn,error:te,offline:txnOffline}=await sbInsert('transactions',txnData);
+    if(te&&!txnOffline)throw te;
+    const txnId=txn?.id||`offline_${Date.now()}`;
+    const saleData={transaction_id:txnId,customer_party_id:custPartyId,customer_name:cust,sale_date:today(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:payMode==='cash'?cashAcc?.id:payMode==='bank'?bankId:payMode==='emoney'?emoneyId:cashAcc?.id,split_cash_amount:payMode==='split'?splitCash:0,split_secondary_amount:payMode==='split'?Math.max(0,tot-splitCash):0,gross_profit:mg,is_acquaintance_sale:isAcq};
+    const{data:sale,error:se,offline:saleOffline}=await sbInsert('sales',saleData);
+    if(se&&!saleOffline)throw se;
+    const saleId=sale?.id||`offline_sale_${Date.now()}`;
+    const saleItems=cart.map(it=>({sale_id:saleId,transaction_id:txnId,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price}));
+    const{error:ie,offline:itemOffline}=await sbInsertMany('sale_items',saleItems);
+    if(ie&&!itemOffline)throw ie;
+    // Deduct stock locally immediately (even offline)
+    cart.forEach(it=>deductLocalStock(it.id,it.qty));
+    // Queue ledger entries
     const le=[];
-    if(payMode==='cash')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
-    else if(payMode==='bank')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:bankId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
-    else if(payMode==='emoney')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:emoneyId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
-    else if(payMode==='credit')le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:tot,description:`Credit Sale ${billNo}`,created_by:CUP?.id});
-    else if(payMode==='split'){if(splitCash>0)le.push({transaction_id:txn.id,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:splitCash,description:`Split Cash ${billNo}`,created_by:CUP?.id});const rem=Math.max(0,tot-splitCash);if(rem>0)le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:rem,description:`Split Credit ${billNo}`,created_by:CUP?.id});}
-    le.push({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'expense',amount:cst,description:`COGS ${billNo}`,created_by:CUP?.id});
-    if(le.length)await sb.from('ledger_entries').insert(le);
-    await loadMasterData();
-    toast(`✅ ${billNo} — ${fmt(tot)} | Margin: ${fmt(mg)}`,'ok',4000);
+    if(payMode==='cash')le.push({transaction_id:txnId,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='bank')le.push({transaction_id:txnId,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:bankId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='emoney')le.push({transaction_id:txnId,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:emoneyId,amount:tot,description:`Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='credit')le.push({transaction_id:txnId,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:tot,description:`Credit Sale ${billNo}`,created_by:CUP?.id});
+    else if(payMode==='split'){if(splitCash>0)le.push({transaction_id:txnId,entry_date:today(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:cashAcc?.id,amount:splitCash,description:`Split Cash ${billNo}`,created_by:CUP?.id});const rem=Math.max(0,tot-splitCash);if(rem>0)le.push({transaction_id:txnId,entry_date:today(),entry_type:'debit',account_category:'party',party_id:custPartyId,amount:rem,description:`Split Credit ${billNo}`,created_by:CUP?.id});}
+    le.push({transaction_id:txnId,entry_date:today(),entry_type:'debit',account_category:'expense',amount:cst,description:`COGS ${billNo}`,created_by:CUP?.id});
+    if(le.length)await sbInsertMany('ledger_entries',le);
+    if(isOnline)await loadMasterData();
+    const offlineNote=txnOffline||saleOffline||itemOffline?' (saved offline — will sync)':'';
+    toast(`✅ ${billNo} — ${fmt(tot)} | Margin: ${fmt(mg)}${offlineNote}`,'ok',4000);
     cart=[];if($('b-cust'))$('b-cust').value='';if($('is-acq'))$('is-acq').checked=false;renderCart();srchProds();
+    updateOfflineBanner();
   }catch(e){toast('Error: '+e.message,'err');console.error(e);}
   if(btn){btn.innerHTML='✅ Complete Sale';btn.disabled=false;}
 }
@@ -489,7 +687,32 @@ function openExpModal(){
 async function saveExpense(){
   const cat=$('exp-cat')?.value;const desc=$('exp-desc')?.value?.trim();const amt=Number($('exp-amt')?.value||0);const srcId=$('exp-src')?.value;
   if(!amt||!desc){toast('Fill all','err');return;}
-  const{data:expCat}=await sb.from('expense_categories').select('id').eq('name',cat).single();
+  if(!srcId){toast('Select payment account','err');return;}
+
+  // Get category id
+  const{data:expCat,error:catErr}=await sb.from('expense_categories').select('id,name').eq('name',cat).single();
+  if(catErr||!expCat){toast('Category not found','err');return;}
+
+  // ── LEDGER VALIDATION ──
+  const{data:validation}=await sb.rpc('validate_posting',{
+    p_category_id:expCat.id,
+    p_account_id:srcId,
+    p_amount:amt,
+    p_user_id:CUP?.id,
+    p_txn_type:'expense'
+  });
+  if(!validation?.valid){
+    openMo('⚠️ Ledger Validation Failed',`
+      <div style="background:#FDEAEA;border:1.5px solid var(--red);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="font-size:.8rem;font-weight:700;color:var(--red);margin-bottom:6px">❌ Cannot Post Expense</div>
+        <div style="font-size:.75rem;color:var(--ink2)">${validation?.error||'Ledger validation failed'}</div>
+      </div>
+      <div class="info-box">Category <strong>"${cat}"</strong> is not mapped to a ledger account. Contact owner to map this category.</div>
+      <button class="btn btn-ghost btn-full" onclick="closeMo()">OK</button>
+    `);
+    return;
+  }
+
   const{data:expNo}=await sb.rpc('generate_transaction_no',{p_prefix:'EXP'});
   try{
     const{data:txn}=await sb.from('transactions').insert({transaction_no:expNo,transaction_type:'expense',transaction_date:today(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:desc}).select().single();
@@ -669,7 +892,7 @@ async function saveLedEntry(){
 }
 
 // ── REPORTS ──
-function rRep(){return`<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px"><div class="pill on" onclick="setRTab('sales',this)">📊 Sales</div><div class="pill" onclick="setRTab('purchase',this)">📦 Purchase</div><div class="pill" onclick="setRTab('stock',this)">📋 Stock</div><div class="pill" onclick="setRTab('ageing',this)">⏳ Ageing</div><div class="pill" onclick="setRTab('cash',this)">💵 Cash</div><div class="pill" onclick="setRTab('pl',this)">📈 P&L</div><div class="pill" onclick="setRTab('seasonal',this)">🗓️ Seasonal</div><div class="pill" onclick="setRTab('ledger',this)">📒 Ledger</div></div><div class="date-flt"><input class="inp" id="r-from" type="date" value="${today()}"><input class="inp" id="r-to" type="date" value="${today()}"><button class="btn btn-ink btn-sm" onclick="genRep()">Go</button></div><div class="flex gap-2" style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" onclick="exportRep()">📥 CSV</button><button class="btn btn-ghost btn-sm" onclick="printRep()">🖨️ Print</button></div><div id="rep-content"></div>`;}
+function rRep(){return`<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:14px"><div class="pill on" onclick="setRTab('sales',this)">📊 Sales</div><div class="pill" onclick="setRTab('purchase',this)">📦 Purchase</div><div class="pill" onclick="setRTab('stock',this)">📋 Stock</div><div class="pill" onclick="setRTab('ageing',this)">⏳ Ageing</div><div class="pill" onclick="setRTab('cash',this)">💵 Cash</div><div class="pill" onclick="setRTab('pl',this)">📈 P&L</div><div class="pill" onclick="setRTab('seasonal',this)">🗓️ Seasonal</div><div class="pill" onclick="setRTab('ledger',this)">📒 Ledger</div><div class="pill" onclick="setRTab('history',this)">🕒 History</div></div><div class="date-flt"><input class="inp" id="r-from" type="date" value="${today()}"><input class="inp" id="r-to" type="date" value="${today()}"><button class="btn btn-ink btn-sm" onclick="genRep()">Go</button></div><div class="flex gap-2" style="margin-bottom:12px"><button class="btn btn-ghost btn-sm" onclick="exportRep()">📥 CSV</button><button class="btn btn-ghost btn-sm" onclick="printRep()">🖨️ Print</button></div><div id="rep-content"></div>`;}
 function iRep(){genRep();}
 function setRTab(t,el){rTab=t;document.querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));el.classList.add('on');genRep();}
 function exportRep(){if(!lastRepData.length){toast('No data','warn');return;}const hdr=Object.keys(lastRepData[0]);const rows=[hdr.join(','),...lastRepData.map(r=>hdr.map(h=>`"${String(r[h]||'').replace(/"/g,'""')}"`).join(','))];const blob=new Blob([rows.join('\n')],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=lastRepTitle+'.csv';a.click();toast(`✅ ${lastRepTitle}.csv`,'ok');}
@@ -679,7 +902,7 @@ async function genRep(){
   const from=$('r-from')?.value||today();const to=$('r-to')?.value||today();
   const c=$('rep-content');if(!c)return;
   c.innerHTML='<div class="empty"><div class="spin" style="border-top-color:var(--gold);border-color:rgba(0,0,0,.1);width:24px;height:24px;margin:0 auto"></div></div>';
-  switch(rTab){case'sales':await repSales(from,to,c);break;case'purchase':await repPurchase(from,to,c);break;case'stock':await repStock(c);break;case'ageing':await repAgeing(c);break;case'cash':await repCash(from,to,c);break;case'pl':await repPL(from,to,c);break;case'seasonal':await repSeasonal(c);break;case'ledger':await repLedger(c);break;}
+  switch(rTab){case'sales':await repSales(from,to,c);break;case'purchase':await repPurchase(from,to,c);break;case'stock':await repStock(c);break;case'ageing':await repAgeing(c);break;case'cash':await repCash(from,to,c);break;case'pl':await repPL(from,to,c);break;case'seasonal':await repSeasonal(c);break;case'ledger':await repLedger(c);break;case'history':await repHistory(from,to,c);break;}
 }
 
 async function repSales(from,to,c){
@@ -775,7 +998,45 @@ async function iCash(){
 
 async function saveCashEntry(){
   const dt=$('c-dt')?.value||today();const catId=$('c-cat')?.value;const dsc=$('c-dsc')?.value?.trim();const amt=Number($('c-amt')?.value||0);const dir=$('c-dir')?.value||'out';const accId=$('c-acc')?.value;
-  if(!amt||!dsc){toast('Fill all','err');return;}
+  if(!amt||!dsc){toast('Fill all fields','err');return;}
+  if(!catId){toast('Select a category','err');return;}
+  if(!accId){toast('Select an account','err');return;}
+
+  // ── LEDGER VALIDATION ──
+  const{data:validation,error:ve}=await sb.rpc('validate_posting',{
+    p_category_id:catId,
+    p_account_id:accId,
+    p_amount:amt,
+    p_user_id:CUP?.id,
+    p_txn_type:'cash_entry'
+  });
+  if(ve||!validation?.valid){
+    const errMsg=validation?.error||ve?.message||'Ledger validation failed';
+    const code=validation?.code||'UNKNOWN';
+    // Show detailed error with resolution option
+    openMo('⚠️ Ledger Validation Failed',`
+      <div style="background:#FDEAEA;border:1.5px solid var(--red);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="font-size:.8rem;font-weight:700;color:var(--red);margin-bottom:6px">❌ Cannot Post Transaction</div>
+        <div style="font-size:.75rem;color:var(--ink2)">${errMsg}</div>
+        <div style="font-size:.62rem;color:var(--ink3);margin-top:4px;font-family:monospace">Code: ${code}</div>
+      </div>
+      <div class="info-box">
+        <strong>Why this happens:</strong><br>
+        Every expense must have a corresponding ledger account mapped in the Chart of Accounts.
+        This ensures double-entry accounting integrity.
+      </div>
+      ${code==='LEDGER_NOT_MAPPED'?`
+      <div class="warn-box">
+        Category "<strong>${validation?.category||''}</strong>" is not mapped to a ledger account.
+      </div>
+      <button class="btn btn-gold btn-full" style="margin-bottom:8px" onclick="closeMo();openCreateLedgerModal('${catId}','${validation?.category||''}')">
+        ➕ Create Ledger Mapping Now
+      </button>`:``}
+      <button class="btn btn-ghost btn-full" onclick="closeMo()">Cancel Transaction</button>
+    `);
+    return;
+  }
+
   const{data:txNo}=await sb.rpc('generate_transaction_no',{p_prefix:'CASH'});
   try{
     const{data:txn}=await sb.from('transactions').insert({transaction_no:txNo,transaction_type:dir==='in'?'receipt':'expense',transaction_date:dt,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:dsc}).select().single();
@@ -818,7 +1079,248 @@ async function saveAsset(){
   const{error}=await sb.from('assets').insert({name,category_id:$('ast-tp')?.value,qty:Number($('ast-qt')?.value||1),purchase_price:Number($('ast-cs')?.value||0),purchase_date:$('ast-dt')?.value,condition:$('ast-cd')?.value||'Good',notes:$('ast-nt')?.value||'',added_by:CUP?.id});
   if(error){toast('Error: '+error.message,'err');return;}
   closeMo();toast(`✅ Asset saved!`,'ok');iAssets();
+}// ── CHART OF ACCOUNTS + LEDGER MAPPING ──
+function openCreateLedgerModal(catId,catName){
+  openMo(`➕ Map Ledger: ${catName}`,`
+    <div class="info-box">
+      Map this expense category to a Chart of Accounts entry so transactions can be properly posted.
+    </div>
+    <div class="fg"><label class="lbl">Expense Account (Debit)</label>
+      <select class="sel" id="lm-debit"><option value="">Loading...</option></select>
+    </div>
+    <div class="fg"><label class="lbl">Payment Account (Credit)</label>
+      <select class="sel" id="lm-credit"><option value="">Loading...</option></select>
+    </div>
+    <button class="btn btn-gold btn-full" onclick="saveLedgerMap('${catId}','${catName}')">✅ Save Mapping</button>
+  `);
+  // Load chart of accounts
+  sb.from('chart_of_accounts').select('*').eq('is_active',true).order('account_code').then(({data:coa})=>{
+    const debit=$('lm-debit');const credit=$('lm-credit');
+    if(!debit||!credit||!coa)return;
+    const expOpts=(coa||[]).filter(a=>a.account_type==='expense'||a.account_type==='asset').map(a=>`<option value="${a.id}">${a.account_code} — ${a.account_name}</option>`).join('');
+    const cashOpts=(coa||[]).filter(a=>a.account_sub==='cash'||a.account_sub==='bank'||a.account_sub==='emoney').map(a=>`<option value="${a.id}">${a.account_code} — ${a.account_name}</option>`).join('');
+    debit.innerHTML=`<option value="">Select expense account...</option>${expOpts}`;
+    credit.innerHTML=`<option value="">Select payment account...</option>${cashOpts}`;
+  });
+}
+
+async function saveLedgerMap(catId,catName){
+  const debitId=$('lm-debit')?.value;const creditId=$('lm-credit')?.value;
+  if(!debitId||!creditId){toast('Select both accounts','err');return;}
+  const{error}=await sb.from('expense_ledger_map').upsert({category_id:catId,debit_account_id:debitId,credit_account_id:creditId,is_active:true,created_by:CUP?.id},{onConflict:'category_id'});
+  if(error){toast('Error: '+error.message,'err');return;}
+  closeMo();toast(`✅ Ledger mapped for: ${catName}`,'ok');
+}
+
+async function openCoaModal(){
+  const{data:coa}=await sb.from('chart_of_accounts').select('*').order('account_code');
+  const{data:maps}=await sb.from('expense_ledger_map').select('*,expense_categories(name),debit:chart_of_accounts!expense_ledger_map_debit_account_id_fkey(account_code,account_name),credit:chart_of_accounts!expense_ledger_map_credit_account_id_fkey(account_code,account_name)');
+  const{data:logs}=await sb.from('posting_validation_log').select('*').eq('resolved',false).order('created_at',{ascending:false}).limit(20);
+  const byType={asset:[],liability:[],equity:[],income:[],expense:[]};
+  (coa||[]).forEach(a=>byType[a.account_type]?.push(a));
+  const typeLabel={asset:'📦 Assets',liability:'💳 Liabilities',equity:'🏛️ Equity',income:'💰 Income',expense:'💸 Expenses'};
+  openMo('📊 Chart of Accounts',`
+    <!-- Unmapped Categories Alert -->
+    ${(logs||[]).length?`
+    <div style="background:#FDEAEA;border:1.5px solid var(--red);border-radius:10px;padding:12px;margin-bottom:14px">
+      <div class="t-xs fw-7" style="color:var(--red);margin-bottom:8px">⚠️ ${(logs||[]).length} Failed Posting Attempts</div>
+      ${(logs||[]).slice(0,5).map(l=>`<div style="padding:5px 0;border-bottom:1px dashed var(--border2);font-size:.65rem"><strong>${l.transaction_type}</strong>: ${l.failure_reason}<div style="color:var(--ink3)">${l.created_at?.split('T')[0]||''} · ${fmt(l.amount||0)}</div></div>`).join('')}
+    </div>`:''}
+    <!-- Ledger Mappings -->
+    <div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">📋 Category → Ledger Mappings</div>
+    <div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden;margin-bottom:16px">
+      <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;background:var(--ink);color:white;padding:7px 10px">
+        <div class="t-xs fw-7">Category</div><div class="t-xs fw-7">Debit (DR)</div><div class="t-xs fw-7">Credit (CR)</div>
+      </div>
+      ${(maps||[]).map(m=>`
+      <div style="display:grid;grid-template-columns:1.5fr 1fr 1fr;padding:8px 10px;border-top:1px solid var(--cream2);background:white">
+        <div class="t-xs fw-6">${m.expense_categories?.name||''}</div>
+        <div class="t-xs c-red">${m.debit?.account_code||''} ${m.debit?.account_name||''}</div>
+        <div class="t-xs c-sage">${m.credit?.account_code||''} ${m.credit?.account_name||''}</div>
+      </div>`).join('')}
+    </div>
+    <!-- Chart of Accounts -->
+    <div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">📊 Full Chart of Accounts</div>
+    ${Object.entries(byType).map(([type,accts])=>accts.length?`
+    <div style="margin-bottom:12px">
+      <div style="background:var(--cream2);padding:7px 10px;border-radius:8px 8px 0 0;font-size:.62rem;font-weight:700;color:var(--ink2)">${typeLabel[type]||type}</div>
+      ${accts.map(a=>`<div style="display:flex;justify-content:space-between;padding:7px 10px;border:1px solid var(--border2);border-top:none;background:white">
+        <div><span style="font-family:monospace;font-size:.62rem;color:var(--gold);font-weight:700">${a.account_code}</span> <span class="t-sm">${a.account_name}</span></div>
+        <div class="t-xs c-ink3">${a.account_sub||''}</div>
+      </div>`).join('')}
+    </div>`:'').join('')}
+    ${CUP?.role==='owner'?`<button class="btn btn-ink btn-full" onclick="openAddCoaModal()">➕ Add Account</button>`:''}
+  `);
+}
+
+async function openAddCoaModal(){
+  closeMo();
+  setTimeout(()=>{
+    openMo('➕ Add Account',`
+      <div class="g2">
+        <div class="fg"><label class="lbl">Account Code *</label><input class="inp" id="coa-code" placeholder="e.g. 6014"></div>
+        <div class="fg"><label class="lbl">Type *</label>
+          <select class="sel" id="coa-type">
+            <option value="asset">Asset</option><option value="liability">Liability</option>
+            <option value="equity">Equity</option><option value="income">Income</option>
+            <option value="expense" selected>Expense</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg"><label class="lbl">Account Name *</label><input class="inp" id="coa-name" placeholder="e.g. Marketing Expenses"></div>
+      <div class="fg"><label class="lbl">Sub-type</label><input class="inp" id="coa-sub" placeholder="opex, cash, bank..."></div>
+      <button class="btn btn-ink btn-full" onclick="saveCoaAccount()">✅ Save Account</button>
+    `);
+  },350);
+}
+
+async function saveCoaAccount(){
+  const code=$('coa-code')?.value?.trim();const name=$('coa-name')?.value?.trim();const type=$('coa-type')?.value;const sub=$('coa-sub')?.value?.trim();
+  if(!code||!name){toast('Fill code and name','err');return;}
+  const{error}=await sb.from('chart_of_accounts').insert({account_code:code,account_name:name,account_type:type,account_sub:sub||null,created_by:CUP?.id});
+  if(error){toast('Error: '+(error.code==='23505'?'Account code already exists':error.message),'err');return;}
+  closeMo();toast(`✅ Account ${code} — ${name} created!`,'ok');
+}
+
+// Add COA button to owner nav — hook into assets tab header
+const _origRAssets=rAssets;
+function rAssets(){
+  return`<div class="flex just-b items-c" style="margin-bottom:12px">
+    <div class="t-xs upper fw-7 c-ink3">🏪 Shop Assets</div>
+    ${CUP?.role==='owner'?`<button class="btn btn-ghost btn-xs" onclick="openCoaModal()">📊 Chart of Accounts</button>`:''}
+  </div>`+`<div id="assets-content"></div>`;
+}
+
+async function repHistory(from,to,c){
+  const{data:txns}=await sb.from('transactions').select('*,parties(name)').gte('transaction_date',from).lte('transaction_date',to).order('created_at',{ascending:false}).limit(100);
+  lastRepTitle=`History_${from}_to_${to}`;
+  lastRepData=(txns||[]).map(t=>({Date:t.transaction_date,No:t.transaction_no,Type:t.transaction_type,Party:t.parties?.name||'',Amount:t.total_amount,Status:t.payment_status,Cancelled:t.is_cancelled,Reversed:t.is_reversed}));
+  if(!(txns||[]).length){c.innerHTML='<div class="empty"><div class="empty-ico">🕒</div><p>No transactions in period</p></div>';return;}
+  const TICON={sale:'🧾',purchase:'📦',sale_return:'🔄',purchase_return:'🔄',expense:'💸',receipt:'💰',adjustment:'⚙️',opening_balance:'🏦',payment_received:'💰',payment_made:'💸'};
+  const TCOL={sale:'var(--sage)',purchase:'var(--rust)',sale_return:'var(--gold)',purchase_return:'var(--gold)',expense:'var(--red)',receipt:'var(--sage)'};
+  c.innerHTML=`<div class="warn-box">Tap any transaction to view details, void or reverse.</div>`+(txns||[]).map(t=>`
+    <div class="card" style="padding:12px 13px;margin-bottom:9px;cursor:pointer;${t.is_cancelled?'opacity:.5;border-left:3px solid var(--red)':t.is_reversed?'border-left:3px solid var(--gold)':''}" onclick="showTxnDetail('${t.id}')">
+      <div class="flex just-b items-c">
+        <div style="flex:1;min-width:0">
+          <div class="flex items-c gap-2">
+            <span>${TICON[t.transaction_type]||'📋'}</span>
+            <span class="t-sm fw-7">${t.transaction_no}</span>
+            ${t.is_cancelled?'<span class="bdg bdg-red">VOID</span>':''}
+            ${t.is_reversed?'<span class="bdg bdg-gold">REVERSED</span>':''}
+          </div>
+          <div class="t-xs c-ink3" style="margin-top:3px">${t.transaction_date} · ${(t.transaction_type||'').replace(/_/g,' ')} · ${t.parties?.name||'Walk-in'}</div>
+          <div class="t-xs fw-7 upper" style="color:${TCOL[t.transaction_type]||'var(--ink3)'};margin-top:2px">${t.payment_status}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div class="t-sm fw-7">${fmt(t.total_amount)}</div>
+          ${(t.balance_amount||0)>0?`<div class="t-xs c-red">Due: ${fmt(t.balance_amount)}</div>`:''}
+          <div style="font-size:.9rem;color:var(--ink3);margin-top:2px">›</div>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+async function showTxnDetail(txnId){
+  const{data:txn}=await sb.from('transactions').select('*,parties(name)').eq('id',txnId).single();
+  if(!txn)return;
+  let itemsHtml='';
+  if(txn.transaction_type==='sale'){
+    const{data:si}=await sb.from('sale_items').select('*,product_variants(sku,colour,size,products(name))').eq('transaction_id',txnId);
+    if((si||[]).length)itemsHtml=`<div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">Items</div><div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden;margin-bottom:14px">${(si||[]).map(it=>`<div style="padding:9px 12px;border-bottom:1px solid var(--cream2);display:flex;justify-content:space-between"><div><div class="t-sm fw-6">${it.product_variants?.products?.name||''}</div><div class="t-xs c-ink3">${it.product_variants?.sku||''} · Qty:${it.qty} · Cost:${fmt(it.purchase_price)}</div></div><div style="text-align:right"><div class="t-sm fw-7">${fmt(it.sale_price*it.qty)}</div><div class="t-xs c-sage">+${fmt((it.sale_price-it.purchase_price)*it.qty)}</div></div></div>`).join('')}</div>`;
+  } else if(txn.transaction_type==='purchase'){
+    const{data:pi}=await sb.from('purchase_items').select('*,product_variants(sku,products(name))').eq('transaction_id',txnId);
+    if((pi||[]).length)itemsHtml=`<div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">Items</div><div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden;margin-bottom:14px">${(pi||[]).map(it=>`<div style="padding:9px 12px;border-bottom:1px solid var(--cream2);display:flex;justify-content:space-between"><div><div class="t-sm fw-6">${it.product_variants?.products?.name||''}</div><div class="t-xs c-ink3">${it.product_variants?.sku||''} · Qty:${it.qty}</div></div><div class="t-sm fw-7">${fmt(it.purchase_price*it.qty)}</div></div>`).join('')}</div>`;
+  }
+  const{data:le}=await sb.from('ledger_entries').select('*').eq('transaction_id',txnId);
+  const canAct=!txn.is_cancelled&&!txn.is_reversed&&CUP?.role==='owner';
+  openMo(txn.transaction_no,`
+    ${txn.is_cancelled?'<div style="background:var(--red);color:white;border-radius:9px;padding:9px 13px;margin-bottom:12px;font-size:.72rem;font-weight:700">❌ VOIDED — '+txn.cancelled_reason+'</div>':''}
+    ${txn.is_reversed?'<div style="background:var(--gold);color:white;border-radius:9px;padding:9px 13px;margin-bottom:12px;font-size:.72rem;font-weight:700">↩️ REVERSED</div>':''}
+    <div style="background:var(--cream2);border-radius:12px;padding:13px;margin-bottom:14px">
+      <div class="g2" style="gap:8px">
+        <div><div class="t-xs c-ink3">Type</div><div class="t-sm fw-7">${(txn.transaction_type||'').replace(/_/g,' ')}</div></div>
+        <div><div class="t-xs c-ink3">Date</div><div class="t-sm fw-7">${txn.transaction_date}</div></div>
+        <div><div class="t-xs c-ink3">Party</div><div class="t-sm fw-7">${txn.parties?.name||'Walk-in'}</div></div>
+        <div><div class="t-xs c-ink3">Status</div><div class="t-sm fw-7 upper">${txn.payment_status}</div></div>
+        <div><div class="t-xs c-ink3">Total</div><div class="t-sm fw-7">${fmt(txn.total_amount)}</div></div>
+        <div><div class="t-xs c-ink3">Paid</div><div class="t-sm fw-7">${fmt(txn.paid_amount)}</div></div>
+      </div>
+      ${txn.notes?`<div style="margin-top:9px;padding-top:9px;border-top:1px dashed var(--border2)"><div class="t-xs c-ink3">Notes</div><div class="t-sm">${txn.notes}</div></div>`:''}
+    </div>
+    ${itemsHtml}
+    ${(le||[]).length?`<div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">Ledger Impact</div><div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden;margin-bottom:14px">${(le||[]).map(e=>`<div style="padding:7px 12px;border-bottom:1px solid var(--cream2);display:flex;justify-content:space-between"><div class="t-xs c-ink3">${e.description||''}</div><div class="t-xs fw-7" style="color:${e.entry_type==='credit'?'var(--sage)':'var(--red)'}">${e.entry_type==='credit'?'CR':'DR'} ${fmt(e.amount)}</div></div>`).join('')}</div>`:''}
+    ${canAct?`
+      <div class="t-xs upper fw-7" style="color:var(--red);margin-bottom:8px">⚠️ Owner Actions</div>
+      <div class="g2" style="margin-bottom:10px">
+        <button class="btn btn-red btn-full" onclick="openVoidModal('${txn.id}','${txn.transaction_no}','cancel')">❌ Void</button>
+        <button class="btn btn-ink btn-full" onclick="openVoidModal('${txn.id}','${txn.transaction_no}','reverse')">↩️ Reverse</button>
+      </div>
+      <div class="info-box"><strong>Void</strong> = marks cancelled, no financial change.<br><strong>Reverse</strong> = creates opposite entries, cancels financial impact fully.</div>`
+    :(!canAct&&CUP?.role!=='owner'?'<div class="info-box">Only owner can void or reverse transactions.</div>':'')}
+  `);
+}
+
+function openVoidModal(txnId,txnNo,action){
+  closeMo();
+  setTimeout(()=>{
+    openMo(`${action==='cancel'?'❌ Void':'↩️ Reverse'}: ${txnNo}`,`
+      <div class="warn-box" style="${action==='reverse'?'border-color:var(--rust);background:#FFF0E8':''}">
+        ${action==='cancel'
+          ?'<strong>Void</strong>: Marks cancelled only. Cash/ledger balances NOT changed automatically. Use Reverse for full financial correction.'
+          :'<strong>Reverse</strong>: Creates opposite ledger entries. Fully cancels the financial impact on cash and party balances. Inventory must be adjusted manually if needed.'}
+      </div>
+      <div class="fg"><label class="lbl">Reason *</label>
+        <select class="sel" id="void-rsn">
+          <option value="">Select reason...</option>
+          <option>Wrong amount entered</option>
+          <option>Wrong customer / supplier</option>
+          <option>Duplicate entry</option>
+          <option>Test transaction</option>
+          <option>Customer cancelled order</option>
+          <option>Wrong payment method</option>
+          <option>Other mistake</option>
+        </select>
+      </div>
+      <div class="fg"><label class="lbl">Additional Notes</label>
+        <input class="inp" id="void-notes" placeholder="Optional details...">
+      </div>
+      <div class="fg"><label class="lbl">🔐 Confirm with your password</label>
+        <input class="inp" id="void-pw" type="password" placeholder="Enter owner password">
+      </div>
+      <button class="btn ${action==='cancel'?'btn-red':'btn-ink'} btn-full" id="void-btn" onclick="confirmVoid('${txnId}','${txnNo}','${action}')">
+        ${action==='cancel'?'❌ Confirm Void':'↩️ Confirm Reverse'}
+      </button>
+    `);
+  },350);
+}
+
+async function confirmVoid(txnId,txnNo,action){
+  const reason=$('void-rsn')?.value;
+  const notes=$('void-notes')?.value||'';
+  const pw=$('void-pw')?.value;
+  if(!reason){toast('Select a reason','err');return;}
+  if(!pw){toast('Enter password','err');return;}
+  const btn=$('void-btn');if(btn){btn.innerHTML='<div class="spin"></div>';btn.disabled=true;}
+  // Verify owner password
+  const{error:authErr}=await sb.auth.signInWithPassword({email:CU.email,password:pw});
+  if(authErr){toast('❌ Wrong password','err');if(btn){btn.innerHTML=action==='cancel'?'❌ Confirm Void':'↩️ Confirm Reverse';btn.disabled=false;}return;}
+  const fullReason=`${reason}${notes?' — '+notes:''}`;
+  try{
+    if(action==='cancel'){
+      const{error}=await sb.from('transactions').update({is_cancelled:true,cancelled_at:new Date().toISOString(),cancelled_by:CUP?.id,cancelled_reason:fullReason,updated_at:new Date().toISOString()}).eq('id',txnId);
+      if(error)throw error;
+      await sb.from('audit_log').insert({table_name:'transactions',record_id:txnId,action:'CANCEL',change_reason:fullReason,performed_by:CUP?.id});
+      closeMo();toast(`✅ ${txnNo} voided successfully`,'ok');
+    } else {
+      const{data,error}=await sb.rpc('reverse_transaction',{p_transaction_id:txnId,p_reason:fullReason,p_user_id:CUP?.id});
+      if(error)throw error;
+      await loadMasterData();
+      closeMo();toast(`✅ ${txnNo} reversed → ${data?.reversal_no||'done'}`,'ok',5000);
+    }
+    genRep();
+  }catch(e){
+    toast('Error: '+e.message,'err');
+    if(btn){btn.innerHTML=action==='cancel'?'❌ Confirm Void':'↩️ Confirm Reverse';btn.disabled=false;}
+  }
 }
 </script>
-</body>
-</html>
