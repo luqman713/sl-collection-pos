@@ -267,7 +267,8 @@ function getNextOfflineBillNo(){
   const counter=lsGet('sl_bill_counter',{bill:0,pur:0,exp:0});
   counter.bill++;
   lsSet('sl_bill_counter',counter);
-  return`BILL-OFF-${String(counter.bill).padStart(4,'0')}`;
+  // Use timestamp to avoid sync conflicts: BILL-O-{timestamp}-{seq}
+  return`BILL-O-${Date.now()}-${counter.bill}`;
 }
 function getNextOfflinePurNo(){
   const counter=lsGet('sl_bill_counter',{bill:0,pur:0,exp:0});
@@ -365,9 +366,9 @@ let CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',purSrc='cash',pPho
 const $=id=>document.getElementById(id);
 const fmt=n=>'₨'+Number(n||0).toLocaleString('en-PK');
 const today=()=>new Date().toISOString().split('T')[0];
-const CATS=['3PC','2PC','Shirt','Trouser','Dupatta','Abaya','Scarf'];
-const CEMI={'3PC':'👗','2PC':'👘','Shirt':'👚','Trouser':'👖','Dupatta':'🧣','Abaya':'🖤','Scarf':'🧤'};
-const CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF'};
+const CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf'];
+const CEMI={'3PC':'👗','2PC':'👘','Shirt':'👚','Jeans':'👖','Trouser':'👖','Dupatta':'🧣','Abaya':'🖤','Scarf':'🧤'};
+const CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF'};
 const CLCOD={black:'BLK',white:'WHT',blue:'BLU','navy blue':'NVY',navy:'NVY',red:'RED',green:'GRN',pink:'PNK',yellow:'YLW',orange:'ORG',purple:'PRP',grey:'GRY',gray:'GRY',brown:'BRN',maroon:'MRN',beige:'BGE',cream:'CRM',multi:'MLT',printed:'PRT',embroidered:'EMB'};
 
 function toast(msg,type='',dur=3000){const t=$('toast');t.textContent=msg;t.className=`toast show ${type}`;setTimeout(()=>t.className='toast',dur);}
@@ -457,7 +458,7 @@ function setupRealtime(){
 function setupNav(){
   const ot=[{id:'dash',l:'📊'},{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'},{id:'led',l:'📒 Ledger'},{id:'rep',l:'📈 Reports'},{id:'cash',l:'💵 Cash'},{id:'assets',l:'🏪 Assets'}];
   const st=[{id:'bill',l:'🧾 Bill'},{id:'inv',l:'📋 Stock'},{id:'buy',l:'📦 Buy'}];
-  const tabs=CUP?.role==='owner'?ot:st;
+  const tabs=(CUP?.role==='owner'||CUP?.role==='manager')?ot:st;
   $('nav-tabs').innerHTML=tabs.map((t,i)=>`<div class="nav-tab ${i===0?'active':''}" onclick="showTab('${t.id}',this)">${t.l}</div>`).join('');
   showTab(tabs[0].id,null,true);
 }
@@ -610,10 +611,12 @@ async function completeSale(){
     if(!emoneyId){toast('Select an e-money account','err');if(btn){btn.innerHTML='✅ Complete Sale';btn.disabled=false;}return;}
   }
   if(payMode==='split'&&splitCash>tot){toast(`Split cash ₨${splitCash} cannot exceed total ₨${tot}`,'err');if(btn){btn.innerHTML='✅ Complete Sale';btn.disabled=false;}return;}
+  // ── FC CUSTOMER VALIDATION ──
+  let custPartyResult=null;
   if(payMode==='credit'||payMode==='split'){
-    let p=parties.find(p=>p.name===cust&&p.party_type==='customer');
-    if(!p){const{data:np}=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP?.id}).select().single();if(np){parties.push(np);p=np;}}
-    custPartyId=p?.id||null;
+    custPartyResult=await validateAndGetCustomer(cust,payMode);
+    if(!custPartyResult){if(btn){btn.innerHTML='✅ Complete Sale';btn.disabled=false;}return;}
+    custPartyId=custPartyResult.id||null;
   }
   try{
     const billNoResult=isOnline?await sb.rpc('generate_transaction_no',{p_prefix:'BILL'}):null;
@@ -908,14 +911,22 @@ function showSKUBanner(sku,nm,cat,sz,cl){const b=document.createElement('div');b
 function resetPurForm(){['p-nm','p-sz','p-ds','p-nc','p-cl','p-qt','p-cs','pur-sup'].forEach(id=>{const e=$(id);if(e)e.value='';});if($('p-cat'))$('p-cat').value='';if($('ppi'))$('ppi').textContent='📸';if($('ppn'))$('ppn').textContent='';if($('pbn'))$('pbn').textContent='';if($('sku-prev'))$('sku-prev').textContent='Select category...';if($('pp-prev'))$('pp-prev').style.display='none';if($('pp-det'))$('pp-det').innerHTML='';const pp=$('pp-pills');if(pp){pp.querySelectorAll('.pill').forEach((p,i)=>p.classList.toggle('on',i===0));}purPayMode='cash';}
 
 function rPurRet(){const opts=products.map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');return`<div class="card"><div class="card-title">🔄 Purchase Return</div><div class="fg"><label class="lbl">Product</label><select class="sel" id="pr-p">${opts}</select></div><div class="g2"><div class="fg"><label class="lbl">Qty</label><input class="inp" id="pr-q" type="number" placeholder="0"></div><div class="fg"><label class="lbl">Cost ₨</label><input class="inp" id="pr-c" type="number" placeholder="0"></div></div><div class="fg"><label class="lbl">Supplier</label><input class="inp" id="pr-s" placeholder="Supplier name"></div><div class="fg"><label class="lbl">Reason</label><input class="inp" id="pr-r" placeholder="Defective..."></div><button class="btn btn-ink btn-full" onclick="savePurRet()">✅ Process</button></div>`;}
-async function savePurRet(){const varId=$('pr-p')?.value;const qty=Number($('pr-q')?.value||0);const cst=Number($('pr-c')?.value||0);const sup=$('pr-s')?.value||'';const rsn=$('pr-r')?.value||'';if(!varId||!qty||!cst){toast('Fill all','err');return;}const p=products.find(p=>p.id===varId);if(!p)return;const supParty=parties.find(p=>p.name===sup&&p.party_type==='supplier');const amt=qty*cst;const cashAcc=accounts.find(a=>a.name==='Cash Drawer');const{data:retNo}=await sb.rpc('generate_transaction_no',{p_prefix:'PRET'});try{const{data:txn}=await sb.from('transactions').insert({transaction_no:retNo,transaction_type:'purchase_return',transaction_date:today(),party_id:supParty?.id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:rsn}).select().single();const{data:ret}=await sb.from('purchase_returns').insert({transaction_id:txn.id,original_purchase_transaction_id:txn.id,supplier_party_id:supParty?.id||parties[0].id,return_date:today(),total_return_amount:amt,reason:rsn}).select().single();await sb.from('purchase_return_items').insert({purchase_return_id:ret.id,variant_id:varId,qty,purchase_price:cst});await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty)}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,transaction_id:txn.id,movement_type:'purchase_return',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:rsn,performed_by:CUP?.id});if(supParty)await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:supParty.id,amount:amt,description:`Return: ${p.name} x${qty}`,created_by:CUP?.id});await loadMasterData();toast(`✅ Return done! Stock -${qty}`,'ok');}catch(e){toast('Error: '+e.message,'err');}}
+async function savePurRet(){const varId=$('pr-p')?.value;const qty=Number($('pr-q')?.value||0);const cst=Number($('pr-c')?.value||0);const sup=$('pr-s')?.value||'';const rsn=$('pr-r')?.value||'';if(!varId||!qty||!cst){toast('Fill all','err');return;}
+  if(!sup){toast('Enter supplier name for return','err');return;}
+  // FC Supplier validation
+  let supParty=parties.find(p=>p.name===sup&&p.party_type==='supplier');
+  if(!supParty){
+    const created=await FC.validateSupplier(sup);
+    if(!created){return;}
+    supParty=created;
+  }const p=products.find(p=>p.id===varId);if(!p)return;// supParty already validated aboveconst amt=qty*cst;const cashAcc=accounts.find(a=>a.name==='Cash Drawer');const{data:retNo}=await sb.rpc('generate_transaction_no',{p_prefix:'PRET'});try{const{data:txn}=await sb.from('transactions').insert({transaction_no:retNo,transaction_type:'purchase_return',transaction_date:today(),party_id:supParty?.id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:rsn}).select().single();const{data:ret}=await sb.from('purchase_returns').insert({transaction_id:txn.id,original_purchase_transaction_id:txn.id,supplier_party_id:supParty?.id||parties[0].id,return_date:today(),total_return_amount:amt,reason:rsn}).select().single();await sb.from('purchase_return_items').insert({purchase_return_id:ret.id,variant_id:varId,qty,purchase_price:cst});await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty)}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,transaction_id:txn.id,movement_type:'purchase_return',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:rsn,performed_by:CUP?.id});if(supParty)await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'party',party_id:supParty.id,amount:amt,description:`Return: ${p.name} x${qty}`,created_by:CUP?.id});await loadMasterData();toast(`✅ Return done! Stock -${qty}`,'ok');}catch(e){toast('Error: '+e.message,'err');}}
 
 function rDmg(){const opts=products.filter(p=>(p.stock||0)>0).map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');return`<div class="card"><div class="card-title" style="color:var(--red)">💥 Damaged</div><div class="fg"><label class="lbl">Product</label><select class="sel" id="dm-p" onchange="const p=products.find(p=>p.id===this.value);if(p&&$('dm-c'))$('dm-c').value=p.purchase_price;">${opts}</select></div><div class="g2"><div class="fg"><label class="lbl">Qty</label><input class="inp" id="dm-q" type="number" placeholder="0"></div><div class="fg"><label class="lbl">Cost ₨</label><input class="inp" id="dm-c" type="number" placeholder="0"></div></div><div class="fg"><label class="lbl">Description</label><input class="inp" id="dm-d" placeholder="Water damage, torn..."></div><button class="btn btn-red btn-full" onclick="saveDmg()">💾 Record</button></div>`;}
-async function saveDmg(){const varId=$('dm-p')?.value;const qty=Number($('dm-q')?.value||0);const cst=Number($('dm-c')?.value||0);const desc=$('dm-d')?.value||'';if(!varId||!qty)return;const p=products.find(p=>p.id===varId);if(!p)return;await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty),qty_damaged:qty}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,movement_type:'damaged',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:desc,performed_by:CUP?.id});await loadMasterData();toast(`💥 Stock -${qty}. Loss: ${fmt(qty*cst)}`,'ok');}
+async function saveDmg(){const varId=$('dm-p')?.value;const qty=Number($('dm-q')?.value||0);const cst=Number($('dm-c')?.value||0);const desc=$('dm-d')?.value||'';if(!varId||!qty){toast('Select product and quantity','err');return;}if(!desc){toast('Enter damage reason — required for audit trail','err');return;}const p=products.find(p=>p.id===varId);if(!p)return;await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty),qty_damaged:qty}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,movement_type:'damaged',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:desc,performed_by:CUP?.id});await loadMasterData();toast(`💥 Stock -${qty}. Loss: ${fmt(qty*cst)}`,'ok');}
 
 function rLst(){const opts=products.filter(p=>(p.stock||0)>0).map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');return`<div class="card"><div class="card-title">❌ Lost Items</div><div class="fg"><label class="lbl">Lost By</label><div class="pill-row"><div class="pill on" id="lb-own" onclick="setLB('owner',this)">👑 Owner</div><div class="pill" id="lb-stf" onclick="setLB('staff',this)">👤 Staff</div></div></div><div class="fg"><label class="lbl" id="lb-lbl">Name</label><input class="inp" id="lb-nm" placeholder="Name"></div><div class="fg"><label class="lbl">Product</label><select class="sel" id="lb-p">${opts}</select></div><div class="g2"><div class="fg"><label class="lbl">Qty</label><input class="inp" id="lb-q" type="number" placeholder="0"></div><div class="fg"><label class="lbl">Cost ₨</label><input class="inp" id="lb-c" type="number" placeholder="0"></div></div><div class="fg"><label class="lbl">Notes</label><input class="inp" id="lb-nt" placeholder="Details..."></div><div class="info-box" id="lb-inf">👑 Posted to Owner Payable.</div><button class="btn btn-ink btn-full" onclick="saveLost()">💾 Record</button></div>`;}
 function setLB(b,el){lostBy=b;document.querySelectorAll('#lb-own,#lb-stf').forEach(p=>p.classList.remove('on'));el.classList.add('on');if($('lb-lbl'))$('lb-lbl').textContent=b==='owner'?'Owner Name':'Staff Name';if($('lb-inf'))$('lb-inf').textContent=b==='owner'?'👑 Posted to Owner Payable.':'👤 Posted to Employee ledger.';}
-async function saveLost(){const varId=$('lb-p')?.value;const qty=Number($('lb-q')?.value||0);const cst=Number($('lb-c')?.value||0);const per=$('lb-nm')?.value||lostBy;const nts=$('lb-nt')?.value||'';if(!varId||!qty)return;const p=products.find(p=>p.id===varId);if(!p)return;await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty)}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,movement_type:lostBy==='owner'?'lost_owner':'lost_staff',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:`${per}: ${nts}`,performed_by:CUP?.id});await loadMasterData();toast(`❌ Stock -${qty}`,'ok');}
+async function saveLost(){const varId=$('lb-p')?.value;const qty=Number($('lb-q')?.value||0);const cst=Number($('lb-c')?.value||0);const per=$('lb-nm')?.value||lostBy;const nts=$('lb-nt')?.value||'';if(!varId||!qty){toast('Select product and quantity','err');return;}if(!per){toast('Enter person name','err');return;}const p=products.find(p=>p.id===varId);if(!p)return;await sb.from('inventory').update({qty_available:Math.max(0,(p.stock||0)-qty)}).eq('variant_id',varId);await sb.from('inventory_movements').insert({variant_id:varId,movement_type:lostBy==='owner'?'lost_owner':'lost_staff',qty_change:-qty,qty_before:p.stock||0,qty_after:Math.max(0,(p.stock||0)-qty),purchase_price:cst,reason:`${per}: ${nts}`,performed_by:CUP?.id});await loadMasterData();toast(`❌ Stock -${qty}`,'ok');}
 
 function rAgd(){const opts=products.filter(p=>(p.stock||0)>0).map(p=>`<option value="${p.id}">${p.name} (${p.sku})</option>`).join('');return`<div class="card"><div class="card-title">🏷️ Aged Sale</div><div class="fg"><label class="lbl">Product</label><select class="sel" id="ag-p" onchange="const p=products.find(p=>p.id===this.value);if(p&&$('ag-c'))$('ag-c').value=p.purchase_price;calcAgd();">${opts}</select></div><div class="g2"><div class="fg"><label class="lbl">Qty</label><input class="inp" id="ag-q" type="number" placeholder="0" oninput="calcAgd()"></div><div class="fg"><label class="lbl">Cost ₨</label><input class="inp" id="ag-c" type="number" placeholder="0" oninput="calcAgd()"></div></div><div class="fg"><label class="lbl">Sale Price ₨</label><input class="inp" id="ag-pr" type="number" placeholder="0" oninput="calcAgd()"></div><div id="ag-prev" class="payable-prev" style="display:none"></div><div class="fg"><label class="lbl">Reason</label><input class="inp" id="ag-r" placeholder="Old season..."></div><button class="btn btn-gold btn-full" onclick="saveAgd()">✅ Record</button></div>`;}
 function calcAgd(){const q=Number($('ag-q')?.value||0);const c=Number($('ag-c')?.value||0);const pr=Number($('ag-pr')?.value||0);const p=$('ag-prev');if(!p)return;if(q>0&&c>0&&pr>0){const ls=(c-pr)*q;p.style.display='block';p.innerHTML=`<div class="flex just-b"><span>Cost</span><span>${fmt(c*q)}</span></div><div class="flex just-b" style="color:var(--sage)"><span>Sale</span><span>${fmt(pr*q)}</span></div><div class="flex just-b fw-7" style="border-top:1px dashed var(--border2);margin-top:5px;padding-top:5px;color:${ls>0?'var(--red)':'var(--sage)'}"><span>${ls>0?'Loss':'Gain'}</span><span>${fmt(Math.abs(ls))}</span></div>`;}else p.style.display='none';}
@@ -1026,7 +1037,12 @@ async function repPL(from,to,c){
 }
 
 async function repSeasonal(c){
-  const{data:seasons}=await sb.rpc('get_seasonal_comparison',{p_season_type:'eid',p_years:7});
+  const from=$('r-from')?.value||today();
+  const seasonType=$('seasonal-type')?.value||'eid';
+  const years=Number($('seasonal-years')?.value||7);
+  c.innerHTML=`<div class="fg"><label class="lbl">Season Type</label><select class="sel" id="seasonal-type" onchange="genRep()"><option value="eid">Eid</option><option value="summer">Summer</option><option value="winter">Winter</option><option value="full_year">Full Year</option></select></div><div class="g2"><div class="fg"><label class="lbl">Years Back</label><input class="inp" id="seasonal-years" type="number" value="7" min="1" max="10" onchange="genRep()"></div></div><div id="seasonal-results"></div>`;
+  const{data:seasons}=await sb.rpc('get_seasonal_comparison',{p_season_type:seasonType,p_years:years});
+  const sr=$('seasonal-results');if(!sr)return;
   lastRepTitle='Seasonal_Comparison';lastRepData=(seasons||[]).map(s=>({Season:s.season_name,Year:s.year,Revenue:s.total_revenue,Units:s.total_units,Profit:s.gross_profit,Margin:s.margin_pct,Bills:s.bill_count,YoY:s.yoy_growth}));
   c.innerHTML=`<div class="warn-box">Showing Eid seasons (7 years). Add seasons in Supabase seasonal_periods table to customize.</div>${(seasons||[]).map(s=>`<div class="card" style="padding:13px"><div class="flex just-b items-c" style="margin-bottom:8px"><div><div class="t-base fw-7">${s.season_name}</div><div class="t-xs c-ink3">${s.start_date} to ${s.end_date}</div></div>${s.yoy_growth!=null?`<div class="bdg ${s.yoy_growth>=0?'bdg-sage':'bdg-red'}">${s.yoy_growth>=0?'▲':'▼'} ${Math.abs(s.yoy_growth)}% YoY</div>`:''}</div><div class="g3"><div style="text-align:center"><div class="t-xs c-ink3">Revenue</div><div class="t-sm fw-7">${fmt(s.total_revenue)}</div></div><div style="text-align:center"><div class="t-xs c-ink3">Profit</div><div class="t-sm fw-7 c-sage">${fmt(s.gross_profit)}</div></div><div style="text-align:center"><div class="t-xs c-ink3">Bills</div><div class="t-sm fw-7">${s.bill_count}</div></div></div>${(s.annotations||[]).length?`<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream2)">${(s.annotations||[]).map(a=>`<div class="t-xs c-ink3">💬 ${a.comment}</div>`).join('')}</div>`:''}<button class="btn btn-ghost btn-xs btn-full" style="margin-top:8px" onclick="addAnnotation('seasonal','${s.season_name}')">➕ Add Note</button></div>`).join('')}`;
 }
@@ -1862,4 +1878,366 @@ function rAssets(){
     ${CUP?.role==='owner'?`<button class="btn btn-ghost btn-xs" onclick="FC.openCoaModal()">📊 Financial Controls</button>`:''}
   </div><div id="assets-content"></div>`;
 }
+</script>
+<script>
+// ═══════════════════════════════════════════════════
+// SECURITY PANEL + PASSWORD MANAGEMENT
+// Phase 4 — Owner-verified security controls
+// ═══════════════════════════════════════════════════
+
+const SEC = {
+
+  // ── OPEN SECURITY PANEL ──
+  async openPanel() {
+    const { data: users } = await sb.from('users').select('*').order('role');
+    const { data: events } = await sb.from('security_events')
+      .select('*').order('created_at', { ascending: false }).limit(20);
+    const { data: perms } = await sb.from('staff_permissions').select('*,users(full_name,role)');
+
+    openMo('🔐 Security Panel', `
+      <div style="display:flex;gap:5px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none">
+        <div class="pill on" onclick="secTab('users',this)">👥 Users</div>
+        <div class="pill" onclick="secTab('perms',this)">🔑 Permissions</div>
+        <div class="pill" onclick="secTab('reset',this)">🔄 Password Reset</div>
+        <div class="pill" onclick="secTab('log',this)">📋 Security Log</div>
+      </div>
+
+      <!-- USERS TAB -->
+      <div id="sec-users">
+        <button class="btn btn-ink btn-sm btn-full" style="margin-bottom:10px" onclick="SEC.openAddUser()">➕ Add Staff User</button>
+        ${(users||[]).map(u=>`
+          <div class="card" style="padding:11px 13px;margin-bottom:8px">
+            <div class="flex just-b items-c">
+              <div>
+                <div class="t-sm fw-7">${u.full_name}</div>
+                <div class="t-xs c-ink3">${u.username} · ${u.role}</div>
+                <div class="t-xs" style="color:${u.is_active?'var(--sage)':'var(--red)'}">${u.is_active?'✅ Active':'❌ Inactive'}</div>
+              </div>
+              <div class="flex gap-1">
+                <button class="btn btn-xs btn-ghost" onclick="SEC.openResetPassword('${u.id}','${u.full_name.replace(/'/g,"\\'")}','${u.auth_id||''}')">🔄 Reset PW</button>
+                <button class="btn btn-xs btn-${u.is_active?'red':'sage'}" onclick="SEC.toggleUser('${u.id}',${u.is_active},'${u.full_name.replace(/'/g,"\\'")}')">
+                  ${u.is_active?'Deactivate':'Activate'}
+                </button>
+              </div>
+            </div>
+          </div>`).join('')}
+      </div>
+
+      <!-- PERMISSIONS TAB -->
+      <div id="sec-perms" style="display:none">
+        <div class="info-box">Control what staff can access. Owner always has full access.</div>
+        ${(perms||[]).filter(p=>p.users?.role==='staff').map(p=>`
+          <div class="card" style="padding:13px;margin-bottom:9px">
+            <div class="t-sm fw-7" style="margin-bottom:10px">👤 ${p.users?.full_name||'Staff'}</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              ${[
+                ['can_sell','🧾 Sell'],['can_purchase','📦 Purchase'],
+                ['can_return','🔄 Returns'],['can_expense','💸 Expenses'],
+                ['can_ledger','📒 Ledger'],['can_reports','📈 Reports'],
+                ['can_void','❌ Void/Reverse']
+              ].map(([key,label])=>`
+                <label style="display:flex;align-items:center;gap:6px;font-size:.72rem;cursor:pointer">
+                  <input type="checkbox" ${p[key]?'checked':''} style="accent-color:var(--gold);width:16px;height:16px"
+                    onchange="SEC.updatePerm('${p.id}','${key}',this.checked)">
+                  ${label}
+                </label>`).join('')}
+            </div>
+          </div>`).join('')||'<div class="empty"><p>No staff users found</p></div>'}
+      </div>
+
+      <!-- PASSWORD RESET TAB -->
+      <div id="sec-reset" style="display:none">
+        <div class="warn-box">Password reset requires owner password verification. All resets are logged.</div>
+        <div class="fg"><label class="lbl">Select User</label>
+          <select class="sel" id="reset-user">
+            <option value="">Select user...</option>
+            ${(users||[]).filter(u=>u.auth_id).map(u=>`<option value="${u.auth_id}|${u.full_name}">${u.full_name} (${u.role})</option>`).join('')}
+          </select>
+        </div>
+        <div class="fg"><label class="lbl">New Password</label>
+          <input class="inp" id="reset-newpw" type="password" placeholder="Min 8 characters">
+        </div>
+        <div class="fg"><label class="lbl">Confirm Password</label>
+          <input class="inp" id="reset-confirmpw" type="password" placeholder="Re-enter password">
+        </div>
+        <div class="fg"><label class="lbl">🔐 Your Owner Password</label>
+          <input class="inp" id="reset-ownerpw" type="password" placeholder="Enter your password to confirm">
+        </div>
+        <button class="btn btn-ink btn-full" onclick="SEC.resetPassword()">🔄 Reset Password</button>
+      </div>
+
+      <!-- SECURITY LOG TAB -->
+      <div id="sec-log" style="display:none">
+        ${!(events||[]).length
+          ? '<div class="info-box">✅ No security events recorded</div>'
+          : (events||[]).map(e=>`
+            <div class="card" style="padding:10px 12px;margin-bottom:8px;border-left:3px solid ${
+              e.event_type.includes('failed')||e.event_type.includes('suspicious')?'var(--red)':
+              e.event_type.includes('reset')||e.event_type.includes('change')?'var(--gold)':'var(--sage)'}">
+              <div class="t-sm fw-7">${e.event_type.replace(/_/g,' ').toUpperCase()}</div>
+              <div class="t-xs c-ink3">${e.description||''}</div>
+              <div class="t-xs c-ink3">${e.created_at?.split('T')[0]||''}</div>
+            </div>`).join('')}
+      </div>
+    `);
+  },
+
+  // ── TAB SWITCHER ──
+  tab(name, el) {
+    ['users','perms','reset','log'].forEach(t => {
+      const d = $(`sec-${t}`); if(d) d.style.display = 'none';
+    });
+    const target = $(`sec-${name}`); if(target) target.style.display = 'block';
+    el.closest('.mo-box').querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
+    el.classList.add('on');
+  },
+
+  // ── RESET PASSWORD ──
+  async resetPassword() {
+    const sel = $('reset-user')?.value;
+    const newpw = $('reset-newpw')?.value;
+    const confirmpw = $('reset-confirmpw')?.value;
+    const ownerpw = $('reset-ownerpw')?.value;
+    if(!sel) { toast('Select a user', 'err'); return; }
+    if(!newpw || newpw.length < 8) { toast('Password must be at least 8 characters', 'err'); return; }
+    if(newpw !== confirmpw) { toast('Passwords do not match', 'err'); return; }
+    if(!ownerpw) { toast('Enter your owner password', 'err'); return; }
+
+    // Verify owner password first
+    const { error: authErr } = await sb.auth.signInWithPassword({ email: CU.email, password: ownerpw });
+    if(authErr) { toast('❌ Wrong owner password', 'err'); return; }
+
+    const [authId, userName] = sel.split('|');
+
+    // Use Supabase Admin API via Edge Function (or direct update)
+    // For now use updateUser for own account or admin API
+    try {
+      // Log the reset attempt
+      await sb.from('security_events').insert({
+        user_id: CUP?.id,
+        event_type: 'password_reset',
+        description: `Owner reset password for: ${userName}`,
+        performed_by: CUP?.id
+      });
+
+      // Note: Direct password reset for OTHER users requires service_role key
+      // which cannot be in frontend. Show instruction instead for other users.
+      if(authId === CU.id) {
+        const { error } = await sb.auth.updateUser({ password: newpw });
+        if(error) throw error;
+        toast(`✅ Your password updated successfully`, 'ok');
+      } else {
+        // Show admin instruction
+        openMo('Password Reset Instructions', `
+          <div class="info-box">
+            To reset password for <strong>${userName}</strong>, follow these steps:
+          </div>
+          <div style="background:var(--cream2);border-radius:10px;padding:14px;margin-bottom:12px">
+            <div class="t-xs fw-7 c-ink3 upper" style="margin-bottom:8px">Option 1 — Supabase Dashboard</div>
+            <div class="t-xs c-ink2">1. Go to supabase.com/dashboard/project/fqubaesqzfmxvbtqconu</div>
+            <div class="t-xs c-ink2">2. Authentication → Users</div>
+            <div class="t-xs c-ink2">3. Find ${userName} → Click ⋮ → Send Password Reset</div>
+          </div>
+          <div style="background:var(--cream2);border-radius:10px;padding:14px;margin-bottom:12px">
+            <div class="t-xs fw-7 c-ink3 upper" style="margin-bottom:8px">Option 2 — Staff resets own password</div>
+            <div class="t-xs c-ink2">Tell ${userName} to go to the login page and use "Forgot Password"</div>
+          </div>
+          <div class="info-box" style="border-color:var(--gold)">
+            ✅ This reset attempt has been logged in the Security Log for audit purposes.
+          </div>
+          <button class="btn btn-ghost btn-full" onclick="closeMo()">OK</button>
+        `);
+      }
+    } catch(e) {
+      toast('Error: ' + e.message, 'err');
+    }
+  },
+
+  // ── TOGGLE USER ACTIVE STATUS ──
+  async toggleUser(userId, currentStatus, userName) {
+    const action = currentStatus ? 'deactivate' : 'activate';
+    if(!confirm(`${action.toUpperCase()} user "${userName}"?`)) return;
+
+    const { error } = await sb.from('users').update({
+      is_active: !currentStatus, updated_at: new Date().toISOString()
+    }).eq('id', userId);
+    if(error) { toast('Error: ' + error.message, 'err'); return; }
+
+    await sb.from('security_events').insert({
+      user_id: userId, event_type: 'role_change',
+      description: `${CUP?.full_name} ${action}d user: ${userName}`,
+      performed_by: CUP?.id
+    });
+    toast(`✅ ${userName} ${action}d`, 'ok');
+    SEC.openPanel();
+  },
+
+  // ── UPDATE PERMISSION ──
+  async updatePerm(permId, key, value) {
+    const { error } = await sb.from('staff_permissions')
+      .update({ [key]: value, updated_at: new Date().toISOString(), updated_by: CUP?.id })
+      .eq('id', permId);
+    if(error) { toast('Error: ' + error.message, 'err'); return; }
+    toast(`✅ Permission updated`, 'ok');
+  },
+
+  // ── ADD NEW STAFF USER ──
+  openAddUser() {
+    closeMo();
+    setTimeout(() => {
+      openMo('➕ Add Staff User', `
+        <div class="fg"><label class="lbl">Full Name *</label>
+          <input class="inp" id="nu-name" placeholder="Staff member name">
+        </div>
+        <div class="fg"><label class="lbl">Email *</label>
+          <input class="inp" id="nu-email" type="email" placeholder="staff2@slcollection.com">
+        </div>
+        <div class="fg"><label class="lbl">Password *</label>
+          <input class="inp" id="nu-pw" type="password" placeholder="Min 8 characters">
+        </div>
+        <div class="fg"><label class="lbl">Role</label>
+          <select class="sel" id="nu-role">
+            <option value="staff">Staff</option>
+            <option value="manager">Manager</option>
+          </select>
+        </div>
+        <div class="fg"><label class="lbl">🔐 Your Owner Password</label>
+          <input class="inp" id="nu-ownerpw" type="password" placeholder="Confirm with your password">
+        </div>
+        <button class="btn btn-ink btn-full" onclick="SEC.createUser()">✅ Create User</button>
+      `);
+    }, 350);
+  },
+
+  async createUser() {
+    const name = $('nu-name')?.value?.trim();
+    const email = $('nu-email')?.value?.trim();
+    const pw = $('nu-pw')?.value;
+    const role = $('nu-role')?.value || 'staff';
+    const ownerpw = $('nu-ownerpw')?.value;
+
+    if(!name||!email||!pw) { toast('Fill all required fields', 'err'); return; }
+    if(pw.length < 8) { toast('Password min 8 characters', 'err'); return; }
+    if(!ownerpw) { toast('Enter owner password', 'err'); return; }
+
+    // Verify owner
+    const { error: ae } = await sb.auth.signInWithPassword({ email: CU.email, password: ownerpw });
+    if(ae) { toast('❌ Wrong owner password', 'err'); return; }
+
+    try {
+      // Insert into users table (auth user must be created via Supabase dashboard)
+      const { data: u, error } = await sb.from('users').insert({
+        username: email.split('@')[0], full_name: name, role, is_active: true
+      }).select().single();
+      if(error) throw error;
+
+      // Create default permissions
+      await sb.from('staff_permissions').insert({ user_id: u.id });
+
+      await sb.from('security_events').insert({
+        user_id: u.id, event_type: 'role_change',
+        description: `Owner created new ${role}: ${name} (${email})`,
+        performed_by: CUP?.id
+      });
+
+      closeMo();
+      toast(`✅ ${name} created! Now create auth account in Supabase dashboard for: ${email}`, 'ok', 8000);
+    } catch(e) {
+      toast('Error: ' + e.message, 'err');
+    }
+  },
+
+  // ── QUICK RESET FROM USER CARD ──
+  openResetPassword(userId, userName, authId) {
+    closeMo();
+    setTimeout(() => {
+      openMo(`🔄 Reset: ${userName}`, `
+        <div class="warn-box">Resetting password for <strong>${userName}</strong>. This action is logged.</div>
+        <div class="fg"><label class="lbl">New Password *</label>
+          <input class="inp" id="qr-pw" type="password" placeholder="Min 8 characters">
+        </div>
+        <div class="fg"><label class="lbl">Confirm Password *</label>
+          <input class="inp" id="qr-cpw" type="password" placeholder="Re-enter">
+        </div>
+        <div class="fg"><label class="lbl">🔐 Your Owner Password</label>
+          <input class="inp" id="qr-opw" type="password" placeholder="Your password">
+        </div>
+        <button class="btn btn-ink btn-full" onclick="SEC.doQuickReset('${authId}','${userName.replace(/'/g,"\\'")}','${userId}')">
+          🔄 Reset Password
+        </button>
+      `);
+    }, 350);
+  },
+
+  async doQuickReset(authId, userName, userId) {
+    const pw = $('qr-pw')?.value;
+    const cpw = $('qr-cpw')?.value;
+    const opw = $('qr-opw')?.value;
+    if(!pw||pw.length<8) { toast('Password min 8 characters', 'err'); return; }
+    if(pw !== cpw) { toast('Passwords do not match', 'err'); return; }
+    if(!opw) { toast('Enter owner password', 'err'); return; }
+    const { error: ae } = await sb.auth.signInWithPassword({ email: CU.email, password: opw });
+    if(ae) { toast('❌ Wrong owner password', 'err'); return; }
+    // Log
+    await sb.from('security_events').insert({
+      user_id: userId, event_type: 'password_reset',
+      description: `Password reset by owner for: ${userName}`,
+      performed_by: CUP?.id
+    });
+    closeMo();
+    toast(`✅ Logged. Go to Supabase Auth → Users → ${userName} → Send reset email`, 'ok', 8000);
+  }
+};
+
+// Global tab switcher
+function secTab(tab, el) { SEC.tab(tab, el); }
+
+// ── ADD SECURITY TO OWNER NAV ──
+// Patch the assets tab to show security button
+const _assetsFn = rAssets;
+function rAssets() {
+  return `<div class="flex just-b items-c" style="margin-bottom:12px">
+    <div class="t-xs upper fw-7 c-ink3">🏪 Shop Assets</div>
+    <div class="flex gap-2">
+      ${CUP?.role==='owner'?`
+        <button class="btn btn-ghost btn-xs" onclick="FC.openCoaModal()">📊 Accounts</button>
+        <button class="btn btn-ghost btn-xs" onclick="SEC.openPanel()">🔐 Security</button>
+      `:''}
+    </div>
+  </div><div id="assets-content"></div>`;
+}
+
+// ── TRACK LOGIN FAILURES ──
+const _origDoLogin = doLogin;
+async function doLogin() {
+  const email = $('l-email')?.value?.trim();
+  const pw = $('l-pw')?.value;
+  if(!email||!pw) { $('l-err').style.display='block'; return; }
+  const btn = $('l-btn');
+  btn.innerHTML = '<div class="spin"></div> Signing in...'; btn.disabled = true;
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pw });
+  if(error) {
+    $('l-err').style.display = 'block';
+    $('l-err').textContent = '❌ ' + error.message;
+    btn.innerHTML = 'Sign In'; btn.disabled = false;
+    // Log failed attempt (best effort)
+    try {
+      await sb.from('security_events').insert({
+        event_type: 'login_failed',
+        description: `Failed login attempt for: ${email}`,
+        performed_by: null
+      });
+    } catch(e) { /* silent */ }
+    return;
+  }
+  CU = data.user;
+  await loadProfile();
+  await initApp();
+  btn.innerHTML = 'Sign In'; btn.disabled = false;
+}
+// Re-bind enter key
+document.addEventListener('DOMContentLoaded', () => {
+  const pwEl = $('l-pw');
+  if(pwEl) pwEl.addEventListener('keypress', e => { if(e.key==='Enter') doLogin(); });
+});
 </script>
