@@ -650,7 +650,26 @@ async function completeSale(){
 }
 
 function pickParty(type){const list=parties.filter(p=>p.party_type===type);if(!list.length){toast('No existing '+type,'warn');return;}openMo('Select '+type,list.map(p=>`<div class="prod-card" onclick="selectParty('${p.name.replace(/'/g,"\\'")}','${type}')">${p.name} ${p.current_balance!==0?`<span class="bdg ${p.current_balance>0?'bdg-gold':'bdg-sage'}">${fmt(Math.abs(p.current_balance))}</span>`:''}</div>`).join(''));}
-function selectParty(name,type){const inp=type==='customer'?$('b-cust'):$('pur-sup');if(inp)inp.value=name;closeMo();onCustInput();}
+function selectParty(name,type){const inp=type==='customer'?$('b-cust'):$('pur-sup');if(inp)inp.value=name;closeMo();if(type==='customer')onCustInput();else onSupInput();}
+
+function onSupInput(){
+  const nm=($('pur-sup')?.value||'').trim();
+  const balEl=$('sup-bal');if(!balEl)return;
+  if(!nm){balEl.style.display='none';return;}
+  const p=parties.find(p=>p.name===nm&&p.party_type==='supplier');
+  if(p){
+    balEl.style.display='block';
+    const bal=p.current_balance||0;
+    if(bal>0)balEl.innerHTML=`<span style="color:var(--red)">⚠️ Outstanding payable: ${fmt(bal)}</span>`;
+    else if(bal<0)balEl.innerHTML=`<span style="color:var(--sage)">✅ Advance paid: ${fmt(Math.abs(bal))}</span>`;
+    else balEl.innerHTML=`<span style="color:var(--sage)">✅ Clear — no outstanding</span>`;
+  } else if(nm.length>2){
+    balEl.style.display='block';
+    balEl.innerHTML=`<span style="color:var(--gold)">⚠️ New supplier — will be created on save</span>`;
+  } else {
+    balEl.style.display='none';
+  }
+}
 function newPartyModal(type){openMo(`➕ New ${type}`,`<div class="fg"><label class="lbl">Name *</label><input class="inp" id="np-name" placeholder="Full name"></div><div class="fg"><label class="lbl">Phone</label><input class="inp" id="np-phone" placeholder="03XX-XXXXXXX"></div><div class="fg"><label class="lbl">Opening Balance ₨</label><input class="inp" id="np-bal" type="number" placeholder="0"></div><button class="btn btn-ink btn-full" onclick="saveNewParty('${type}')">✅ Create</button>`);}
 async function saveNewParty(type){
   const name=$('np-name')?.value?.trim();if(!name){toast('Enter name','err');return;}
@@ -783,8 +802,58 @@ async function savePurchase(){
   const tot=qty*cst;
   const catCode=CCOD[cat]||cat.substring(0,3).toUpperCase();const clCode=colCode(cl);const sCode=szCode(sz);const prefix=`${catCode}-${clCode}-${sCode}`;
   const{data:purNo}=await sb.rpc('generate_transaction_no',{p_prefix:'PUR'});
+
+  // ── SUPPLIER VALIDATION ──
   let supParty=parties.find(p=>p.name===sup&&p.party_type==='supplier');
-  if(!supParty){const{data:sp}=await sb.from('parties').insert({party_type:'supplier',name:sup,created_by:CUP?.id}).select().single();if(sp){parties.push(sp);supParty=sp;}}
+  if(!supParty&&sup!=='Unknown'){
+    // Supplier doesn't exist — ask to create
+    const existingSuppliers=parties.filter(p=>p.party_type==='supplier');
+    const create=await new Promise(resolve=>{
+      openMo('🏭 Supplier Not Found',`
+        <div class="warn-box">Supplier <strong>"${sup}"</strong> not found in ledger.</div>
+        ${existingSuppliers.length?`
+        <div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">Select Existing Supplier:</div>
+        ${existingSuppliers.map(s=>`
+          <div class="prod-card" onclick="document.getElementById('pur-sup').value='${s.name.replace(/'/g,"\\'")}';closeMo();savePurchase();" style="margin-bottom:6px">
+            <div>
+              <div class="t-sm fw-7">${s.name}</div>
+              <div class="t-xs c-ink3">Balance: ${fmt(Math.abs(s.current_balance||0))} ${s.current_balance>0?'(payable)':s.current_balance<0?'(advance)':'(clear)'}</div>
+            </div>
+          </div>`).join('')}
+        <div style="margin:10px 0;text-align:center;font-size:.65rem;color:var(--ink3)">— OR —</div>`:''}
+        <div class="fg"><label class="lbl">Create New Supplier</label>
+          <input class="inp" id="new-sup-name" value="${sup}" placeholder="Supplier name">
+        </div>
+        <div class="fg"><label class="lbl">Phone (optional)</label>
+          <input class="inp" id="new-sup-phone" placeholder="03XX-XXXXXXX">
+        </div>
+        <div class="fg"><label class="lbl">Opening Balance ₨ (if existing debt)</label>
+          <input class="inp" id="new-sup-bal" type="number" placeholder="0">
+        </div>
+        <button class="btn btn-ink btn-full" style="margin-bottom:8px" onclick="
+          const nm=document.getElementById('new-sup-name')?.value?.trim();
+          if(!nm){return;}
+          window._pendingSupplier={name:nm,phone:document.getElementById('new-sup-phone')?.value||'',bal:Number(document.getElementById('new-sup-bal')?.value||0)};
+          closeMo();
+          window._supplierCreateResolve(true);
+        ">✅ Create & Continue</button>
+        <button class="btn btn-ghost btn-full" onclick="closeMo();window._supplierCreateResolve(false);">Cancel</button>
+      `);
+      window._supplierCreateResolve=resolve;
+    });
+    if(!create){if(btn){btn.innerHTML='✅ Save Purchase';btn.disabled=false;}return;}
+    // Create the supplier
+    const ns=window._pendingSupplier||{name:sup,phone:'',bal:0};
+    const{data:sp,error:spe}=await sb.from('parties').insert({party_type:'supplier',name:ns.name,phone:ns.phone,opening_balance:ns.bal,current_balance:ns.bal,created_by:CUP?.id}).select().single();
+    if(spe){toast('Error creating supplier: '+spe.message,'err');if(btn){btn.innerHTML='✅ Save Purchase';btn.disabled=false;}return;}
+    parties.push(sp);supParty=sp;
+    toast(`✅ Supplier "${ns.name}" created!`,'ok');
+  } else if(!supParty&&sup==='Unknown'){
+    // No supplier entered — force selection
+    toast('Enter a supplier name','err');if(btn){btn.innerHTML='✅ Save Purchase';btn.disabled=false;}return;
+  }
+
+  // ── CASHFLOW ACCOUNT VALIDATION ──
   const{data:catRow}=await sb.from('categories').select('id').eq('name',cat).single();
   const cashAcc=accounts.find(a=>a.name==='Cash Drawer');
   let pd=0,pybl=0,payAccId=null;
@@ -1322,5 +1391,475 @@ async function confirmVoid(txnId,txnNo,action){
     toast('Error: '+e.message,'err');
     if(btn){btn.innerHTML=action==='cancel'?'❌ Confirm Void':'↩️ Confirm Reverse';btn.disabled=false;}
   }
+}
+</script>
+<script>
+// ── FINANCIAL CONTROLS ENGINE v2.0 ──
+// Replaces old validate_posting calls with comprehensive engine
+
+const FC={
+  // ── CORE VALIDATOR ──
+  async validate(params){
+    const{txnType,paymentMode,partyId,partyType,categoryId,accountId,amount,userId}=params;
+    try{
+      const{data,error}=await sb.rpc('validate_posting',{
+        p_txn_type:txnType,
+        p_payment_mode:paymentMode||null,
+        p_party_id:partyId||null,
+        p_party_type:partyType||null,
+        p_category_id:categoryId||null,
+        p_account_id:accountId||null,
+        p_amount:amount||0,
+        p_user_id:userId||CUP?.id
+      });
+      if(error)throw error;
+      return data;
+    }catch(e){
+      console.error('FC.validate error:',e.message);
+      return{valid:false,code:'RPC_ERROR',error:'Validation service unavailable: '+e.message};
+    }
+  },
+
+  // ── SHOW VALIDATION ERROR MODAL ──
+  showError(result,context={}){
+    const code=result.code||'UNKNOWN';
+    const msg=result.error||'Validation failed';
+    const logId=result.log_id||null;
+    const canFix=['LEDGER_NOT_MAPPED','PARTY_NOT_FOUND','ACCOUNT_NOT_FOUND'].includes(code);
+
+    openMo('⚠️ Cannot Post Transaction',`
+      <div style="background:#FDEAEA;border:1.5px solid var(--red);border-radius:12px;padding:14px;margin-bottom:14px">
+        <div style="font-size:.82rem;font-weight:700;color:var(--red);margin-bottom:6px">❌ Ledger Validation Failed</div>
+        <div style="font-size:.75rem;color:var(--ink2);margin-bottom:6px">${msg}</div>
+        <div style="font-family:monospace;font-size:.58rem;color:var(--ink3)">Error Code: ${code}</div>
+        ${logId?`<div style="font-family:monospace;font-size:.58rem;color:var(--ink3)">Log ID: ${logId}</div>`:''}
+      </div>
+
+      <div class="info-box">
+        <strong>Why this matters:</strong><br>
+        Every transaction must have a mapped ledger account to maintain double-entry accounting integrity.
+        Unmapped transactions would create orphan entries that break financial reports.
+      </div>
+
+      ${code==='LEDGER_NOT_MAPPED'?`
+        <div class="warn-box">
+          Category <strong>"${result.category||context.categoryName||''}"</strong> has no ledger account mapped.
+        </div>
+        ${CUP?.role==='owner'?`
+        <button class="btn btn-gold btn-full" style="margin-bottom:8px"
+          onclick="closeMo();FC.openMapLedger('${result.category_id||context.categoryId||''}','${result.category||context.categoryName||''}')">
+          ➕ Map Ledger Account Now
+        </button>`:'<div class="info-box" style="border-color:var(--rust)">Contact owner to map this ledger account.</div>'}
+      `:''}
+
+      ${code==='PARTY_NOT_FOUND'?`
+        <div class="warn-box">
+          ${context.partyType==='supplier'?'Supplier':'Customer'} ledger <strong>"${context.partyName||''}"</strong> not found.
+        </div>
+        <button class="btn btn-ink btn-full" style="margin-bottom:8px"
+          onclick="closeMo();newPartyModal('${context.partyType||'supplier'}')">
+          ➕ Create ${context.partyType==='supplier'?'Supplier':'Customer'} Ledger
+        </button>
+      `:''}
+
+      ${code==='RULE_NOT_FOUND'?`
+        <div class="warn-box">No accounting rule exists for: <strong>${context.txnType||''} / ${context.paymentMode||''}</strong></div>
+        <div class="info-box">Contact system administrator to add this posting rule.</div>
+      `:''}
+
+      ${code==='INVALID_AMOUNT'?`
+        <div class="warn-box">Amount must be greater than zero.</div>
+      `:''}
+
+      <button class="btn btn-ghost btn-full" onclick="closeMo()">Cancel Transaction</button>
+    `);
+  },
+
+  // ── QUICK LEDGER MAP MODAL ──
+  async openMapLedger(categoryId,categoryName){
+    const{data:coa}=await sb.from('chart_of_accounts').select('*').eq('is_active',true).order('account_code');
+    openMo(`🗂️ Map Ledger: ${categoryName}`,`
+      <div class="info-box">
+        Map <strong>"${categoryName}"</strong> to Chart of Accounts entries.
+        This enables proper double-entry posting for all transactions using this category.
+      </div>
+      <div class="fg"><label class="lbl">Debit Account (DR) — What gets debited?</label>
+        <select class="sel" id="lm-dr">
+          <option value="">Select account...</option>
+          ${(coa||[]).map(a=>`<option value="${a.id}">${a.account_code} — ${a.account_name} (${a.account_type})</option>`).join('')}
+        </select>
+        <div class="t-xs c-ink3" style="margin-top:4px">For expenses: select the expense account. For payments: select payable account.</div>
+      </div>
+      <div class="fg"><label class="lbl">Credit Account (CR) — What gets credited?</label>
+        <select class="sel" id="lm-cr">
+          <option value="">Select account...</option>
+          ${(coa||[]).map(a=>`<option value="${a.id}">${a.account_code} — ${a.account_name} (${a.account_type})</option>`).join('')}
+        </select>
+        <div class="t-xs c-ink3" style="margin-top:4px">For cash expenses: select Cash Drawer (1001).</div>
+      </div>
+      <button class="btn btn-gold btn-full" style="margin-bottom:8px" onclick="FC.saveLedgerMap('${categoryId}','${categoryName}')">✅ Save Mapping</button>
+      <button class="btn btn-ghost btn-full" onclick="closeMo()">Cancel</button>
+    `);
+  },
+
+  async saveLedgerMap(categoryId,categoryName){
+    const drId=$('lm-dr')?.value;const crId=$('lm-cr')?.value;
+    if(!drId||!crId){toast('Select both debit and credit accounts','err');return;}
+    const{error}=await sb.from('expense_ledger_map').upsert({
+      category_id:categoryId,debit_account_id:drId,
+      credit_account_id:crId,is_active:true,created_by:CUP?.id
+    },{onConflict:'category_id'});
+    if(error){toast('Error: '+error.message,'err');return;}
+    closeMo();
+    toast(`✅ Ledger mapped: ${categoryName}`,'ok');
+    // Log resolution of previous failures
+    await sb.from('posting_validation_log').update({resolved:true,resolved_at:new Date().toISOString(),resolved_by:CUP?.id,resolution_notes:'Ledger mapped by owner'}).eq('failure_code','LEDGER_NOT_MAPPED').eq('resolved',false);
+  },
+
+  // ── SUPPLIER VALIDATION WITH CREATE FLOW ──
+  async validateSupplier(supName){
+    if(!supName||supName==='Unknown'){
+      toast('Enter a supplier name','err');return null;
+    }
+    let supParty=parties.find(p=>p.name===supName&&p.party_type==='supplier');
+    if(supParty)return supParty;
+
+    // Supplier not found — show create/select modal
+    const existingSups=parties.filter(p=>p.party_type==='supplier');
+    return new Promise(resolve=>{
+      openMo('🏭 Supplier Ledger Required',`
+        <div class="warn-box">
+          Supplier <strong>"${supName}"</strong> does not have a ledger account.
+          A ledger is required before posting any purchase transaction.
+        </div>
+        ${existingSups.length?`
+          <div class="t-xs upper fw-7 c-ink3" style="margin-bottom:8px">Select Existing Supplier:</div>
+          ${existingSups.map(s=>`
+            <div class="prod-card" onclick="
+              document.getElementById('pur-sup').value='${s.name.replace(/'/g,"\\'")}';
+              closeMo();
+              window._fcSupResolve({id:'${s.id}',name:'${s.name.replace(/'/g,"\\'")}',current_balance:${s.current_balance||0},party_type:'supplier'});
+            " style="margin-bottom:6px">
+              <div style="flex:1">
+                <div class="t-sm fw-7">${s.name}</div>
+                <div class="t-xs c-ink3">
+                  ${s.current_balance>0?`<span style="color:var(--red)">Payable: ${fmt(s.current_balance)}</span>`:
+                    s.current_balance<0?`<span style="color:var(--sage)">Advance: ${fmt(Math.abs(s.current_balance))}</span>`:
+                    '<span style="color:var(--sage)">Clear</span>'}
+                </div>
+              </div>
+              <div style="font-size:.8rem;color:var(--ink3)">›</div>
+            </div>`).join('')}
+          <div style="text-align:center;padding:8px 0;font-size:.65rem;color:var(--ink3)">— OR CREATE NEW —</div>
+        `:''}
+        <div class="fg"><label class="lbl">Supplier Name *</label>
+          <input class="inp" id="fc-sup-name" value="${supName}" placeholder="Supplier name">
+        </div>
+        <div class="fg"><label class="lbl">Phone</label>
+          <input class="inp" id="fc-sup-phone" placeholder="03XX-XXXXXXX">
+        </div>
+        <div class="fg"><label class="lbl">Opening Balance ₨ (existing debt if any)</label>
+          <input class="inp" id="fc-sup-bal" type="number" placeholder="0">
+        </div>
+        <button class="btn btn-ink btn-full" style="margin-bottom:8px" onclick="FC._createSupplier()">
+          ✅ Create Ledger & Continue
+        </button>
+        <button class="btn btn-ghost btn-full" onclick="closeMo();window._fcSupResolve(null)">Cancel</button>
+      `);
+      window._fcSupResolve=resolve;
+    });
+  },
+
+  async _createSupplier(){
+    const name=$('fc-sup-name')?.value?.trim();
+    const phone=$('fc-sup-phone')?.value?.trim();
+    const bal=Number($('fc-sup-bal')?.value||0);
+    if(!name){toast('Enter supplier name','err');return;}
+    const{data:sp,error}=await sb.from('parties').insert({
+      party_type:'supplier',name,phone,
+      opening_balance:bal,current_balance:bal,
+      created_by:CUP?.id
+    }).select().single();
+    if(error){toast('Error: '+error.message,'err');return;}
+    parties.push(sp);
+    document.getElementById('pur-sup').value=name;
+    closeMo();
+    toast(`✅ Supplier "${name}" ledger created!`,'ok');
+    window._fcSupResolve(sp);
+  },
+
+  // ── CUSTOMER VALIDATION WITH CREATE FLOW ──
+  async validateCustomer(custName,required=false){
+    if(!custName||custName==='Walk-in Customer'){
+      if(required){toast('Enter customer name for credit sale','err');return null;}
+      return{id:null,name:'Walk-in Customer',party_type:'customer'};
+    }
+    let custParty=parties.find(p=>p.name===custName&&p.party_type==='customer');
+    if(custParty)return custParty;
+
+    // Auto-create for new customers
+    return new Promise(resolve=>{
+      openMo('👤 Customer Ledger Required',`
+        <div class="warn-box">
+          Customer <strong>"${custName}"</strong> does not have a ledger account.
+        </div>
+        <div class="fg"><label class="lbl">Customer Name *</label>
+          <input class="inp" id="fc-cust-name" value="${custName}">
+        </div>
+        <div class="fg"><label class="lbl">Phone</label>
+          <input class="inp" id="fc-cust-phone" placeholder="03XX-XXXXXXX">
+        </div>
+        <div class="fg"><label class="lbl">Opening Balance ₨ (if existing credit)</label>
+          <input class="inp" id="fc-cust-bal" type="number" placeholder="0">
+        </div>
+        <button class="btn btn-ink btn-full" style="margin-bottom:8px" onclick="FC._createCustomer()">
+          ✅ Create Ledger & Continue
+        </button>
+        <button class="btn btn-ghost btn-full" onclick="closeMo();window._fcCustResolve(null)">Cancel</button>
+      `);
+      window._fcCustResolve=resolve;
+    });
+  },
+
+  async _createCustomer(){
+    const name=$('fc-cust-name')?.value?.trim();
+    const phone=$('fc-cust-phone')?.value?.trim();
+    const bal=Number($('fc-cust-bal')?.value||0);
+    if(!name){toast('Enter customer name','err');return;}
+    const{data:cp,error}=await sb.from('parties').insert({
+      party_type:'customer',name,phone,
+      opening_balance:bal,current_balance:bal,
+      created_by:CUP?.id
+    }).select().single();
+    if(error){toast('Error: '+error.message,'err');return;}
+    parties.push(cp);
+    document.getElementById('b-cust').value=name;
+    closeMo();
+    toast(`✅ Customer "${name}" ledger created!`,'ok');
+    window._fcCustResolve(cp);
+  },
+
+  // ── FULL CHART OF ACCOUNTS MODAL ──
+  async openCoaModal(){
+    const{data:coa}=await sb.from('chart_of_accounts').select('*').order('account_code');
+    const{data:maps}=await sb.from('expense_ledger_map').select(`
+      *,
+      expense_categories(name,direction),
+      dr:chart_of_accounts!expense_ledger_map_debit_account_id_fkey(account_code,account_name),
+      cr:chart_of_accounts!expense_ledger_map_credit_account_id_fkey(account_code,account_name)
+    `);
+    const{data:logs}=await sb.from('posting_validation_log').select('*').eq('resolved',false).order('created_at',{ascending:false}).limit(10);
+    const{data:unmapped}=await sb.from('expense_categories').select('id,name').filter('id','not.in',`(${(maps||[]).map(m=>m.category_id).join(',')|| '00000000-0000-0000-0000-000000000000'})`);
+    const types={asset:[],liability:[],equity:[],income:[],expense:[]};
+    (coa||[]).forEach(a=>types[a.account_type]?.push(a));
+    const typeLabel={asset:'📦 Assets (1xxx)',liability:'💳 Liabilities (2xxx)',equity:'🏛️ Equity (3xxx)',income:'💰 Income (4xxx)',expense:'💸 Expenses (5xxx-8xxx)'};
+
+    openMo('📊 Financial Controls',`
+      <div style="display:flex;gap:5px;margin-bottom:14px;overflow-x:auto;scrollbar-width:none">
+        <div class="pill on" onclick="fcTab('coa',this)">Chart of Accounts</div>
+        <div class="pill" onclick="fcTab('maps',this)">Ledger Maps</div>
+        <div class="pill" onclick="fcTab('rules',this)">Posting Rules</div>
+        <div class="pill" onclick="fcTab('logs',this)">Failed Posts ${(logs||[]).length>0?`<span style="background:var(--red);color:white;border-radius:8px;padding:1px 5px;font-size:.55rem;margin-left:3px">${(logs||[]).length}</span>`:''}</div>
+      </div>
+
+      <!-- COA TAB -->
+      <div id="fc-coa">
+        ${CUP?.role==='owner'?`<button class="btn btn-ink btn-sm" style="margin-bottom:10px;width:100%" onclick="FC.openAddCoa()">➕ Add Account</button>`:''}
+        ${Object.entries(types).map(([type,accts])=>accts.length?`
+          <div style="margin-bottom:12px">
+            <div style="background:var(--cream2);padding:7px 10px;border-radius:8px 8px 0 0;font-size:.62rem;font-weight:700;color:var(--ink2)">${typeLabel[type]||type}</div>
+            ${accts.map(a=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border:1px solid var(--border2);border-top:none;background:white">
+                <div>
+                  <span style="font-family:monospace;font-size:.65rem;color:var(--gold);font-weight:700">${a.account_code}</span>
+                  <span class="t-sm" style="margin-left:6px">${a.account_name}</span>
+                  ${a.is_system?'<span style="font-size:.5rem;background:var(--cream2);color:var(--ink3);padding:1px 5px;border-radius:4px;margin-left:4px">SYSTEM</span>':''}
+                </div>
+                <div class="t-xs c-ink3">${a.normal_balance==='debit'?'DR':'CR'}</div>
+              </div>`).join('')}
+          </div>`:'').join('')}
+      </div>
+
+      <!-- MAPS TAB -->
+      <div id="fc-maps" style="display:none">
+        ${(unmapped||[]).length?`
+          <div style="background:#FDEAEA;border:1.5px solid var(--red);border-radius:10px;padding:10px 12px;margin-bottom:12px">
+            <div class="t-xs fw-7" style="color:var(--red);margin-bottom:6px">⚠️ ${(unmapped||[]).length} Unmapped Categories</div>
+            ${(unmapped||[]).map(u=>`
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed var(--border2)">
+                <span class="t-xs">${u.name}</span>
+                ${CUP?.role==='owner'?`<button class="btn btn-xs btn-gold" onclick="closeMo();FC.openMapLedger('${u.id}','${u.name.replace(/'/g,"\\'")}')">Map</button>`:''}
+              </div>`).join('')}
+          </div>`:'<div class="info-box">✅ All categories are mapped</div>'}
+        <div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden">
+          <div style="display:grid;grid-template-columns:1.8fr 1fr 1fr;background:var(--ink);color:white;padding:7px 10px">
+            <div class="t-xs fw-7">Category</div>
+            <div class="t-xs fw-7">DR Account</div>
+            <div class="t-xs fw-7">CR Account</div>
+          </div>
+          ${(maps||[]).map(m=>`
+            <div style="display:grid;grid-template-columns:1.8fr 1fr 1fr;padding:7px 10px;border-top:1px solid var(--cream2);background:white">
+              <div class="t-xs fw-6">${m.expense_categories?.name||''}</div>
+              <div class="t-xs" style="color:var(--red)">${m.dr?.account_code} ${m.dr?.account_name}</div>
+              <div class="t-xs" style="color:var(--sage)">${m.cr?.account_code} ${m.cr?.account_name}</div>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- RULES TAB -->
+      <div id="fc-rules" style="display:none">
+        <div class="info-box">These are system posting rules that define debit/credit entries for each transaction type.</div>
+        <div id="fc-rules-content"><div class="empty"><div class="empty-ico">⏳</div><p>Loading...</p></div></div>
+      </div>
+
+      <!-- LOGS TAB -->
+      <div id="fc-logs" style="display:none">
+        ${!(logs||[]).length?'<div class="info-box">✅ No failed posting attempts</div>':
+          (logs||[]).map(l=>`
+            <div class="card" style="padding:11px 13px;margin-bottom:9px;border-left:3px solid var(--red)">
+              <div class="flex just-b items-c">
+                <div>
+                  <div class="t-sm fw-7" style="color:var(--red)">${l.failure_code}</div>
+                  <div class="t-xs c-ink3">${l.failure_reason}</div>
+                  <div class="t-xs c-ink3">${l.transaction_type} · ${l.created_at?.split('T')[0]||''} · ${fmt(l.amount||0)}</div>
+                </div>
+                ${CUP?.role==='owner'?`
+                <button class="btn btn-xs btn-ghost" onclick="FC.resolveLog('${l.id}')">Resolve</button>`:''}
+              </div>
+            </div>`).join('')}
+      </div>
+    `);
+    // Load rules async
+    setTimeout(async()=>{
+      const{data:rules}=await sb.from('transaction_ledger_rules').select(`*,dr:chart_of_accounts!transaction_ledger_rules_debit_account_id_fkey(account_code,account_name),cr:chart_of_accounts!transaction_ledger_rules_credit_account_id_fkey(account_code,account_name)`).eq('is_active',true).order('txn_type');
+      const rc=$('fc-rules-content');
+      if(rc&&rules){rc.innerHTML=`<div style="border:1px solid var(--border2);border-radius:10px;overflow:hidden">${rules.map(r=>`<div style="padding:8px 10px;border-bottom:1px solid var(--cream2);background:white"><div class="t-xs fw-7">${r.txn_type}${r.payment_mode?' / '+r.payment_mode:''}${r.party_type?' / '+r.party_type:''}</div><div style="display:flex;gap:8px;margin-top:3px"><span class="t-xs" style="color:var(--red)">DR: ${r.dr?.account_code} ${r.dr?.account_name}</span><span class="t-xs c-ink3">|</span><span class="t-xs" style="color:var(--sage)">CR: ${r.cr?.account_code} ${r.cr?.account_name}</span></div></div>`).join('')}</div>`;}
+    },500);
+  },
+
+  fcTab(tab,el){
+    document.querySelectorAll('#fc-coa,#fc-maps,#fc-rules,#fc-logs').forEach(d=>{if(d)d.style.display='none';});
+    const target=$(`fc-${tab}`);if(target)target.style.display='block';
+    el.closest('.mo-box').querySelectorAll('.pill').forEach(p=>p.classList.remove('on'));
+    el.classList.add('on');
+  },
+
+  async resolveLog(logId){
+    await sb.from('posting_validation_log').update({resolved:true,resolved_at:new Date().toISOString(),resolved_by:CUP?.id}).eq('id',logId);
+    toast('✅ Marked resolved','ok');
+    FC.openCoaModal();
+  },
+
+  async openAddCoa(){
+    closeMo();
+    setTimeout(()=>{
+      openMo('➕ Add Account',`
+        <div class="g2">
+          <div class="fg"><label class="lbl">Code *</label><input class="inp" id="coa-code" placeholder="e.g. 6014"></div>
+          <div class="fg"><label class="lbl">Type *</label>
+            <select class="sel" id="coa-type">
+              <option value="asset">Asset</option><option value="liability">Liability</option>
+              <option value="equity">Equity</option><option value="income">Income</option>
+              <option value="expense" selected>Expense</option>
+            </select>
+          </div>
+        </div>
+        <div class="fg"><label class="lbl">Account Name *</label><input class="inp" id="coa-name" placeholder="e.g. Marketing Expenses"></div>
+        <div class="fg"><label class="lbl">Normal Balance</label>
+          <select class="sel" id="coa-nb"><option value="debit">Debit (DR)</option><option value="credit">Credit (CR)</option></select>
+        </div>
+        <button class="btn btn-ink btn-full" onclick="FC._saveCoaAccount()">✅ Save Account</button>
+      `);
+    },350);
+  },
+
+  async _saveCoaAccount(){
+    const code=$('coa-code')?.value?.trim();const name=$('coa-name')?.value?.trim();
+    const type=$('coa-type')?.value;const nb=$('coa-nb')?.value||'debit';
+    if(!code||!name){toast('Fill code and name','err');return;}
+    const{error}=await sb.from('chart_of_accounts').insert({account_code:code,account_name:name,account_type:type,normal_balance:nb,created_by:CUP?.id});
+    if(error){toast(error.code==='23505'?'Code already exists':error.message,'err');return;}
+    closeMo();toast(`✅ Account ${code} created!`,'ok');
+  }
+};
+
+// Global tab switcher for FC modal
+function fcTab(tab,el){FC.fcTab(tab,el);}
+
+// ── UPDATE saveExpense TO USE FC ENGINE ──
+async function saveExpense(){
+  const cat=$('exp-cat')?.value;const desc=$('exp-desc')?.value?.trim();
+  const amt=Number($('exp-amt')?.value||0);const srcId=$('exp-src')?.value;
+  if(!amt||!desc){toast('Fill all fields','err');return;}
+  if(!cat){toast('Select a category','err');return;}
+  if(!srcId){toast('Select payment account','err');return;}
+  const{data:expCat}=await sb.from('expense_categories').select('id,name').eq('name',cat).single();
+  if(!expCat){toast('Category not found','err');return;}
+  // Validate
+  const result=await FC.validate({txnType:'expense',paymentMode:'cash',categoryId:expCat.id,accountId:srcId,amount:amt});
+  if(!result?.valid){FC.showError(result,{categoryName:cat,categoryId:expCat.id,txnType:'expense',paymentMode:'cash'});return;}
+  const{data:expNo}=await sb.rpc('generate_transaction_no',{p_prefix:'EXP'});
+  try{
+    const{data:txn}=await sb.from('transactions').insert({transaction_no:expNo,transaction_type:'expense',transaction_date:today(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:desc}).select().single();
+    await sb.from('cash_entries').insert({transaction_id:txn.id,category_id:expCat.id,entry_date:today(),amount:amt,direction:'out',account_id:srcId,description:desc});
+    await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:today(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:srcId,amount:amt,description:`Expense: ${desc}`,created_by:CUP?.id});
+    toast(`✅ Expense: ${fmt(amt)}`,'ok');closeMo();await loadMasterData();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+
+// ── UPDATE saveCashEntry TO USE FC ENGINE ──
+async function saveCashEntry(){
+  const dt=$('c-dt')?.value||today();const catId=$('c-cat')?.value;
+  const dsc=$('c-dsc')?.value?.trim();const amt=Number($('c-amt')?.value||0);
+  const dir=$('c-dir')?.value||'out';const accId=$('c-acc')?.value;
+  if(!amt||!dsc){toast('Fill all fields','err');return;}
+  if(!catId){toast('Select a category','err');return;}
+  if(!accId){toast('Select an account','err');return;}
+  // Validate
+  const result=await FC.validate({txnType:dir==='in'?'receipt':'expense',paymentMode:'cash',categoryId:catId,accountId:accId,amount:amt});
+  if(!result?.valid){
+    const{data:catInfo}=await sb.from('expense_categories').select('name').eq('id',catId).single();
+    FC.showError(result,{categoryName:catInfo?.name||'',categoryId:catId});return;
+  }
+  const{data:txNo}=await sb.rpc('generate_transaction_no',{p_prefix:'CASH'});
+  try{
+    const{data:txn}=await sb.from('transactions').insert({transaction_no:txNo,transaction_type:dir==='in'?'receipt':'expense',transaction_date:dt,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:dsc}).select().single();
+    await sb.from('cash_entries').insert({transaction_id:txn.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc});
+    await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'cashflow',cashflow_account_id:accId,amount:amt,description:dsc,created_by:CUP?.id});
+    toast(`✅ ${dir==='in'?'Receipt':'Payment'}: ${fmt(amt)}`,'ok');
+    if($('c-dsc'))$('c-dsc').value='';if($('c-amt'))$('c-amt').value='';
+    await loadMasterData();iCash();
+  }catch(e){toast('Error: '+e.message,'err');}
+}
+
+// ── UPDATE savePurchase supplier validation ──
+async function validateAndGetSupplier(supName){
+  if(!supName||supName.trim()===''){
+    toast('Enter supplier name','err');return null;
+  }
+  let sp=parties.find(p=>p.name===supName&&p.party_type==='supplier');
+  if(sp)return sp;
+  return await FC.validateSupplier(supName);
+}
+
+// ── UPDATE completeSale customer validation ──
+async function validateAndGetCustomer(custName,payMode){
+  const needsLedger=payMode==='credit'||payMode==='split';
+  if(!needsLedger){return{id:null,name:custName||'Walk-in Customer',party_type:'customer'};}
+  if(!custName||custName==='Walk-in Customer'){
+    toast('Enter customer name for credit/split sale','err');return null;
+  }
+  let cp=parties.find(p=>p.name===custName&&p.party_type==='customer');
+  if(cp)return cp;
+  return await FC.validateCustomer(custName,true);
+}
+
+// ── HOOK FC into Assets tab ──
+const _baseRAssets=rAssets;
+function rAssets(){
+  return`<div class="flex just-b items-c" style="margin-bottom:12px">
+    <div class="t-xs upper fw-7 c-ink3">🏪 Shop Assets</div>
+    ${CUP?.role==='owner'?`<button class="btn btn-ghost btn-xs" onclick="FC.openCoaModal()">📊 Financial Controls</button>`:''}
+  </div><div id="assets-content"></div>`;
 }
 </script>
