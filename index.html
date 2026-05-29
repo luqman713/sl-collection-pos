@@ -198,6 +198,7 @@ body{min-height:100vh}
 </div>
 
 <script>
+
 const{createClient}=supabase;
 const sb=createClient('https://fqubaesqzfmxvbtqconu.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxdWJhZXNxemZteHZidHFjb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODIwNTMsImV4cCI6MjA5NDc1ODA1M30.vqDRl0LGYOukQBRK7aegaXgCKxi-r65IwyNZKvGnUIk');
 
@@ -1408,8 +1409,9 @@ async function confirmVoid(txnId,txnNo,action){
     if(btn){btn.innerHTML=action==='cancel'?'❌ Confirm Void':'↩️ Confirm Reverse';btn.disabled=false;}
   }
 }
-</script>
-<script>
+
+
+
 // ── FINANCIAL CONTROLS ENGINE v2.0 ──
 // Replaces old validate_posting calls with comprehensive engine
 
@@ -1878,8 +1880,9 @@ function rAssets(){
     ${CUP?.role==='owner'?`<button class="btn btn-ghost btn-xs" onclick="FC.openCoaModal()">📊 Financial Controls</button>`:''}
   </div><div id="assets-content"></div>`;
 }
-</script>
-<script>
+
+
+
 // ═══════════════════════════════════════════════════
 // SECURITY PANEL + PASSWORD MANAGEMENT
 // Phase 4 — Owner-verified security controls
@@ -2240,4 +2243,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pwEl = $('l-pw');
   if(pwEl) pwEl.addEventListener('keypress', e => { if(e.key==='Enter') doLogin(); });
 });
+
 </script>
+</body>
+</html>
