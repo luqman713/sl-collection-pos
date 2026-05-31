@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SL Test</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body style="font-family:sans-serif;padding:20px;background:#1A0A00;color:white;min-height:100vh">
+<h2>SL Collection — Connection Test</h2>
+<div id="status">Testing...</div>
+<br>
+<input id="email" type="email" value="owner@slcollection.com" style="width:100%;padding:10px;margin-bottom:10px;border-radius:8px;border:none;font-size:16px">
+<input id="pw" type="password" placeholder="Password" style="width:100%;padding:10px;margin-bottom:10px;border-radius:8px;border:none;font-size:16px">
+<button onclick="test()" style="width:100%;padding:14px;background:#B8860B;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer">Test Login</button>
+<div id="result" style="margin-top:20px;padding:14px;border-radius:8px;display:none"></div>
+<script>
+const {createClient} = supabase;
+const sb = createClient(
+  'https://fqubaesqzfmxvbtqconu.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxdWJhZXNxemZteHZidHFjb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODIwNTMsImV4cCI6MjA5NDc1ODA1M30.vqDRl0LGYOukQBRK7aegaXgCKxi-r65IwyNZKvGnUIk'
+);
+document.getElementById('status').innerHTML = '✅ Script loaded OK';
+async function test(){
+  const email = document.getElementById('email').value;
+  const pw = document.getElementById('pw').value;
+  const r = document.getElementById('result');
+  r.style.display='block';
+  r.style.background='#333';
+  r.innerHTML = 'Connecting...';
+  try{
+    const {data,error} = await sb.auth.signInWithPassword({email,password:pw});
+    if(error){r.style.background='#8B1A1A';r.innerHTML='❌ '+error.message;}
+    else{r.style.background='#2D4A2D';r.innerHTML='✅ Login SUCCESS! User: '+data.user.email;}
+  }catch(e){r.style.background='#8B1A1A';r.innerHTML='❌ Network error: '+e.message;}
+}
+</script>
+</body>
+</html>
