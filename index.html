@@ -437,80 +437,121 @@ async function saveCash(){
 }
 async function loadCash(){const c=$('cl');if(!c)return;const{data:e}=await sb.from('ledger_entries').select('*').eq('account_category','cashflow').order('created_at',{ascending:false}).limit(20);if(!(e||[]).length){c.innerHTML='<div class="em"><div class="ei">💵</div><p style="font-size:.72rem">No entries</p></div>';return;}c.innerHTML=(e||[]).map(function(en){return'<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.72rem;font-weight:600">'+( en.description||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+( en.entry_date||'')+'</div></div><div style="text-align:right">'+( en.credit>0?'<div style="font-size:.72rem;font-weight:700;color:var(--sage)">+'+fmt(en.credit)+'</div>':'')+( en.debit>0?'<div style="font-size:.72rem;font-weight:700;color:var(--red)">-'+fmt(en.debit)+'</div>':'')+'</div></div></div>';}).join('');}
 
-function pickCashParty(){const all=[...parties];if(!all.length){toast('No parties','warn');return;}omo('Select Party',all.map(function(p){return'<div class="pc" onclick="document.getElementById(\'cpty\').value=\''+p.name.replace(/'/g,"\\'")+'\'';cmo();">'+p.name+' <span style="font-size:.58rem;color:var(--ink3)">'+p.party_type+'</span></div>';}).join(''));}
-
-// EXCHANGE TRANSACTION
-function oExchange(){
-  const inStock=prods.filter(function(p){return(p.stock||0)>0;});
-  omo('Exchange',
-    '<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="ex-c" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP('customer')">📋</button></div></div>'+
-    '<div class="fg"><label class="lb">Return Item (old)</label><select class="sl" id="ex-ri"><option value="">Select...</option>'+prods.map(function(p){return'<option value="'+p.id+'">'+p.name+' ('+p.sku+')</option>';}).join('')+'</select></div>'+
-    '<div class="g2"><div class="fg"><label class="lb">Return Qty</label><input class="ip" id="ex-rq" type="number" placeholder="1" value="1"></div><div class="fg"><label class="lb">Return Price Rs</label><input class="ip" id="ex-rp" type="number" placeholder="0" oninput="calcDiff()"></div></div>'+
-    '<div class="fg"><label class="lb">Issue Item (new)</label><select class="sl" id="ex-ii"><option value="">Select...</option>'+inStock.map(function(p){return'<option value="'+p.id+'">'+p.name+' ('+p.sku+') Stock:'+p.stock+'</option>';}).join('')+'</select></div>'+
-    '<div class="g2"><div class="fg"><label class="lb">Issue Qty</label><input class="ip" id="ex-iq" type="number" placeholder="1" value="1"></div><div class="fg"><label class="lb">Issue Price Rs</label><input class="ip" id="ex-ip" type="number" placeholder="0" oninput="calcDiff()"></div></div>'+
-    '<div id="ex-diff" class="ib" style="display:none"></div>'+
-    '<div class="fg"><label class="lb">Difference Mode</label><select class="sl" id="ex-dm"><option value="cash_in">Customer Pays Difference</option><option value="cash_out">Refund Difference</option><option value="ar">Post to AR</option><option value="none">No Difference</option></select></div>'+
-    '<div class="fg"><label class="lb">Notes</label><input class="ip" id="ex-n" placeholder="Optional"></div>'+
-    '<button class="btn bs" onclick="saveExchange()">✅ Process Exchange</button>'
-  );
+function pickCashParty(){
+  if(!parties.length){toast('No parties found','warn');return;}
+  window._cashPties=parties;
+  var h='';
+  for(var i=0;i<parties.length;i++){
+    h+='<div class="pc" onclick="selCashP('+i+')">'+parties[i].name+' <span style="font-size:.58rem;color:var(--ink3)">'+parties[i].party_type+'</span></div>';
+  }
+  omo('Select Party',h);
+}
+function selCashP(i){
+  var p=window._cashPties[i];
+  if(p&&$('cpty'))$('cpty').value=p.name;
+  cmo();
 }
 
-function calcDiff(){const rp=Number($('ex-rp')?.value||0);const ip=Number($('ex-ip')?.value||0);const rq=Number($('ex-rq')?.value||1);const iq=Number($('ex-iq')?.value||1);const diff=(ip*iq)-(rp*rq);const d=$('ex-diff');if(d&&(rp||ip)){d.style.display='block';d.textContent=(diff>0?'Customer pays extra: ':diff<0?'Refund to customer: ':'No difference')+( diff!==0?fmt(Math.abs(diff)):'')+( diff>0?' → cash in':diff<0?' → cash out':'');}}
+function oExchange(){
+  var h='';
+  h+='<p style="font-size:.72rem;margin-bottom:10px">Exchange an old item for a new one.</p>';
+  h+='<div class="fg"><label class="lb">Customer</label><input class="ip" id="ex-c" placeholder="Customer name"></div>';
+  h+='<div class="fg"><label class="lb">Item Returned (old)</label><select class="sl" id="ex-ri"><option value="">Select...</option>';
+  for(var i=0;i<prods.length;i++)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+')</option>';
+  h+='</select></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-rq" type="number" value="1"></div>';
+  h+='<div class="fg"><label class="lb">Return Price</label><input class="ip" id="ex-rp" type="number" placeholder="0" oninput="calcDiff()"></div></div>';
+  h+='<div class="fg"><label class="lb">Item Issued (new)</label><select class="sl" id="ex-ii"><option value="">Select...</option>';
+  for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
+  h+='</select></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-iq" type="number" value="1"></div>';
+  h+='<div class="fg"><label class="lb">Issue Price</label><input class="ip" id="ex-ip" type="number" placeholder="0" oninput="calcDiff()"></div></div>';
+  h+='<div id="ex-diff" class="ib" style="display:none;margin-top:8px"></div>';
+  h+='<div class="fg"><label class="lb">Difference</label><select class="sl" id="ex-dm"><option value="cash_in">Customer Pays</option><option value="cash_out">Refund</option><option value="none">None</option></select></div>';
+  h+='<button class="btn bs" onclick="saveExchange()">Process Exchange</button>';
+  omo('Exchange',h);
+}
+
+function calcDiff(){
+  var rp=Number($('ex-rp')&&$('ex-rp').value||0);
+  var ip=Number($('ex-ip')&&$('ex-ip').value||0);
+  var diff=ip-rp;
+  var d=$('ex-diff');
+  if(d&&(rp||ip)){
+    d.style.display='block';
+    d.textContent=diff>0?'Customer pays extra: '+fmt(diff):diff<0?'Refund: '+fmt(Math.abs(diff)):'No difference';
+  }
+}
 
 async function saveExchange(){
-  const cust=($('ex-c')?.value||'').trim()||'Walk-in';
-  const riId=$('ex-ri')?.value;const rq=Number($('ex-rq')?.value||1);const rp=Number($('ex-rp')?.value||0);
-  const iiId=$('ex-ii')?.value;const iq=Number($('ex-iq')?.value||1);const ip=Number($('ex-ip')?.value||0);
-  const dm=$('ex-dm')?.value||'none';const notes=$('ex-n')?.value||'';
-  if(!riId||!iiId||!rq||!iq){toast('Select both items','err');return;}
-  const diff=(ip*iq)-(rp*rq);
-  const ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  let custId=null;
-  let cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
-  if(!cp&&cust!=='Walk-in'){const{data:np}=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP?.id}).select().single();if(np){parties.push(np);cp=np;}}
-  custId=cp?.id||null;
-  const{data:exNo}=await sb.rpc('generate_transaction_no',{p_prefix:'EXC'});
+  var cust=($('ex-c')&&$('ex-c').value||'Walk-in');
+  var riId=$('ex-ri')&&$('ex-ri').value;
+  var rq=Number($('ex-rq')&&$('ex-rq').value||1);
+  var rp=Number($('ex-rp')&&$('ex-rp').value||0);
+  var iiId=$('ex-ii')&&$('ex-ii').value;
+  var iq=Number($('ex-iq')&&$('ex-iq').value||1);
+  var ip=Number($('ex-ip')&&$('ex-ip').value||0);
+  var dm=$('ex-dm')&&$('ex-dm').value||'none';
+  if(!riId||!iiId){toast('Select both items','err');return;}
+  var diff=ip-rp;
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  var{data:exNo}=await sb.rpc('generate_transaction_no',{p_prefix:'EXC'});
   try{
-    const{data:txn}=await sb.from('transactions').insert({transaction_no:exNo,transaction_type:'exchange',transaction_date:td(),party_id:custId,total_amount:Math.abs(diff),paid_amount:Math.abs(diff),payment_status:'paid',performed_by:CUP?.id,notes:notes}).select().single();
-    await sb.from('exchanges').insert({transaction_id:txn.id,customer_party_id:custId,customer_name:cust,exchange_date:td(),returned_variant_id:riId,returned_qty:rq,returned_price:rp,issued_variant_id:iiId,issued_qty:iq,issued_price:ip,price_diff:diff,diff_mode:dm,notes});
-    // Stock: add returned item, deduct issued item
-    const retP=prods.find(function(p){return p.id===riId;});const issP=prods.find(function(p){return p.id===iiId;});
-    if(retP){await sb.from('inventory').update({qty_available:(retP.stock||0)+rq}).eq('variant_id',riId);await sb.from('inventory_movements').insert({variant_id:riId,transaction_id:txn.id,movement_type:'sale_return',qty_change:rq,qty_before:retP.stock||0,qty_after:(retP.stock||0)+rq,reason:'Exchange return',performed_by:CUP?.id});}
-    if(issP){await sb.from('inventory').update({qty_available:Math.max(0,(issP.stock||0)-iq)}).eq('variant_id',iiId);await sb.from('inventory_movements').insert({variant_id:iiId,transaction_id:txn.id,movement_type:'sale',qty_change:-iq,qty_before:issP.stock||0,qty_after:Math.max(0,(issP.stock||0)-iq),reason:'Exchange issue',performed_by:CUP?.id});}
-    // Post difference to ledger
+    var{data:txn}=await sb.from('transactions').insert({transaction_no:exNo,transaction_type:'sale',transaction_date:td(),total_amount:Math.max(ip,0),paid_amount:Math.max(ip,0),payment_status:'paid',performed_by:CUP&&CUP.id}).select().single();
+    var retP=prods.find(function(p){return p.id===riId;});
+    var issP=prods.find(function(p){return p.id===iiId;});
+    if(retP)await sb.from('inventory').update({qty_available:(retP.stock||0)+rq}).eq('variant_id',riId);
+    if(issP)await sb.from('inventory').update({qty_available:Math.max(0,(issP.stock||0)-iq)}).eq('variant_id',iiId);
     if(Math.abs(diff)>0&&ca){
-      if(dm==='cash_in')await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:diff,description:'Exchange diff in: '+exNo,created_by:CUP?.id});
-      else if(dm==='cash_out')await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:Math.abs(diff),description:'Exchange refund: '+exNo,created_by:CUP?.id});
-      else if(dm==='ar'&&custId)await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:custId,amount:Math.abs(diff),description:'Exchange AR: '+exNo,created_by:CUP?.id});
+      if(dm==='cash_in')await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:diff,description:'Exchange diff: '+exNo,created_by:CUP&&CUP.id});
+      else if(dm==='cash_out')await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:Math.abs(diff),description:'Exchange refund: '+exNo,created_by:CUP&&CUP.id});
     }
-    await loadData();toast('Exchange: '+exNo+' done!','ok',5000);cmo();srch();
+    await loadData();cmo();toast('Exchange done: '+exNo,'ok',5000);srch();
   }catch(e){toast('Error: '+e.message,'err');}
 }
 
-// STOCK RECONCILIATION
 function openStockTake(){
-  const ps=prods.filter(function(p){return(p.stock||0)>0;});
-  omo('Physical Verification',
-    '<div class="ib">Enter actual physical count. Differences will be logged.</div>'+
-    ps.map(function(p,i){return'<div style="display:grid;grid-template-columns:1fr auto auto;gap:7px;align-items:center;padding:7px 0;border-bottom:1px solid var(--cream2)"><div><div style="font-size:.72rem;font-weight:600">'+p.name+'</div><div style="font-size:.56rem;color:var(--ink3)">'+p.sku+' · Book: <strong style="color:var(--gold)">'+p.stock+'</strong></div></div><input type="number" id="st-'+i+'" placeholder="Actual" style="width:65px;border:1.5px solid var(--border);border-radius:7px;padding:5px 7px;font-size:.78rem;text-align:center" oninput="chkDiff('+i+')"><div id="sd-'+i+'" style="font-size:.68rem;font-weight:700;min-width:30px;text-align:right"></div></div>';}).join('')+
-    '<button class="btn bi" style="margin-top:12px" onclick="saveStockTake()">✅ Save Variance Report</button>'
-  );
+  var ps=prods.filter(function(p){return(p.stock||0)>0;});
+  var h='<div class="ib">Enter actual physical count per item.</div>';
+  for(var i=0;i<ps.length;i++){
+    h+='<div style="display:grid;grid-template-columns:1fr 65px 35px;gap:7px;align-items:center;padding:7px 0;border-bottom:1px solid var(--cream2)">';
+    h+='<div><div style="font-size:.7rem;font-weight:600">'+ps[i].name+'</div>';
+    h+='<div style="font-size:.55rem;color:var(--ink3)">'+ps[i].sku+' Book: '+ps[i].stock+'</div></div>';
+    h+='<input type="number" id="st-'+i+'" placeholder="Count" style="border:1.5px solid var(--border);border-radius:7px;padding:5px 7px;font-size:.78rem;text-align:center;width:100%" oninput="chkD('+i+')">';
+    h+='<div id="sd-'+i+'" style="font-size:.68rem;font-weight:700;text-align:right"></div>';
+    h+='</div>';
+  }
+  h+='<button class="btn bi" style="margin-top:12px;width:100%" onclick="saveStockTake()">Save Report</button>';
+  window._stProds=ps;
+  omo('Physical Verification',h);
 }
 
-function chkDiff(i){const inp=$('st-'+i);const d=$('sd-'+i);if(!inp||!d)return;const ps=prods.filter(function(p){return(p.stock||0)>0;});const ph=Number(inp.value);const bk=ps[i]?.stock||0;if(inp.value===''){d.textContent='';return;}const df=ph-bk;d.textContent=df===0?'✅':(df>0?'+'+df:String(df));d.style.color=df===0?'var(--sage)':'var(--red)';}
+function chkD(i){
+  var inp=$('st-'+i);var d=$('sd-'+i);
+  if(!inp||!d)return;
+  var ph=Number(inp.value);
+  var bk=(window._stProds[i]&&window._stProds[i].stock)||0;
+  if(inp.value===''){d.textContent='';return;}
+  var df=ph-bk;
+  d.textContent=df===0?'OK':(df>0?'+'+df:''+df);
+  d.style.color=df===0?'var(--sage)':'var(--red)';
+}
 
 async function saveStockTake(){
-  const ps=prods.filter(function(p){return(p.stock||0)>0;});
-  let adj=0,skipped=0;
-  for(let i=0;i<ps.length;i++){
-    const inp=$('st-'+i);if(!inp||inp.value===''){skipped++;continue;}
-    const ph=Number(inp.value);const p=ps[i];if(ph===(p.stock||0))continue;
-    await sb.from('inventory').update({qty_available:ph}).eq('variant_id',p.id);
-    await sb.from('inventory_movements').insert({variant_id:p.id,movement_type:'stock_take',qty_change:ph-(p.stock||0),qty_before:p.stock||0,qty_after:ph,reason:'Physical count: '+ph+' (book: '+(p.stock||0)+')',performed_by:CUP?.id});
+  var ps=window._stProds||[];
+  var adj=0;
+  for(var i=0;i<ps.length;i++){
+    var inp=$('st-'+i);
+    if(!inp||inp.value==='')continue;
+    var ph=Number(inp.value);
+    if(ph===(ps[i].stock||0))continue;
+    await sb.from('inventory').update({qty_available:ph}).eq('variant_id',ps[i].id);
     adj++;
   }
-  cmo();await loadData();iInv();toast(adj+' items adjusted, '+skipped+' skipped','ok');
+  cmo();await loadData();iInv();
+  toast(adj+' items adjusted','ok');
 }
+
 </script>
 </body>
 </html>
