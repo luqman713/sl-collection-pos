@@ -331,8 +331,28 @@ function updPP(){const q=Number($('pq')?.value||0);const c=Number($('pcs')?.valu
 async function savePur(){
   const nm=$('pn')?.value?.trim();const cat=$('pc2')?.value;const qty=Number($('pq')?.value||0);const cst=Number($('pcs')?.value||0);const sup=$('ps2')?.value?.trim()||'';
   if(!nm||!cat||!qty||!cst){toast('Fill Name, Category, Qty, Cost','err');return;}
-  if(!sup){toast('Enter supplier name','err');return;}
+  // ── STEP 1: Supplier Ledger Validation ──
+  if(purPayMode!=='owner'&&!sup){toast('Enter supplier name','err');$('ps2')?.focus();return;}
   const tot=qty*cst;
+  // ── STEP 2: Validate/Create Supplier ──
+  if(purPayMode!=='owner'&&sup){
+    let sp=parties.find(function(p){return p.name===sup&&p.party_type==='supplier';});
+    if(!sp){
+      const ok=confirm('Supplier "'+sup+'" not found.\nCreate new supplier ledger?');
+      if(!ok){toast('Supplier ledger required','err');return;}
+    }
+  }
+  // ── STEP 3: Validate Owner Account ──
+  if(purPayMode==='owner'){
+    const ownerParty=parties.find(function(p){return p.name==='Owner Account'||p.party_type==='owner';});
+    if(!ownerParty){
+      const ok=confirm('Owner ledger not found.\nCreate Owner Account ledger?');
+      if(!ok){toast('Owner ledger required','err');return;}
+      const{data:np,error:ne}=await sb.from('parties').insert({party_type:'owner',name:'Owner Account',opening_balance:0,current_balance:0,created_by:CUP?.id}).select().single();
+      if(ne){toast('Error creating owner ledger: '+ne.message,'err');return;}
+      parties.push(np);toast('Owner ledger created','ok');
+    }
+  }
   const catCode=CCOD[cat]||cat.substring(0,3).toUpperCase();
   const cl=$('pcl')?.value?.trim()||'';const sz=$('pz')?.value?.trim()||'';
   const clC=colCode(cl);const szC=szCode(sz);const prefix=catCode+'-'+clC+'-'+szC;
@@ -342,7 +362,7 @@ async function savePur(){
   const{data:cr}=await sb.from('categories').select('id').eq('name',cat).single();
   const ca=accs.find(function(a){return a.name==='Cash Drawer';});
   let pd=0,pybl=0,payAccId=null;
-  if(purPayMode==='cash'){pd=tot;payAccId=ca?.id;const bal=ca?.current_balance||0;if(bal<tot&&!confirm('Insufficient cash ('+fmt(bal)+'). Total: '+fmt(tot)+'. Continue?'))return;}
+  if(purPayMode==='cash'){pd=tot;payAccId=ca?.id;const bal=ca?.current_balance||0;if(bal<tot){const ok=confirm('⚠️ Insufficient Cash!\nCash Drawer: '+fmt(bal)+'\nRequired: '+fmt(tot)+'\nShortfall: '+fmt(tot-bal)+'\n\nContinue anyway?');if(!ok){toast('Purchase cancelled — insufficient cash','warn');return;}}}
   else if(purPayMode==='credit'){pybl=tot;}
   else if(purPayMode==='partial'){pd=Number($('ppd2')?.value||0);pybl=Math.max(0,tot-pd);payAccId=ca?.id;}
   else if(purPayMode==='owner'){pybl=tot;}
@@ -357,7 +377,7 @@ async function savePur(){
     if(purPayMode==='cash'&&ca)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:tot,description:'Purchase '+skuN,created_by:CUP?.id});
     else if(purPayMode==='credit'&&sp)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:sp.id,amount:tot,description:'Credit Purchase '+skuN,created_by:CUP?.id});
     else if(purPayMode==='partial'){if(pd>0&&ca)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:pd,description:'Partial '+skuN,created_by:CUP?.id});if(pybl>0&&sp)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:sp.id,amount:pybl,description:'Payable '+skuN,created_by:CUP?.id});}
-    else if(purPayMode==='owner'){const op=parties.find(function(p){return p.name==='Owner Account';});if(op)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:op.id,amount:tot,description:'Owner paid '+skuN,created_by:CUP?.id});}
+    else if(purPayMode==='owner'){const op=parties.find(function(p){return p.name==='Owner Account'||p.party_type==='owner';});if(op)le.push({transaction_id:txn.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:op.id,amount:tot,description:'Owner paid '+skuN,created_by:CUP?.id});else toast('Warning: Owner ledger entry skipped — Owner Account not found','warn');}
     if(le.length)await sb.from('ledger_entries').insert(le);
     await loadData();
     toast('SKU: '+skuN+' | Stock: '+qty+(pybl>0?' | Payable: '+fmt(pybl):''),'ok',6000);
