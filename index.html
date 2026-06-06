@@ -318,10 +318,56 @@ function oExp(){const cats=['Daily Operating Expenses','Rent Expense','Utility E
 async function saveExp(){const cat=$('ec')?.value;const desc=$('ed')?.value?.trim();const amt=Number($('ea')?.value||0);const src=$('es')?.value;if(!amt||!desc){toast('Fill all','err');return;}const{data:ec}=await sb.from('expense_categories').select('id').eq('name',cat).maybeSingle();const{data:en}=await sb.rpc('generate_transaction_no',{p_prefix:'EXP'});try{const{data:t}=await sb.from('transactions').insert({transaction_no:en,transaction_type:'expense',transaction_date:td(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP?.id,notes:desc}).select().single();if(ec?.id)await sb.from('cash_entries').insert({transaction_id:t.id,category_id:ec.id,entry_date:td(),amount:amt,direction:'out',account_id:src,description:desc});await sb.from('ledger_entries').insert({transaction_id:t.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:src,amount:amt,description:'Expense: '+desc,created_by:CUP?.id});toast('Expense saved: '+fmt(amt),'ok');cmo();await loadData();}catch(e){toast('Error: '+e.message,'err');}}
 
 // INVENTORY
-function rInv(){const ac=prods.filter(function(p){return(p.stock||0)>0;});const tv=ac.reduce(function(s,p){return s+p.cost*(p.stock||0);},0);return(CUP?.role==='owner'?'<button class="btn bi" style="margin-bottom:10px" onclick="openStockTake()">🔍 Physical Verification</button>':'')+'<div class="sg"><div class="sc"><div class="sl2">Active SKUs</div><div class="sv">'+ac.length+'</div></div><div class="sc go"><div class="sl2">Stock Value</div><div class="sv">'+fmt(tv)+'</div></div><div class="sc rd"><div class="sl2">Low Stock</div><div class="sv">'+ac.filter(function(p){return p.stock<=2;}).length+'</div></div><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Dead Stock</div><div class="sv">'+ac.filter(function(p){return p.age>=90;}).length+'</div></div></div><div class="fg"><input class="ip" id="is" placeholder="Search..." oninput="iInv()"></div><div id="il"></div>';}
-function iInv(){const q=($('is')?.value||'').toLowerCase();const c=$('il');if(!c)return;let p=prods.filter(function(p){return(p.stock||0)>0&&(!q||p.name.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q));});if(!p.length){c.innerHTML='<div class="em"><div class="ei">📦</div><p style="font-size:.72rem">No items</p></div>';return;}const cats={};p.forEach(function(pr){if(!cats[pr.cat])cats[pr.cat]={items:[],qty:0,val:0};cats[pr.cat].items.push(pr);cats[pr.cat].qty+=pr.stock||0;cats[pr.cat].val+=(pr.stock||0)*pr.cost;});const tv2=p.reduce(function(s,pr){return s+(pr.stock||0)*pr.cost;},0);c.innerHTML=Object.entries(cats).map(function(e){const cat=e[0];const d=e[1];return'<div style="margin-bottom:14px"><div class="rh"><div>'+emo2(cat)+' '+cat+'</div><div>'+d.qty+' pcs · '+fmt(d.val)+'</div></div><div style="border:1px solid #E8D8C0;border-top:none;border-radius:0 0 9px 9px"><div class="ih"><div>Item</div><div style="text-align:center">Qty</div><div style="text-align:right">Age</div><div style="text-align:right">Value</div></div>'+d.items.map(function(pr){return'<div class="ir"><div><div style="font-size:.7rem;font-weight:600">'+pr.name+'</div><div style="font-size:.55rem;color:var(--ink3)">'+( pr.colour||'')+(pr.size?' · '+pr.size:'')+'</div><div style="font-family:monospace;font-size:.5rem;color:var(--ink3)">'+pr.sku+'</div></div><div style="text-align:center"><span style="font-size:.85rem;font-weight:700;color:'+(pr.stock<=2?'var(--red)':'var(--sage)')+'">'+pr.stock+'</span>'+(pr.stock<=2?'<div style="font-size:.48rem;color:var(--red)">LOW</div>':'')+'</div><div style="text-align:right;font-size:.58rem;font-weight:700;color:'+(pr.age>=90?'var(--red)':pr.age>=60?'var(--gold)':pr.age>=30?'#7A6000':'var(--sage)')+'">'+pr.age+'d</div><div style="text-align:right;font-size:.68rem;font-weight:600">'+fmt((pr.stock||0)*pr.cost)+'</div></div>';}).join('')+'<div class="if"><div style="font-size:.63rem;font-weight:700;color:var(--ink2)">Total</div><div style="text-align:center;font-size:.7rem;font-weight:700;color:var(--ink2)">'+d.qty+'</div><div></div><div style="text-align:right;font-size:.7rem;font-weight:700;color:var(--ink2)">'+fmt(d.val)+'</div></div></div></div>';}).join('')+'<div style="background:var(--ink);color:white;border-radius:9px;padding:11px 13px;display:grid;grid-template-columns:1.8fr .6fr .8fr .8fr"><div style="font-size:.72rem;font-weight:700">TOTAL</div><div style="text-align:center;font-size:.72rem;font-weight:700">'+p.reduce(function(s,pr){return s+(pr.stock||0);},0)+'</div><div></div><div style="text-align:right;font-size:.72rem;font-weight:700">'+fmt(tv2)+'</div></div>';}
+function rInv(){
+  var ac=prods.filter(function(p){return(p.stock||0)>0;});
+  var tv=ac.reduce(function(s,p){return s+p.cost*(p.stock||0);},0);
+  var h='<div class="sg">';
+  h+='<div class="sc"><div class="sl2">Active SKUs</div><div class="sv">'+ac.length+'</div></div>';
+  h+='<div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div>';
+  h+='<div class="sc rd"><div class="sl2">Low Stock</div><div class="sv">'+ac.filter(function(p){return p.stock<=2;}).length+'</div></div>';
+  h+='<div class="sc" style="border-left-color:var(--red)"><div class="sl2">Dead Stock</div><div class="sv">'+ac.filter(function(p){return p.age>=90;}).length+'</div></div>';
+  h+='</div>';
+  h+='<div class="g2" style="margin-bottom:8px">';
+  h+='<button class="btn bs bsm" onclick="oStockMove('sales_return')">🔄 Sales Return</button>';
+  h+='<button class="btn bh bsm" onclick="oStockMove('purchase_return')">↩️ Pur Return</button>';
+  h+='</div>';
+  h+='<div class="g2" style="margin-bottom:12px">';
+  h+='<button class="btn br bsm" onclick="oStockMove('damaged')">💥 Damaged</button>';
+  h+='<button class="btn bh bsm" onclick="oStockMove('other')">📦 Other</button>';
+  h+='</div>';
+  if(CUP&&CUP.role==='owner')h+='<button class="btn bi" style="width:100%;margin-bottom:12px" onclick="openStockTake()">🔍 Physical Verification</button>';
+  h+='<input class="ip" id="is" placeholder="Search by name or SKU..." oninput="iInv()" style="margin-bottom:10px">';
+  h+='<div id="il"></div>';
+  return h;
+}
+function iInv(){
+  var q=($('is')&&$('is').value||'').toLowerCase();
+  var c=$('il');if(!c)return;
+  var p=prods.filter(function(pr){return(pr.stock||0)>0&&(!q||(pr.name||'').toLowerCase().includes(q)||(pr.sku||'').toLowerCase().includes(q));});
+  if(!p.length){c.innerHTML='<div class="em"><div class="ei">📦</div><p style="font-size:.72rem">No items</p></div>';return;}
+  var cats={};
+  p.forEach(function(pr){if(!cats[pr.cat])cats[pr.cat]={items:[],qty:0,val:0};cats[pr.cat].items.push(pr);cats[pr.cat].qty+=pr.stock||0;cats[pr.cat].val+=(pr.stock||0)*pr.cost;});
+  var tv2=p.reduce(function(s,pr){return s+(pr.stock||0)*pr.cost;},0);
+  var html='';
+  var catKeys=Object.keys(cats);
+  for(var ci=0;ci<catKeys.length;ci++){
+    var cat=catKeys[ci];var d=cats[cat];
+    html+='<div style="margin-bottom:14px"><div class="rh"><div>'+emo2(cat)+' '+cat+'</div><div>'+d.qty+' pcs · '+fmt(d.val)+'</div></div><div style="border:1px solid #E8D8C0;border-top:none;border-radius:0 0 9px 9px"><div class="ih"><div>Item</div><div style="text-align:center">Avail</div><div style="text-align:right">Age</div><div style="text-align:right">Value</div></div>';
+    for(var pi=0;pi<d.items.length;pi++){
+      var pr=d.items[pi];
+      var ac2=pr.age>=90?'var(--red)':pr.age>=60?'var(--gold)':pr.age>=30?'#7A6000':'var(--sage)';
+      html+='<div class="ir" onclick="showStockDetail(''+pr.id+'')">';
+      html+='<div><div style="font-size:.7rem;font-weight:600">'+pr.name+'</div><div style="font-size:.55rem;color:var(--ink3)">'+(pr.colour||'')+(pr.size?' · '+pr.size:'')+'</div><div style="font-family:monospace;font-size:.5rem;color:var(--ink3)">'+pr.sku+'</div></div>';
+      html+='<div style="text-align:center"><span style="font-size:.85rem;font-weight:700;color:'+(pr.stock<=2?'var(--red)':'var(--sage)')+'">'+pr.stock+'</span>'+(pr.stock<=2?'<div style="font-size:.48rem;color:var(--red)">LOW</div>':'')+'</div>';
+      html+='<div style="text-align:right;font-size:.6rem;font-weight:700;color:'+ac2+'">'+pr.age+'d</div>';
+      html+='<div style="text-align:right;font-size:.68rem;font-weight:600">'+fmt((pr.stock||0)*pr.cost)+'</div></div>';
+    }
+    html+='<div class="if"><div style="font-size:.63rem;font-weight:700;color:var(--ink2)">Total</div><div style="text-align:center;font-size:.7rem;font-weight:700;color:var(--ink2)">'+d.qty+'</div><div></div><div style="text-align:right;font-size:.7rem;font-weight:700;color:var(--ink2)">'+fmt(d.val)+'</div></div></div></div>';
+  }
+  html+='<div style="background:var(--ink);color:white;border-radius:9px;padding:11px 13px;display:flex;justify-content:space-between"><div style="font-size:.72rem;font-weight:700">TOTAL</div><div style="font-size:.72rem;font-weight:700">'+p.reduce(function(s,pr){return s+(pr.stock||0);},0)+' pcs · '+fmt(tv2)+'</div></div>';
+  c.innerHTML=html;
+}
 
-// PURCHASE
 function rBuy(){return'<div class="card"><div class="ct">New Purchase</div><div class="fg"><label class="lb">Product Name</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC"></div><div class="g2"><div class="fg"><label class="lb">Category</label><select class="sl" id="pc2" onchange="updSKU()"><option value="">Select...</option>'+CATS.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div><div class="fg"><label class="lb">Size</label><input class="ip" id="pz" placeholder="M/L/XL" oninput="updSKU()"></div></div><div class="fg"><label class="lb">Colour</label><input class="ip" id="pcl" placeholder="Navy Blue..." oninput="updSKU()"></div><div class="sku-prev"><div style="font-size:.55rem;color:var(--ink3);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px">SKU Preview</div><div class="sku-code" id="sku">Select category...</div></div><div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="pq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs</label><input class="ip" id="pcs" type="number" placeholder="0"></div></div><div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\')">📋</button><button class="btn bh bsm" onclick="newPM(\'supplier\')">➕</button></div></div><div class="ib">Sale price negotiated at billing — not entered here.</div><div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">💵 Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">📋 Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">⚡ Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">👑 Owner</div></div></div><div id="ppd"></div><div id="pprev" style="display:none;background:#FDF5E4;border:1.5px solid var(--gold);border-radius:9px;padding:10px 12px;margin-bottom:12px"></div><button class="btn bg" onclick="savePur()">✅ Save Purchase</button></div>';}
 function updSKU(){const cat=$('pc2')?.value||'';const cl=$('pcl')?.value||'';const sz=$('pz')?.value||'';const sk=$('sku');if(!sk)return;if(!cat){sk.textContent='Select category...';return;}sk.textContent=(CCOD[cat]||cat.substring(0,3).toUpperCase())+'-'+colCode(cl)+'-'+szCode(sz)+'-###';}
 function setPurPM(m,el){purPayMode=m;document.querySelectorAll('#ppm .pl').forEach(function(p){p.classList.remove('on');});el.classList.add('on');const d=$('ppd');if(!d)return;const ca=accs.find(function(a){return a.name==='Cash Drawer';});if(m==='cash')d.innerHTML='<div class="ib">Cash: '+fmt(ca?.current_balance||0)+'</div>';else if(m==='credit')d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Supplier Payable</div>';else if(m==='partial')d.innerHTML='<div class="fg"><label class="lb">Paid Now Rs</label><input class="ip" id="ppd2" type="number" placeholder="0" oninput="updPP()"></div>';else if(m==='owner')d.innerHTML='<div class="ib">Posted to Owner Payable</div>';updPP();}
@@ -550,6 +596,97 @@ async function saveStockTake(){
   }
   cmo();await loadData();iInv();
   toast(adj+' items adjusted','ok');
+}
+
+
+// ── STOCK MOVEMENT MODAL ──
+var SMOVE_LABELS={'sales_return':'🔄 Sales Return','purchase_return':'↩️ Purchase Return','damaged':'💥 Damaged Items','other':'📦 Other'};
+var SMOVE_DESC={'sales_return':'Item returned by customer. Stock restored.','purchase_return':'Item returned to supplier. Stock deducted.','damaged':'Item damaged/unsellable. Stock deducted.','other':'Other stock adjustment. Describe reason.'};
+
+function oStockMove(mtype){
+  var lbl=SMOVE_LABELS[mtype]||mtype;
+  var desc=SMOVE_DESC[mtype]||'';
+  var h='<div class="ib">'+desc+'</div>';
+  h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="sm-prod"><option value="">Select...</option>';
+  for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0||mtype==='sales_return')h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
+  h+='</select></div>';
+  if(mtype==='sales_return'){
+    h+='<div class="fg"><label class="lb">Original Bill No</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
+  }
+  if(mtype==='purchase_return'){
+    h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="pickP('supplier')">List</button></div></div>';
+  }
+  h+='<div class="g2"><div class="fg"><label class="lb">Quantity *</label><input class="ip" id="sm-qty" type="number" placeholder="0"></div>';
+  h+='<div class="fg"><label class="lb">Cost Rs</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
+  h+='<div class="fg"><label class="lb">Reason *</label><input class="ip" id="sm-rsn" placeholder="Describe reason..."></div>';
+  h+='<button class="btn bi" onclick="saveStockMove(''+mtype+'')">✅ Process '+lbl+'</button>';
+  omo(lbl,h);
+}
+
+async function saveStockMove(mtype){
+  var varId=$('sm-prod')&&$('sm-prod').value;
+  var qty=Number($('sm-qty')&&$('sm-qty').value||0);
+  var rsn=($('sm-rsn')&&$('sm-rsn').value||'').trim();
+  var cost=Number($('sm-cost')&&$('sm-cost').value||0);
+  var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
+  if(!varId){toast('Select a product','err');return;}
+  if(!qty||qty<=0){toast('Enter quantity','err');return;}
+  if(!rsn){toast('Enter reason — required for audit trail','err');return;}
+  var p=prods.find(function(p){return p.id===varId;});
+  if(!p){toast('Product not found','err');return;}
+  // Validate stock for deductions
+  if(['purchase_return','damaged','other'].includes(mtype)&&(p.stock||0)<qty){toast('Only '+p.stock+' in stock','err');return;}
+  var result=await sb.rpc('process_stock_movement',{p_variant_id:varId,p_movement_type:mtype,p_qty:qty,p_reason:rsn,p_reference_no:refNo||null,p_cost_impact:cost||p.cost,p_user_id:CUP&&CUP.id});
+  if(!result.data||!result.data.success){toast('Error: '+(result.data&&result.data.error||result.error&&result.error.message||'Unknown'),'err');return;}
+  // Handle supplier return ledger
+  if(mtype==='purchase_return'){
+    var supName=($('sm-sup')&&$('sm-sup').value||'').trim();
+    var sp=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
+    if(sp){
+      var{data:no}=await sb.rpc('generate_transaction_no',{p_prefix:'PRET'});
+      var{data:txn}=await sb.from('transactions').insert({transaction_no:no,transaction_type:'purchase_return',transaction_date:td(),party_id:sp.id,total_amount:qty*(cost||p.cost),paid_amount:0,payment_status:'pending',performed_by:CUP&&CUP.id,notes:rsn}).select().single();
+      if(txn)await sb.from('ledger_entries').insert({transaction_id:txn.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:sp.id,amount:qty*(cost||p.cost),description:'Purchase Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
+    }
+  }
+  // Handle sales return ledger + cash refund option
+  if(mtype==='sales_return'){
+    var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+    var doRefund=confirm('Process cash refund of '+fmt(qty*(cost||p.cost))+'?');
+    if(doRefund&&ca){
+      var{data:no2}=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});
+      var{data:txn2}=await sb.from('transactions').insert({transaction_no:no2,transaction_type:'sale_return',transaction_date:td(),total_amount:qty*(cost||p.cost),paid_amount:qty*(cost||p.cost),payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Return: '+rsn+(refNo?' Ref:'+refNo:'')}).select().single();
+      if(txn2)await sb.from('ledger_entries').insert({transaction_id:txn2.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:qty*(cost||p.cost),description:'Refund: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
+    }
+  }
+  await loadData();cmo();
+  toast(SMOVE_LABELS[mtype]+': '+qty+' x '+p.name+' logged','ok',5000);
+  iInv();
+}
+
+async function showStockDetail(varId){
+  var p=prods.find(function(pr){return pr.id===varId;});
+  if(!p)return;
+  var{data:movs}=await sb.from('inventory_movements').select('*').eq('variant_id',varId).order('created_at',{ascending:false}).limit(30);
+  var{data:inv}=await sb.from('inventory').select('*').eq('variant_id',varId).single();
+  var tc={'purchase':'var(--sage)','sale':'var(--rust)','sales_return':'var(--gold)','purchase_return':'var(--gold)','damaged':'var(--red)','other':'var(--ink3)','stock_take':'var(--ink3)'};
+  var h='<div class="sg" style="margin-bottom:12px">';
+  h+='<div style="text-align:center;background:var(--cream2);border-radius:9px;padding:9px"><div class="sl2">Available</div><div style="font-size:1.3rem;font-weight:700;color:var(--sage)">'+(inv&&inv.qty_available||0)+'</div></div>';
+  h+='<div style="text-align:center;background:var(--cream2);border-radius:9px;padding:9px"><div class="sl2">Total In</div><div style="font-size:1.3rem;font-weight:700">'+(inv&&inv.qty_total_received||0)+'</div></div>';
+  h+='</div>';
+  if(inv){
+    h+='<div class="g2" style="margin-bottom:12px">';
+    h+='<div style="background:#FDEAEA;border-radius:8px;padding:8px;text-align:center"><div class="sl2">Damaged</div><div style="font-weight:700;color:var(--red)">'+(inv.qty_damaged||0)+'</div></div>';
+    h+='<div style="background:#FFF8E4;border-radius:8px;padding:8px;text-align:center"><div class="sl2">Pur Returns</div><div style="font-weight:700;color:var(--gold)">'+(inv.qty_purchase_return||0)+'</div></div>';
+    h+='</div>';
+    h+='<div class="g2" style="margin-bottom:12px">';
+    h+='<div style="background:#E8F5E8;border-radius:8px;padding:8px;text-align:center"><div class="sl2">Sales Returns</div><div style="font-weight:700;color:var(--sage)">'+(inv.qty_sales_return||0)+'</div></div>';
+    h+='<div style="background:var(--cream2);border-radius:8px;padding:8px;text-align:center"><div class="sl2">Other</div><div style="font-weight:700">'+(inv.qty_other||0)+'</div></div>';
+    h+='</div>';
+  }
+  h+='<div class="ct">Movement History</div>';
+  if(!(movs&&movs.length)){h+='<div class="em"><p>No movements yet</p></div>';}
+  else{for(var i=0;i<movs.length;i++){var m=movs[i];h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--cream2)"><div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(tc[m.movement_type]||'var(--ink3)')+'"></div><div style="flex:1"><div style="font-size:.7rem;font-weight:600">'+(m.movement_type||'').replace(/_/g,' ')+'</div><div style="font-size:.57rem;color:var(--ink3)">'+(m.created_at&&m.created_at.split('T')[0]||'')+' · '+(m.reason||m.reference_no||'')+'</div></div><div style="font-size:.75rem;font-weight:700;color:'+(m.qty_change>0?'var(--sage)':'var(--red)')+'>'+(m.qty_change>0?'+':'')+m.qty_change+'</div></div>';}}
+  omo(p.name+' — Detail',h);
 }
 
 </script>
