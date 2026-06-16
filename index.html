@@ -129,8 +129,8 @@ var sb=(function(){var c=supabase.createClient('https://fqubaesqzfmxvbtqconu.sup
 var $=function(id){return document.getElementById(id);};
 var fmt=function(n){return 'Rs'+Number(n||0).toLocaleString();};
 var td=function(){return new Date().toISOString().split('T')[0];};
-var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf'];
-var CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF'};
+var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
+var CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF','Maxi':'MAX','Kurti':'KRT','Shalwar':'SHL','Palazzo':'PLZ','Skirt':'SKT','Leggings':'LGG','Night Suit':'NGT','Inner Wear':'INW','Others':'OTH'};
 var CEMI={'3PC':'X','2PC':'X','Shirt':'X','Jeans':'X','Trouser':'X','Dupatta':'X','Abaya':'X','Scarf':'X'};
 var CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',prods=[],accs=[],parties=[],bCat='';
 
@@ -256,7 +256,17 @@ async function setOB(){
 
 
 function rBill(){
-  var h='<div class="card"><div class="ct">New Sale</div>';
+  var h='';
+  // FIX 2: Return/Exchange/Reservation always visible at top
+  h+='<div class="g3" style="margin-bottom:10px">';
+  h+='<button class="btn bh bsm" onclick="oRet()">Return</button>';
+  h+='<button class="btn bh bsm" onclick="oExchange()">Exchange</button>';
+  h+='<button class="btn bh bsm" onclick="oReservation()">Reserve</button>';
+  h+='</div>';
+  // FIX 2: Cart at TOP
+  h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px"><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3)">Cart <span id="cb2" style="background:var(--ink);color:white;border-radius:10px;padding:1px 6px;font-size:.55rem">0</span></div></div>';
+  h+='<div id="ci"></div><div id="bs2" style="display:none"></div><div id="ba" style="display:none"></div>';
+  h+='<div class="card" style="margin-top:10px"><div class="ct">New Sale</div>';
   h+='<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="bc" placeholder="Walk-in" style="flex:1" oninput="onCI()"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button><button class="btn bh bsm" onclick="newPM(\'customer\')">New</button></div><div id="cb" style="display:none;font-size:.6rem;margin-top:3px"></div></div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPM(\'bank\',this)">Bank</div><div class="pl" onclick="setPM(\'emoney\',this)">EMoney</div><div class="pl" onclick="setPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPM(\'split\',this)">Split</div></div></div>';
   h+='<div id="pd"></div>';
@@ -349,7 +359,7 @@ function updSum(){
     (discShow>0?'<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px;color:var(--red)"><span>Discount</span><span>- '+fmt(discShow)+'</span></div>':'') +
     '<div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;margin-bottom:4px"><span>Total</span><span>'+fmt(finalTotal)+'</span></div>'+
     '<div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage);font-weight:600"><span>Margin</span><span>'+fmt(mg)+'</span></div></div>';
-  ba.innerHTML='<button class="btn bs" id="cb3" onclick="completeSale()" style="margin-bottom:8px">Complete Sale</button><div class="g2"><button class="btn bh" onclick="oRet()">Return</button><button class="btn bh" onclick="oExchange()">Exchange</button></div>';
+  ba.innerHTML='<button class="btn bs" id="cb3" onclick="completeSale()" style="margin-bottom:8px">Complete Sale</button>';
 }
 async function completeSale(){
   if(!cart.length){toast('Cart empty','err');return;}
@@ -433,11 +443,11 @@ async function processReturn(){
   var refTxnId=null;
   if(bn){
     var ot=await sb.from('transactions').select('id').eq('transaction_no',bn).single();
-    if(ot.error){toast('Bill '+bn+' not found — check bill number','err');return;}
+    if(ot.error||!ot.data){toast('Bill '+bn+' not found','err');return;}
     // Verify item was in this sale
     var si=await sb.from('sale_items').select('qty').eq('transaction_id',ot.data.id).eq('variant_id',vid).single();
-    if(si.error){toast('This product was not in bill '+bn,'err');return;}
-    if(qty>si.data.qty){toast('Return qty ('+qty+') exceeds sold qty ('+si.data.qty+')','err');return;}
+    if(si.error||!si.data){toast('This product was not in bill '+bn,'err');return;}
+    if(qty>(si.data&&si.data.qty||0)){toast('Return qty ('+qty+') exceeds sold qty ('+(si.data&&si.data.qty||0)+')','err');return;}
     refTxnId=ot.data.id;
   } else {
     // No bill number — verify item was ever sold (check sale_items)
@@ -554,6 +564,9 @@ async function savePur(){
     var ownerP=parties.find(function(p){return p.party_type==='owner';});
     var postParty=purPayMode==='credit'||purPayMode==='partial'?sp&&sp.id:purPayMode==='owner'?ownerP&&ownerP.id:null;
     await sb.rpc('post_transaction_ledger',{p_txn_id:txn.data.id,p_txn_type:'purchase',p_payment_mode:purPayMode,p_total:tot,p_paid:pd,p_party_id:postParty,p_account_id:payAccId,p_user_id:CUP&&CUP.id});
+    // FIX 1: Update inventory stock on purchase
+    var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
+    if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
     var flds=['pn','pz','pcl','pq','pcs','ps2'];for(var fi=0;fi<flds.length;fi++){var fe=$(flds[fi]);if(fe)fe.value='';}
@@ -679,19 +692,38 @@ var SMOVE_LABELS={'sales_return':'Sales Return','purchase_return':'Purchase Retu
 var SMOVE_DESC={'sales_return':'Item returned by customer. Stock restored.','purchase_return':'Item returned to supplier. Stock deducted.','damaged':'Item damaged or unsellable. Stock deducted.','other':'Other stock adjustment. Describe reason.'};
 
 function oStockMove(mtype){
-  var lbl=SMOVE_LABELS[mtype]||mtype;
-  var desc=SMOVE_DESC[mtype]||'';
-  var h='<div class="ib">'+desc+'</div>';
-  h+='<div class="fg"><label class="lb">Product</label><select class="sl" id="sm-prod"><option value="">Select...</option>';
-  for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0||mtype==='sales_return')h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
+  var lblMap={'sales_return':'Sales Return','purchase_return':'Purchase Return','damaged':'Damaged','other':'Other'};
+  var descMap={'sales_return':'Customer returned item. Stock restored.','purchase_return':'Return to supplier. All fields required.','damaged':'Damaged item removed from stock.','other':'Other stock adjustment.'};
+  var lbl=lblMap[mtype]||mtype;
+  var h='<div class="ib">'+( descMap[mtype]||'')+' </div>';
+  h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="sm-prod" onchange="autoFillSmCost()"><option value="">Select...</option>';
+  for(var i=0;i<prods.length;i++){
+    var show=(prods[i].stock||0)>0||mtype==='sales_return';
+    if(show)h+='<option value="'+prods[i].id+'" data-cost="'+prods[i].cost+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';
+  }
   h+='</select></div>';
-  if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Original Bill No</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
-  if(mtype==='purchase_return'){h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\')">List</button></div></div>';}
-  h+='<div class="g2"><div class="fg"><label class="lb">Quantity</label><input class="ip" id="sm-qty" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
-  h+='<div class="fg"><label class="lb">Reason (required)</label><input class="ip" id="sm-rsn" placeholder="Describe reason..."></div>';
+  if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
+  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Required" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\')">List</button></div></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sm-qty" type="number" placeholder="0" oninput="autoFillSmCost()"></div>';
+  h+='<div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
+  if(mtype==='damaged')h+='<div class="fg"><label class="lb">Damage Stage</label><select class="sl" id="sm-stage"><option value="in_shop">Found in shop</option><option value="on_receipt">Received damaged</option><option value="customer_return">Customer returned damaged</option></select></div>';
+  h+='<div class="fg"><label class="lb">Reason *</label><input class="ip" id="sm-rsn" placeholder="Required: describe in detail"></div>';
+  h+='<div id="sm-calc" class="ib" style="display:none;border-color:var(--gold)"></div>';
   h+='<button class="btn bi" onclick="saveStockMove(\''+mtype+'\')">Process '+lbl+'</button>';
   omo(lbl,h);
 }
+function autoFillSmCost(){
+  var sel=document.getElementById('sm-prod');
+  var opt=sel&&sel.options[sel.selectedIndex];
+  var cost=Number(opt&&opt.getAttribute('data-cost')||0);
+  var el=document.getElementById('sm-cost');
+  if(el&&cost&&!el.value)el.value=cost;
+  var qty=Number(document.getElementById('sm-qty')&&document.getElementById('sm-qty').value||0);
+  var cv=Number(document.getElementById('sm-cost')&&document.getElementById('sm-cost').value||cost);
+  var calc=document.getElementById('sm-calc');
+  if(calc&&qty>0&&cv>0){calc.style.display='block';calc.textContent='Total value: Rs'+(qty*cv).toLocaleString();}
+}
+
 async function saveStockMove(mtype){
   var varId=$('sm-prod')&&$('sm-prod').value;var qty=Number($('sm-qty')&&$('sm-qty').value||0);var rsn=($('sm-rsn')&&$('sm-rsn').value||'').trim();var cost=Number($('sm-cost')&&$('sm-cost').value||0);var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
   if(!varId){toast('Select a product','err');return;}if(!qty||qty<=0){toast('Enter quantity','err');return;}if(!rsn){toast('Reason required','err');return;}
@@ -887,6 +919,106 @@ async function saveChangePW(){
 }
 
 // PW button added directly to buildNav below
+
+
+// STOCK WITH CUSTOMER
+function oStockWithCustomer(){
+  var h='<div class="ib">Issue stock to customer for home selection. Items tracked separately until sold or returned.</div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="swc-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Expected Return Date</label><input class="ip" id="swc-date" type="date"></div>';
+  h+='<div class="ct" style="margin-top:8px">Items to Issue</div>';
+  h+='<div id="swc-items"></div>';
+  h+='<button class="btn bh bsm" style="margin-bottom:8px;width:100%" onclick="addSwcItem()">+ Add Item</button>';
+  h+='<div class="fg"><label class="lb">Notes</label><input class="ip" id="swc-notes" placeholder="Optional"></div>';
+  h+='<button class="btn bs" onclick="saveSwc()">Issue to Customer</button>';
+  window._swcCount=0;
+  omo('Stock With Customer',h);
+  addSwcItem();
+}
+function addSwcItem(){
+  var n=window._swcCount||0;
+  var div=document.getElementById('swc-items');if(!div)return;
+  var el=document.createElement('div');
+  el.style.cssText='background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px';
+  var opts=prods.filter(function(p){return(p.stock||0)>0;}).map(function(p){return'<option value="'+p.id+'">'+p.name+' ('+p.sku+') Qty:'+p.stock+'</option>';}).join('');
+  el.innerHTML='<div class="fg"><label class="lb">Product '+(n+1)+'</label><select class="sl" id="swc-p'+n+'"><option value="">Select...</option>'+opts+'</select></div><div class="fg"><label class="lb">Qty</label><input class="ip" id="swc-q'+n+'" type="number" placeholder="0"></div>';
+  div.appendChild(el);
+  window._swcCount=n+1;
+}
+async function saveSwc(){
+  var cust=(document.getElementById('swc-cust')&&document.getElementById('swc-cust').value||'').trim();
+  if(!cust){toast('Enter customer name','err');return;}
+  var items=[];
+  for(var i=0;i<(window._swcCount||0);i++){
+    var vid=document.getElementById('swc-p'+i)&&document.getElementById('swc-p'+i).value;
+    var qty=Number(document.getElementById('swc-q'+i)&&document.getElementById('swc-q'+i).value||0);
+    if(vid&&qty>0){
+      var p=prods.find(function(p){return p.id===vid;});
+      if(p&&(p.stock||0)<qty){toast('Insufficient stock for '+p.name,'err');return;}
+      items.push({variant_id:vid,qty_issued:qty});
+    }
+  }
+  if(!items.length){toast('Add at least one item','err');return;}
+  var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
+  if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
+  var swcNo=await sb.rpc('generate_transaction_no',{p_prefix:'SWC'});
+  try{
+    var swc=await sb.from('stock_with_customer').insert({transaction_no:swcNo.data,customer_party_id:cp&&cp.id,customer_name:cust,issue_date:td(),expected_return:document.getElementById('swc-date')&&document.getElementById('swc-date').value||null,notes:document.getElementById('swc-notes')&&document.getElementById('swc-notes').value||'',performed_by:CUP&&CUP.id}).select().single();
+    if(swc.error)throw swc.error;
+    await sb.from('stock_with_customer_items').insert(items.map(function(it){return{swc_id:swc.data.id,variant_id:it.variant_id,qty_issued:it.qty_issued};}));
+    for(var k=0;k<items.length;k++){
+      var p2=prods.find(function(p){return p.id===items[k].variant_id;});
+      if(p2)await sb.from('inventory').update({qty_available:Math.max(0,(p2.stock||0)-items[k].qty_issued),qty_with_customer:((p2.withCustomer||0)+items[k].qty_issued)}).eq('variant_id',items[k].variant_id);
+    }
+    await loadData();cmo();toast('Issued: '+swcNo.data,'ok',5000);
+  }catch(ex){toast(ex.message,'err');}
+}
+
+// STOCK RESERVATION
+function oReservation(){
+  var h='<div class="ib">Record advance/token money. Creates customer deposit entry (liability).</div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="res-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="res-prod"><option value="">Select...</option>';
+  for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
+  h+='</select></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty Reserved</label><input class="ip" id="res-qty" type="number" value="1"></div><div class="fg"><label class="lb">Sale Price Rs</label><input class="ip" id="res-price" type="number" placeholder="0"></div></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Advance Rs *</label><input class="ip" id="res-adv" type="number" placeholder="Token money"></div><div class="fg"><label class="lb">Received Via</label><select class="sl" id="res-acc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+'</option>';}).join('')+'</select></div></div>';
+  h+='<button class="btn bg" onclick="saveReservation()">Save Reservation</button>';
+  omo('Stock Reservation',h);
+}
+async function saveReservation(){
+  var cust=(document.getElementById('res-cust')&&document.getElementById('res-cust').value||'').trim();
+  var vid=document.getElementById('res-prod')&&document.getElementById('res-prod').value;
+  var qty=Number(document.getElementById('res-qty')&&document.getElementById('res-qty').value||1);
+  var adv=Number(document.getElementById('res-adv')&&document.getElementById('res-adv').value||0);
+  var accId=document.getElementById('res-acc')&&document.getElementById('res-acc').value;
+  if(!cust||!vid||!adv){toast('Fill customer, product and advance','err');return;}
+  var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
+  if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
+  var resNo=await sb.rpc('generate_transaction_no',{p_prefix:'RES'});
+  try{
+    var res=await sb.from('stock_reservations').insert({reservation_no:resNo.data,customer_party_id:cp&&cp.id,customer_name:cust,advance_amount:adv,payment_account_id:accId,performed_by:CUP&&CUP.id}).select().single();
+    if(res.error)throw res.error;
+    await sb.from('stock_reservation_items').insert({reservation_id:res.data.id,variant_id:vid,qty_reserved:qty,sale_price:Number(document.getElementById('res-price')&&document.getElementById('res-price').value||0)});
+    var p3=prods.find(function(p){return p.id===vid;});
+    if(p3)await sb.from('inventory').update({qty_reserved:((p3.reserved||0)+qty)}).eq('variant_id',vid);
+    var txn=await sb.from('transactions').insert({transaction_no:resNo.data,transaction_type:'receipt',transaction_date:td(),party_id:cp&&cp.id,total_amount:adv,paid_amount:adv,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Advance/Token: '+cust}).select().single();
+    if(txn.data&&accId){
+      await sb.from('ledger_entries').insert([
+        {transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:accId,amount:adv,description:'Advance from '+cust,created_by:CUP&&CUP.id},
+        {transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:cp&&cp.id,amount:adv,description:'Customer Deposit: '+resNo.data,created_by:CUP&&CUP.id}
+      ]);
+    }
+    await loadData();cmo();toast('Reservation '+resNo.data+' - Advance: Rs'+adv.toLocaleString(),'ok',5000);
+  }catch(ex){toast(ex.message,'err');}
+}
+
+// Hook Stock With Customer button into inventory tab
+var _origRInvOld=rInv;
+function rInv(){
+  var base=_origRInvOld();
+  return base.replace('<input class="ip" id="is"','<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockWithCustomer()">Stock With Customer</button><input class="ip" id="is"');
+}
 
 </script>
 </body>
