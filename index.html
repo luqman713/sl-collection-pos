@@ -192,8 +192,14 @@ async function loadData(){
   var pa=await sb.from('parties').select('*').eq('is_active',true).order('name');
   prods=(p.data||[]).map(function(v){return{id:v.id,sku:v.sku,name:v.products&&v.products.name||'',cat:v.products&&v.products.categories&&v.products.categories.name||'',colour:v.colour||'',size:v.size||'',cost:Number(v.purchase_price)||0,stock:0,age:0};});
   accs=a.data||[];parties=pa.data||[];
-  var inv=await sb.from('inventory').select('variant_id,qty_available,age_days,qty_damaged,qty_sales_return,qty_purchase_return,qty_other');
-  (inv.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.stock=Number(i.qty_available)||0;p2.age=i.age_days||0;p2.damaged=i.qty_damaged||0;p2.salesRet=i.qty_sales_return||0;p2.purRet=i.qty_purchase_return||0;p2.other=i.qty_other||0;}});
+  // Resilient inventory query - falls back if new columns missing
+  var inv=await sb.from('inventory').select('variant_id,qty_available,age_days');
+  (inv.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.stock=Number(i.qty_available)||0;p2.age=i.age_days||0;}});
+  // Try to load extra columns (only available after schema migration)
+  try{
+    var inv2=await sb.from('inventory').select('variant_id,qty_damaged,qty_sales_return,qty_purchase_return,qty_other,qty_with_customer,qty_reserved');
+    (inv2.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.damaged=i.qty_damaged||0;p2.salesRet=i.qty_sales_return||0;p2.purRet=i.qty_purchase_return||0;p2.other=i.qty_other||0;p2.withCustomer=i.qty_with_customer||0;p2.reserved=i.qty_reserved||0;}});
+  }catch(e){/* columns not yet migrated */}
 }
 
 function buildNav(){
@@ -453,7 +459,7 @@ async function processReturn(){
     // No bill number — verify item was ever sold (check sale_items)
     var anyS=await sb.from('sale_items').select('qty').eq('variant_id',vid).limit(1);
     if(!(anyS.data&&anyS.data.length)){toast('No sales record found for this product','err');return;}
-  }var rn=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});var ca=accs.find(function(a){return a.name==='Cash Drawer';});var ra=qty*pr;try{var r2=await sb.rpc('process_stock_movement',{p_variant_id:vid,p_movement_type:'sales_return',p_qty:qty,p_reason:rsn,p_reference_no:bn,p_cost_impact:pr,p_user_id:CUP&&CUP.id});if(r2.data&&!r2.data.success){toast(r2.data.error,'err');return;}var txn=await sb.from('transactions').insert({transaction_no:rn.data,transaction_type:'sale_return',transaction_date:td(),total_amount:ra,paid_amount:ra,payment_status:'paid',reference_transaction_id:ot.data.id,performed_by:CUP&&CUP.id,notes:rsn}).select().single();if(ca)await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:ra,description:'Refund '+bn,created_by:CUP&&CUP.id});await loadData();toast('Return done: '+rn.data,'ok');cmo();}catch(ex){toast(ex.message,'err');}}
+  }var rn=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});var ca=accs.find(function(a){return a.name==='Cash Drawer';});var ra=qty*pr;try{var r2=await sb.rpc('process_stock_movement',{p_variant_id:vid,p_movement_type:'sales_return',p_qty:qty,p_reason:rsn,p_reference_no:bn,p_cost_impact:pr,p_user_id:CUP&&CUP.id});if(r2.data&&!r2.data.success){toast(r2.data.error,'err');return;}var txn=await sb.from('transactions').insert({transaction_no:rn.data,transaction_type:'sale_return',transaction_date:td(),total_amount:ra,paid_amount:ra,payment_status:'paid',reference_transaction_id:refTxnId||null,performed_by:CUP&&CUP.id,notes:rsn}).select().single();if(ca)if(ca)await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:ra,description:'Refund '+(bn||''),created_by:CUP&&CUP.id});await loadData();toast('Return done: '+rn.data,'ok');cmo();}catch(ex){toast(ex.message,'err');}}
 function oExp(){var cats=['Daily Operating Expenses','Rent Expense','Utility Expenses','Committee Savings 1','Committee Savings 2','Shopping Bag Expenses','Security Guard Expenses','Battery Expenses','Miscellaneous Expenses','Other'];omo('Expense','<div class="fg"><label class="lb">Category</label><select class="sl" id="ec">'+cats.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div><div class="fg"><label class="lb">Description</label><input class="ip" id="ed" placeholder="Details"></div><div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="ea" type="number" placeholder="0"></div><div class="fg"><label class="lb">Paid From</label><select class="sl" id="es">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div><button class="btn br" onclick="saveExp()">Save</button>');}
 async function saveExp(){var cat=$('ec')&&$('ec').value;var desc=$('ed')&&$('ed').value.trim();var amt=Number($('ea')&&$('ea').value||0);var src=$('es')&&$('es').value;if(!amt||!desc){toast('Fill all','err');return;}var ec=await sb.from('expense_categories').select('id').eq('name',cat).maybeSingle();var en=await sb.rpc('generate_transaction_no',{p_prefix:'EXP'});try{var t=await sb.from('transactions').insert({transaction_no:en.data,transaction_type:'expense',transaction_date:td(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:desc}).select().single();if(ec.data)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:ec.data.id,entry_date:td(),amount:amt,direction:'out',account_id:src,description:desc});await sb.rpc('post_transaction_ledger',{p_txn_id:t.data.id,p_txn_type:'expense',p_payment_mode:'cash',p_total:amt,p_paid:amt,p_account_id:src,p_user_id:CUP&&CUP.id});toast('Expense: '+fmt(amt),'ok');cmo();await loadData();}catch(ex){toast(ex.message,'err');}}
 
@@ -475,6 +481,7 @@ function rInv(){
   h+='<button class="btn bh bsm" onclick="oStockMove(\'other\')">Other</button>';
   h+='</div>';
   if(CUP&&CUP.role==='owner')h+='<button class="btn bi" style="width:100%;margin-bottom:12px" onclick="openStockTake()">Physical Verification</button>';
+  h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockWithCustomer()">Stock With Customer</button>';
   h+='<input class="ip" id="is" placeholder="Search..." oninput="iInv()" style="margin-bottom:10px">';
   h+='<div id="il"></div>';
   return h;
@@ -785,12 +792,12 @@ function calcDiff(){var rp=Number($('ex-rp')&&$('ex-rp').value||0);var ip=Number
 async function saveExchange(){
   var cust=$('ex-c')&&$('ex-c').value||'Walk-in';var riId=$('ex-ri')&&$('ex-ri').value;var rq=Number($('ex-rq')&&$('ex-rq').value||1);var rp=Number($('ex-rp')&&$('ex-rp').value||0);var iiId=$('ex-ii')&&$('ex-ii').value;var iq=Number($('ex-iq')&&$('ex-iq').value||1);var ip=Number($('ex-ip')&&$('ex-ip').value||0);var dm=$('ex-dm')&&$('ex-dm').value||'none';
   if(!riId||!iiId){toast('Select both items','err');return;}
+  var diff=ip-rp;
   // FIX 6: Warn on price difference
   if(Math.abs(diff)>0){
     var msg='Price difference: '+fmt(Math.abs(diff))+'.\n'+(diff>0?'Customer pays extra: '+fmt(diff):('Refund to customer: '+fmt(Math.abs(diff))))+'.\n\nProceed with exchange?';
     if(!confirm(msg))return;
-  }
-  var diff=ip-rp;var ca=accs.find(function(a){return a.name==='Cash Drawer';});var exNo=await sb.rpc('generate_transaction_no',{p_prefix:'EXC'});
+  }var ca=accs.find(function(a){return a.name==='Cash Drawer';});var exNo=await sb.rpc('generate_transaction_no',{p_prefix:'EXC'});
   try{
     var txn=await sb.from('transactions').insert({transaction_no:exNo.data,transaction_type:'sale',transaction_date:td(),total_amount:Math.max(ip,0),paid_amount:Math.max(ip,0),payment_status:'paid',performed_by:CUP&&CUP.id}).select().single();
     var retP=prods.find(function(p){return p.id===riId;});var issP=prods.find(function(p){return p.id===iiId;});
@@ -1013,12 +1020,7 @@ async function saveReservation(){
   }catch(ex){toast(ex.message,'err');}
 }
 
-// Hook Stock With Customer button into inventory tab
-var _origRInvOld=rInv;
-function rInv(){
-  var base=_origRInvOld();
-  return base.replace('<input class="ip" id="is"','<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockWithCustomer()">Stock With Customer</button><input class="ip" id="is"');
-}
+// SWC button inlined into rInv directly
 
 </script>
 </body>
