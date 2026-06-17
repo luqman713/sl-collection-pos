@@ -732,23 +732,118 @@ function autoFillSmCost(){
 }
 
 async function saveStockMove(mtype){
-  var varId=$('sm-prod')&&$('sm-prod').value;var qty=Number($('sm-qty')&&$('sm-qty').value||0);var rsn=($('sm-rsn')&&$('sm-rsn').value||'').trim();var cost=Number($('sm-cost')&&$('sm-cost').value||0);var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
-  if(!varId){toast('Select a product','err');return;}if(!qty||qty<=0){toast('Enter quantity','err');return;}if(!rsn){toast('Reason required','err');return;}
-  var p=prods.find(function(p){return p.id===varId;});if(!p){toast('Product not found','err');return;}
-  if(['purchase_return','damaged','other'].indexOf(mtype)>=0&&(p.stock||0)<qty){toast('Only '+p.stock+' in stock','err');return;}
-  var result=await sb.rpc('process_stock_movement',{p_variant_id:varId,p_movement_type:mtype,p_qty:qty,p_reason:rsn,p_reference_no:refNo||null,p_cost_impact:cost||p.cost,p_user_id:CUP&&CUP.id});
-  if(!result.data||!result.data.success){toast('Error: '+(result.data&&result.data.error||'Failed'),'err');return;}
+  var varId=$('sm-prod')&&$('sm-prod').value;
+  var qty=Number($('sm-qty')&&$('sm-qty').value||0);
+  var rsn=($('sm-rsn')&&$('sm-rsn').value||'').trim();
+  var cost=Number($('sm-cost')&&$('sm-cost').value||0);
+  var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
+
+  // ── STEP 1: Common mandatory fields ──
+  if(!varId){toast('Select a product','err');$('sm-prod')&&$('sm-prod').focus();return;}
+  if(!qty||qty<=0){toast('Enter quantity greater than 0','err');$('sm-qty')&&$('sm-qty').focus();return;}
+  if(!cost||cost<=0){toast('Enter cost price — required for valuation','err');$('sm-cost')&&$('sm-cost').focus();return;}
+  if(!rsn||rsn.length<5){toast('Enter reason (min 5 characters) — required for audit','err');$('sm-rsn')&&$('sm-rsn').focus();return;}
+
+  // ── STEP 2: Purchase Return specific mandatory fields ──
   if(mtype==='purchase_return'){
     var supName=($('sm-sup')&&$('sm-sup').value||'').trim();
-    var sp=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
-    if(sp){var no2=await sb.rpc('generate_transaction_no',{p_prefix:'PRET'});var txn2=await sb.from('transactions').insert({transaction_no:no2.data,transaction_type:'purchase_return',transaction_date:td(),party_id:sp.id,total_amount:qty*(cost||p.cost),paid_amount:0,payment_status:'pending',performed_by:CUP&&CUP.id,notes:rsn}).select().single();if(txn2.data)await sb.from('ledger_entries').insert({transaction_id:txn2.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:sp.id,amount:qty*(cost||p.cost),description:'Purchase Return: '+p.name,created_by:CUP&&CUP.id});}
+    if(!supName){toast('Supplier name is required for purchase return','err');$('sm-sup')&&$('sm-sup').focus();return;}
+    // Verify supplier exists in ledger
+    var spCheck=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
+    if(!spCheck){
+      var ok=confirm('Supplier "'+supName+'" not found in ledger.\nCreate new supplier record?');
+      if(!ok){toast('Select a valid supplier from List','err');return;}
+    }
   }
+
+  var p=prods.find(function(p){return p.id===varId;});
+  if(!p){toast('Product not found','err');return;}
+
+  // ── STEP 3: Stock availability check ──
+  if(['purchase_return','damaged','other'].indexOf(mtype)>=0){
+    if((p.stock||0)<=0){toast('No stock available for '+p.name,'err');return;}
+    if(qty>(p.stock||0)){toast('Cannot exceed available stock ('+p.stock+'). Enter '+p.stock+' or less.','err');$('sm-qty')&&($('sm-qty').value=p.stock);return;}
+  }
+
+  // ── STEP 4: Show confirmation summary before processing ──
+  var totalVal=qty*cost;
+  var summary='Confirm Purchase Return:\n\n'+
+    'Product: '+p.name+'\n'+
+    'SKU: '+p.sku+'\n'+
+    'Qty: '+qty+'\n'+
+    'Cost/unit: Rs'+cost.toLocaleString()+'\n'+
+    'Total Value: Rs'+totalVal.toLocaleString()+'\n'+
+    'Reason: '+rsn+'\n\n'+
+    'Stock will decrease by '+qty+'.\nLedger will be updated.\n\nProceed?';
+  if(!confirm(summary))return;
+
+  // ── STEP 5: Process stock movement ──
+  var result=await sb.rpc('process_stock_movement',{
+    p_variant_id:varId,p_movement_type:mtype,p_qty:qty,
+    p_reason:rsn,p_reference_no:refNo||null,
+    p_cost_impact:cost,p_user_id:CUP&&CUP.id
+  });
+  if(!result.data||!result.data.success){
+    toast('Error: '+(result.data&&result.data.error||'Stock update failed'),'err');return;
+  }
+
+  // ── STEP 6: Purchase Return — create transaction + ledger entry ──
+  if(mtype==='purchase_return'){
+    var supName2=($('sm-sup')&&$('sm-sup').value||'').trim();
+    var sp=parties.find(function(p){return p.name===supName2&&p.party_type==='supplier';});
+    if(!sp){
+      var nsp=await sb.from('parties').insert({party_type:'supplier',name:supName2,created_by:CUP&&CUP.id}).select().single();
+      if(nsp.data){parties.push(nsp.data);sp=nsp.data;}
+    }
+    if(sp){
+      var no2=await sb.rpc('generate_transaction_no',{p_prefix:'PRET'});
+      var txn2=await sb.from('transactions').insert({
+        transaction_no:no2.data,transaction_type:'purchase_return',
+        transaction_date:td(),party_id:sp.id,
+        total_amount:totalVal,paid_amount:0,
+        payment_status:'pending',performed_by:CUP&&CUP.id,
+        notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn
+      }).select().single();
+      if(txn2.data){
+        // DR Supplier Payable (reduces what we owe) / CR Inventory
+        await sb.from('ledger_entries').insert({
+          transaction_id:txn2.data.id,entry_date:td(),
+          entry_type:'debit',account_category:'party',
+          party_id:sp.id,amount:totalVal,
+          description:'Purchase Return: '+p.name+' x'+qty,
+          created_by:CUP&&CUP.id
+        });
+        toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | Supplier: '+sp.name,'ok',7000);
+      }
+    }
+  }
+
+  // ── STEP 7: Sales Return — optional cash refund ──
   if(mtype==='sales_return'){
     var ca2=accs.find(function(a){return a.name==='Cash Drawer';});
-    var doR=confirm('Process cash refund of '+fmt(qty*(cost||p.cost))+'?');
-    if(doR&&ca2){var no3=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});var txn3=await sb.from('transactions').insert({transaction_no:no3.data,transaction_type:'sale_return',transaction_date:td(),total_amount:qty*(cost||p.cost),paid_amount:qty*(cost||p.cost),payment_status:'paid',performed_by:CUP&&CUP.id,notes:rsn+(refNo?' Ref:'+refNo:'')}).select().single();if(txn3.data)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:qty*(cost||p.cost),description:'Refund: '+p.name,created_by:CUP&&CUP.id});}
+    var doR=confirm('Process cash refund to customer?\nAmount: Rs'+totalVal.toLocaleString());
+    if(doR&&ca2){
+      var no3=await sb.rpc('generate_transaction_no',{p_prefix:'RET'});
+      var txn3=await sb.from('transactions').insert({
+        transaction_no:no3.data,transaction_type:'sale_return',
+        transaction_date:td(),total_amount:totalVal,
+        paid_amount:totalVal,payment_status:'paid',
+        performed_by:CUP&&CUP.id,
+        notes:'Return: '+p.name+' x'+qty+(refNo?' Ref:'+refNo:'')
+      }).select().single();
+      if(txn3.data)await sb.from('ledger_entries').insert({
+        transaction_id:txn3.data.id,entry_date:td(),
+        entry_type:'debit',account_category:'cashflow',
+        cashflow_account_id:ca2.id,amount:totalVal,
+        description:'Refund: '+p.name,created_by:CUP&&CUP.id
+      });
+    }
   }
-  await loadData();cmo();toast(SMOVE_LABELS[mtype]+': '+qty+' x '+p.name+' logged','ok',5000);iInv();
+
+  if(mtype!=='purchase_return'){
+    toast((SMOVE_LABELS[mtype]||mtype)+': '+qty+' x '+p.name+' | Rs'+totalVal.toLocaleString()+' logged','ok',5000);
+  }
+  await loadData();cmo();iInv();
 }
 
 async function showStockDetail(varId){
