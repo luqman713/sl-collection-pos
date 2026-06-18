@@ -204,8 +204,8 @@ async function loadData(){
 
 function buildNav(){
   var tabs=CUP&&CUP.role==='owner'
-    ?[{id:'dash',l:'Dashboard'},{id:'bill',l:'Bill'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'rep',l:'Reports'},{id:'cash',l:'Cash'}]
-    :[{id:'bill',l:'Bill'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'cash',l:'Cash'}];
+    ?[{id:'dash',l:'Dashboard'},{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'rep',l:'Reports'},{id:'cash',l:'Cash'}]
+    :[{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'cash',l:'Cash'}];
   var html='';for(var i=0;i<tabs.length;i++)html+='<div class="ni'+(i===0?' on':'')+'" onclick="showTab(\''+tabs[i].id+'\',this)">'+tabs[i].l+'</div>';
   $('nt').innerHTML=html;
   showTab(tabs[0].id,null);
@@ -228,6 +228,7 @@ function showTab(id,el){
   else if(id==='bill'){c.innerHTML=rBill();iBill();}
   else if(id==='inv'){c.innerHTML=rInv();iInv();}
   else if(id==='buy'){c.innerHTML=rBuy();}
+  else if(id==='sales'){c.innerHTML=rSalesTab();iSalesTab();}
   else if(id==='led'){c.innerHTML=rLed();iLed();}
   else if(id==='rep'){c.innerHTML=rRep();iRep();}
   else if(id==='cash'){c.innerHTML=rCash();iCash();}
@@ -558,10 +559,25 @@ async function savePur(){
   if(purPayMode==='cash'){pd=tot;payAccId=ca&&ca.id;if((ca&&ca.current_balance||0)<tot&&!confirm('Insufficient cash. Continue?'))return;}
   else if(purPayMode==='partial'){pd=Number($('ppd2')&&$('ppd2').value||0);payAccId=ca&&ca.id;}
   try{
-    var prod=await sb.from('products').insert({name:nm,category_id:cr.data&&cr.data.id,created_by:CUP&&CUP.id}).select().single();
-    if(prod.error)throw prod.error;
+    // Check if product with same name+category already exists — reuse it
+    var existProd=await sb.from('products').select('id').eq('name',nm).eq('category_id',cr.data&&cr.data.id).maybeSingle();
+    var prodId=null;
+    if(existProd.data&&existProd.data.id){
+      prodId=existProd.data.id;
+    } else {
+      var prod=await sb.from('products').upsert({name:nm,category_id:cr.data&&cr.data.id,created_by:CUP&&CUP.id},{onConflict:'name,category_id',ignoreDuplicates:false}).select().single();
+      if(prod.error){
+        // Fallback: fetch existing
+        var existing=await sb.from('products').select('id').eq('name',nm).eq('category_id',cr.data&&cr.data.id).single();
+        if(existing.error)throw existing.error;
+        prodId=existing.data.id;
+      } else {
+        prodId=prod.data.id;
+      }
+    }
     var skuN=await sb.rpc('generate_transaction_no',{p_prefix:prefix});
-    var variant=await sb.from('product_variants').insert({product_id:prod.data.id,sku:skuN.data,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id}).select().single();
+    // Each purchase always creates a new variant (new SKU) even for same product
+    var variant=await sb.from('product_variants').insert({product_id:prodId,sku:skuN.data,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id}).select().single();
     if(variant.error)throw variant.error;
     var txn=await sb.from('transactions').insert({transaction_no:purNo.data,transaction_type:'purchase',transaction_date:td(),party_id:sp&&sp.id||null,total_amount:tot,paid_amount:pd,payment_status:purPayMode==='credit'?'credit':purPayMode==='partial'?'partial':'paid',performed_by:CUP&&CUP.id}).select().single();
     if(txn.error)throw txn.error;
@@ -596,8 +612,8 @@ async function renderLed(){
   var c=$('lc');if(!c)return;
   var tmap={cust:'customer',sup:'supplier',own:'owner',loan:'loan'};
   var pt=tmap[lTab];
-  var items=parties.filter(function(p){return p.party_type===pt;});
-  if(!items.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No entries</p></div>';return;}
+  var items=parties.filter(function(p){return p.party_type===pt&&(p.current_balance||0)!==0;});
+  if(!items.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No outstanding balances</p></div>';return;}
   var tot=items.reduce(function(s,i){return s+(i.current_balance||0);},0);
   var h='<div class="card" style="background:var(--ink);border:none;margin-bottom:12px"><div style="font-size:.55rem;color:rgba(255,255,255,.5);text-transform:uppercase">Total</div><div style="font-size:1.3rem;font-weight:700;color:white">'+fmt(Math.abs(tot))+'</div></div>';
   for(var i=0;i<items.length;i++){var it=items[i];h+='<div class="card" style="cursor:pointer;padding:12px 13px;margin-bottom:8px" onclick="showStmt(\''+it.id+'\')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:.75rem;font-weight:700">'+it.name+'</div><div style="font-size:.58rem;color:var(--ink3)">Tap for statement</div></div><div style="text-align:right"><div style="font-size:.9rem;font-weight:700;color:'+(it.current_balance>0?'var(--red)':'var(--sage)')+'">'+fmt(Math.abs(it.current_balance||0))+'</div></div></div></div>';}
@@ -1116,6 +1132,172 @@ async function saveReservation(){
 }
 
 // SWC button inlined into rInv directly
+
+
+// ── SALES TAB ──
+function rSalesTab(){
+  var h='';
+  // KPI row
+  h+='<div class="sg" id="stk"></div>';
+  // Filters
+  h+='<div class="df">';
+  h+='<input class="ip" id="st-from" type="date" value="'+td()+'">';
+  h+='<input class="ip" id="st-to" type="date" value="'+td()+'">';
+  h+='<button class="btn bi bsm" onclick="iSalesTab()">Go</button>';
+  h+='</div>';
+  // Filter pills
+  h+='<div class="pr" style="margin-bottom:10px" id="st-pills">';
+  h+='<div class="pl on" onclick="setSF(\"all\",this)">All</div>';
+  h+='<div class="pl" onclick="setSF(\"cash\",this)">Cash</div>';
+  h+='<div class="pl" onclick="setSF(\"credit\",this)">Credit</div>';
+  h+='<div class="pl" onclick="setSF(\"bank\",this)">Bank</div>';
+  h+='<div class="pl" onclick="setSF(\"emoney\",this)">EMoney</div>';
+  h+='</div>';
+  // Export
+  h+='<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h+='<button class="btn bh bsm" onclick="exportSalesTab()">Export CSV</button>';
+  h+='<button class="btn bh bsm" onclick="printSalesTab()">Print</button>';
+  h+='</div>';
+  h+='<div id="st-list"></div>';
+  return h;
+}
+
+var _sfMode='all';
+var _salesData=[];
+
+function setSF(mode,el){
+  _sfMode=mode;
+  var ps=document.querySelectorAll('#st-pills .pl');
+  for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');
+  el.classList.add('on');
+  renderSalesTab();
+}
+
+async function iSalesTab(){
+  var from=$('st-from')&&$('st-from').value||td();
+  var to=$('st-to')&&$('st-to').value||td();
+  var list=$('st-list');
+  if(list)list.innerHTML='<div class="em"><div style="width:22px;height:22px;border:2px solid rgba(0,0,0,.1);border-radius:50%;border-top-color:var(--gold);animation:sp .8s linear infinite;margin:0 auto"></div></div>';
+  var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled),sale_items(qty,sale_price,purchase_price,product_variants(sku,products(name)))').gte('sale_date',from).lte('sale_date',to).order('created_at',{ascending:false});
+  _salesData=(s.data||[]).filter(function(r){return!r.transactions||!r.transactions.is_cancelled;});
+  renderSalesTab();
+}
+
+function renderSalesTab(){
+  // Filter by payment mode
+  var data=_sfMode==='all'?_salesData:_salesData.filter(function(r){return r.payment_mode===_sfMode;});
+
+  // KPIs
+  var totRev=data.reduce(function(s,r){return s+Number(r.total_amount||0);},0);
+  var totProfit=data.reduce(function(s,r){return s+Number(r.gross_profit||0);},0);
+  var totBills=data.length;
+  var avgBill=totBills?Math.round(totRev/totBills):0;
+  var kpi=$('stk');
+  if(kpi)kpi.innerHTML=
+    '<div class="sc"><div class="sl2">Revenue</div><div class="sv">'+fmt(totRev)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+totBills+' bills</div></div>'+
+    '<div class="sc sg2"><div class="sl2">Gross Profit</div><div class="sv">'+fmt(totProfit)+'</div><div style="font-size:.54rem;color:var(--sage)">'+(totRev?((totProfit/totRev)*100).toFixed(1):0)+'%</div></div>'+
+    '<div class="sc go"><div class="sl2">Avg Bill</div><div class="sv">'+fmt(avgBill)+'</div></div>'+
+    '<div class="sc rd"><div class="sl2">Outstanding</div><div class="sv">'+fmt(data.filter(function(r){return r.payment_mode==='credit';}).reduce(function(s,r){return s+Number(r.total_amount||0)-Number(r.paid_amount||0);},0))+'</div></div>';
+
+  // Sales list
+  var list=$('st-list');if(!list)return;
+  if(!data.length){list.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No sales in this range</p></div>';return;}
+
+  var h='<div style="border:1px solid #E8D8C0;border-radius:var(--r);overflow:hidden">';
+  h+='<div style="display:grid;grid-template-columns:1fr 1.2fr .8fr .8fr .5fr;background:var(--ink);color:white;padding:7px 11px">';
+  h+='<div style="font-size:.54rem;font-weight:700">BILL</div>';
+  h+='<div style="font-size:.54rem;font-weight:700">CUSTOMER</div>';
+  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">AMOUNT</div>';
+  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">PROFIT</div>';
+  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">MODE</div>';
+  h+='</div>';
+
+  for(var i=0;i<data.length;i++){
+    var r=data[i];
+    var isCredit=r.payment_mode==='credit';
+    var outstanding=isCredit?Number(r.total_amount||0)-Number(r.paid_amount||0):0;
+    h+='<div style="display:grid;grid-template-columns:1fr 1.2fr .8fr .8fr .5fr;padding:8px 11px;border-top:1px solid var(--cream2);background:white;cursor:pointer" onclick="showSaleDetail(this.dataset.id)" data-id="'+r.id+'">';
+    h+='<div><div style="font-size:.68rem;font-weight:700">'+(r.transactions&&r.transactions.transaction_no||'')+'</div><div style="font-size:.54rem;color:var(--ink3)">'+r.sale_date+'</div></div>';
+    h+='<div><div style="font-size:.66rem;font-weight:600">'+( r.customer_name||'Walk-in')+'</div>'+(outstanding>0?'<div style="font-size:.52rem;color:var(--red)">Due: '+fmt(outstanding)+'</div>':'')+'</div>';
+    h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(r.total_amount)+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:.68rem;font-weight:600;color:var(--sage)">'+fmt(r.gross_profit)+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:.52rem;background:var(--cream2);padding:2px 5px;border-radius:4px">'+( r.payment_mode||'')+'</div></div>';
+    h+='</div>';
+    // Items detail (collapsed)
+    if(r.sale_items&&r.sale_items.length){
+      h+='<div style="background:#F8F3EC;padding:5px 11px 7px;border-top:1px solid var(--cream2)">';
+      for(var j=0;j<r.sale_items.length;j++){
+        var si=r.sale_items[j];
+        var snm=si.product_variants&&si.product_variants.products&&si.product_variants.products.name||si.product_variants&&si.product_variants.sku||'';
+        h+='<div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--ink3);padding:1px 0">';
+        h+='<span>'+snm+' x'+si.qty+'</span>';
+        h+='<span>'+fmt(si.sale_price*si.qty)+'</span>';
+        h+='</div>';
+      }
+      h+='</div>';
+    }
+  }
+  h+='<div style="display:flex;justify-content:space-between;padding:8px 11px;background:var(--cream2);font-size:.72rem;font-weight:700"><span>Total ('+data.length+' bills)</span><span>'+fmt(totRev)+'</span></div>';
+  h+='</div>';
+  list.innerHTML=h;
+
+  // Store for export
+  lastReportData=data.map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Mode:r.payment_mode};});
+  lastReportTitle='Sales';
+}
+
+function showSaleDetail(saleId){
+  var r=_salesData.find(function(s){return s.id===saleId;});
+  if(!r)return;
+  var h='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Bill No</span><span style="font-size:.75rem;font-weight:700">'+(r.transactions&&r.transactions.transaction_no||'')+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Date</span><span style="font-size:.7rem">'+r.sale_date+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Customer</span><span style="font-size:.7rem;font-weight:600">'+r.customer_name+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Payment</span><span style="font-size:.7rem">'+r.payment_mode+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Total</span><span style="font-size:.85rem;font-weight:700">'+fmt(r.total_amount)+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between"><span style="font-size:.65rem;color:var(--ink3)">Gross Profit</span><span style="font-size:.8rem;font-weight:700;color:var(--sage)">'+fmt(r.gross_profit)+'</span></div>';
+  h+='</div>';
+  // Items
+  h+='<div class="ct">Items Sold</div>';
+  var items=r.sale_items||[];
+  for(var i=0;i<items.length;i++){
+    var si=items[i];
+    var snm=si.product_variants&&si.product_variants.products&&si.product_variants.products.name||'';
+    var marg=(si.sale_price-si.purchase_price)*si.qty;
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--cream2)">';
+    h+='<div><div style="font-size:.72rem;font-weight:600">'+snm+'</div>';
+    h+='<div style="font-size:.58rem;color:var(--ink3)">'+( si.product_variants&&si.product_variants.sku||'')+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(si.sale_price)+' x'+si.qty+'</div>';
+    h+='<div style="font-size:.58rem;color:var(--sage)">Margin: '+fmt(marg)+'</div></div>';
+    h+='</div>';
+  }
+  // Edit button (owner only)
+  var txnId=r.transaction_id;var txnNo=r.transactions&&r.transactions.transaction_no||'';
+  window._dtxnId=txnId;window._dtxnNo=txnNo;
+  if(CUP&&CUP.role==='owner')h+='<button class="btn bh" style="margin-top:12px" onclick="openEditTxn(window._dtxnId,window._dtxnNo)">Edit / Void</button>';
+  omo('Sale Detail',h);
+}
+
+function exportSalesTab(){
+  if(!lastReportData||!lastReportData.length){toast('No data to export','warn');return;}
+  var keys=Object.keys(lastReportData[0]);
+  var rows=[keys.join(',')];
+  lastReportData.forEach(function(r){rows.push(keys.map(function(k){return'"'+(String(r[k]||'').replace(/"/g,'""'))+'"';}).join(','));});
+  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='Sales_'+td()+'.csv';a.click();
+  toast('CSV downloaded','ok');
+}
+
+function printSalesTab(){
+  var el=$('st-list');if(!el){toast('No data','warn');return;}
+  var w=window.open('','_blank');
+  w.document.write('<html><head><title>Sales Report</title><style>body{font-family:Arial;padding:20px;font-size:12px}@media print{button{display:none}}</style></head><body>');
+  w.document.write('<h2>SL Collection - Sales Report</h2><p>'+td()+'</p>');
+  w.document.write(el.innerHTML);
+  w.document.write('<br><button onclick="window.print()">Print</button></body></html>');
+  w.document.close();
+}
 
 </script>
 </body>
