@@ -411,8 +411,26 @@ async function completeSale(){
   }catch(ex){toast('Error: '+ex.message,'err');}
   if(btn){btn.textContent='Complete Sale';btn.disabled=false;}
 }
-function pickP(t){var list=parties.filter(function(p){return p.party_type===t;});if(!list.length){toast('No '+t,'warn');return;}var h='';for(var i=0;i<list.length;i++){var p=list[i];h+='<div class="pc" data-nm="'+p.name.replace(/"/g,'&quot;')+'" data-type="'+t+'" onclick="selP(this)">'+p.name+(p.current_balance?' | '+fmt(Math.abs(p.current_balance)):'')+'</div>';}omo('Select '+t,h);}
-function selP(el){var n=el.getAttribute('data-nm');var t=el.getAttribute('data-type');var inp=t==='customer'?$('bc'):$('ps2');if(inp)inp.value=n;cmo();onCI();}
+function pickP(t,targetField){
+  var list=parties.filter(function(p){return p.party_type===t;});
+  if(!list.length){toast('No '+t,'warn');return;}
+  var field=targetField||(t==='customer'?'bc':'ps2');
+  window._pickPField=field;
+  var h='';
+  for(var i=0;i<list.length;i++){
+    var p=list[i];
+    h+='<div class="pc" data-nm="'+p.name.replace(/"/g,'&quot;')+'" onclick="selP(this)">'+p.name+(p.current_balance?' | '+fmt(Math.abs(p.current_balance)):'')+'</div>';
+  }
+  omo('Select '+t,h);
+}
+function selP(el){
+  var n=el.getAttribute('data-nm');
+  var field=window._pickPField||'bc';
+  var inp=document.getElementById(field);
+  if(inp)inp.value=n;
+  cmo();
+  if(field==='bc')onCI();
+}
 function newPM(t){omo('New '+t,'<div class="fg"><label class="lb">Name</label><input class="ip" id="np-n" placeholder="Full name"></div><div class="fg"><label class="lb">Phone</label><input class="ip" id="np-p" placeholder="03XX"></div><div class="fg"><label class="lb">Opening Balance</label><input class="ip" id="np-b" type="number" placeholder="0"></div><button class="btn bi" onclick="saveNP(\''+t+'\')">Create</button>');}
 async function saveNP(t){var n=$('np-n')&&$('np-n').value.trim();if(!n){toast('Enter name','err');return;}var r=await sb.from('parties').insert({party_type:t,name:n,phone:$('np-p')&&$('np-p').value||'',opening_balance:Number($('np-b')&&$('np-b').value||0),current_balance:Number($('np-b')&&$('np-b').value||0),created_by:CUP&&CUP.id}).select().single();if(r.error){toast(r.error.message,'err');return;}parties.push(r.data);if(t==='customer'&&$('bc'))$('bc').value=n;if(t==='supplier'&&$('ps2'))$('ps2').value=n;cmo();toast('Created: '+n,'ok');}
 function oRet(){
@@ -469,10 +487,17 @@ function rInv(){
   var ac=prods.filter(function(p){return(p.stock||0)>0;});
   var tv=ac.reduce(function(s,p){return s+p.cost*(p.stock||0);},0);
   var h='';
+  var totReserved=prods.reduce(function(s,p){return s+(p.reserved||0);},0);
+  var totWithCust=prods.reduce(function(s,p){return s+(p.withCustomer||0);},0);
+  var totDamaged=prods.reduce(function(s,p){return s+(p.damaged||0);},0);
   h+='<div class="sg"><div class="sc"><div class="sl2">Active SKUs</div><div class="sv">'+ac.length+'</div></div>';
   h+='<div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div>';
   h+='<div class="sc rd"><div class="sl2">Low Stock</div><div class="sv">'+ac.filter(function(p){return p.stock<=2;}).length+'</div></div>';
   h+='<div class="sc" style="border-left-color:var(--red)"><div class="sl2">Dead Stock</div><div class="sv">'+ac.filter(function(p){return p.age>=90;}).length+'</div></div></div>';
+  h+='<div class="sg"><div class="sc sg2"><div class="sl2">Available</div><div class="sv">'+ac.reduce(function(s,p){return s+(p.stock||0);},0)+'</div></div>';
+  h+='<div class="sc" style="border-left-color:var(--gold)"><div class="sl2">Reserved</div><div class="sv">'+totReserved+'</div></div>';
+  h+='<div class="sc" style="border-left-color:#6B3E1A"><div class="sl2">With Customer</div><div class="sv">'+totWithCust+'</div></div>';
+  h+='<div class="sc rd"><div class="sl2">Damaged</div><div class="sv">'+totDamaged+'</div></div></div>';
   h+='<div class="g2" style="margin-bottom:8px">';
   h+='<button class="btn bs bsm" onclick="oStockMove(\'sales_return\')">Return In</button>';
   h+='<button class="btn bh bsm" onclick="oStockMove(\'purchase_return\')">Return Out</button>';
@@ -482,7 +507,8 @@ function rInv(){
   h+='<button class="btn bh bsm" onclick="oStockMove(\'other\')">Other</button>';
   h+='</div>';
   if(CUP&&CUP.role==='owner')h+='<button class="btn bi" style="width:100%;margin-bottom:12px" onclick="openStockTake()">Physical Verification</button>';
-  h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockWithCustomer()">Stock With Customer</button>';
+  h+='<div class="g2" style="margin-bottom:8px"><button class="btn bh" onclick="oStockWithCustomer()">Issue to Customer</button><button class="btn bh" onclick="showSwcList()">View With Customer</button></div>';
+  h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="showReservedList()">View Reserved Stock</button>';
   h+='<input class="ip" id="is" placeholder="Search..." oninput="iInv()" style="margin-bottom:10px">';
   h+='<div id="il"></div>';
   return h;
@@ -602,7 +628,8 @@ function rLed(){
   var h='<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px" id="lt">';
   var tabs=[['cust','Customers'],['sup','Suppliers'],['own','Owner'],['loan','Loans']];
   for(var i=0;i<tabs.length;i++)h+='<div class="pl'+(i===0?' on':'')+'" onclick="setLT(\''+tabs[i][0]+'\',this)">'+tabs[i][1]+'</div>';
-  h+='</div><div id="lc"></div><button class="btn bi" style="margin-top:4px" onclick="oLE()">Add Entry</button>';
+  h+='</div><div id="lc"></div>';
+  h+='<div class="ib" style="margin-top:8px">Ledger entries are auto-generated from Sales, Purchases, Returns, Payments, and Receipts. Manual entry is disabled for accounting integrity.</div>';
   return h;
 }
 var lTab='cust';
@@ -726,7 +753,7 @@ function oStockMove(mtype){
   }
   h+='</select></div>';
   if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
-  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Required" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\')">List</button></div></div>';
+  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Required" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\',\'sm-sup\')">List</button></div></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sm-qty" type="number" placeholder="0" oninput="autoFillSmCost()"></div>';
   h+='<div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
   if(mtype==='damaged')h+='<div class="fg"><label class="lb">Damage Stage</label><select class="sl" id="sm-stage"><option value="in_shop">Found in shop</option><option value="on_receipt">Received damaged</option><option value="customer_return">Customer returned damaged</option></select></div>';
@@ -878,7 +905,7 @@ async function showStockDetail(varId){
     h+='<div style="background:var(--cream2);border-radius:8px;padding:8px;text-align:center"><div class="sl2">Other</div><div style="font-weight:700">'+(inv.data.qty_other||0)+'</div></div></div>';
   }
   h+='<div class="ct">Movement History</div>';
-  var rows=movs.data||[];
+  var rows=(movs.data||[]).filter(function(m){return m.movement_type!=='purchase';});
   if(!rows.length)h+='<div class="em"><p>No movements yet</p></div>';
   else{var colors={purchase:'var(--sage)',sale:'var(--red)',sales_return:'var(--gold)',purchase_return:'var(--gold)',damaged:'var(--red)',other:'var(--ink3)',stock_take:'var(--ink3)'};for(var i=0;i<rows.length;i++){var m=rows[i];h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--cream2)"><div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(colors[m.movement_type]||'var(--ink3)')+'"></div><div style="flex:1"><div style="font-size:.7rem;font-weight:600">'+(m.movement_type||'').replace(/_/g,' ')+'</div><div style="font-size:.57rem;color:var(--ink3)">'+(m.created_at&&m.created_at.split('T')[0]||'')+' - '+(m.reason||m.reference_no||'')+'</div></div><div style="font-size:.75rem;font-weight:700;color:'+(m.qty_change>0?'var(--sage)':'var(--red)')+'">'+( m.qty_change>0?'+':'')+m.qty_change+'</div></div>';}}
   omo(p.name+' - Detail',h);
@@ -921,128 +948,98 @@ async function saveExchange(){
 
 function openStockTake(){
   var ps=prods.filter(function(p){return(p.stock||0)>0;});window._stProds=ps;
-  var h='<div class="ib">Enter actual physical count per item.</div>';
-  for(var i=0;i<ps.length;i++){h+='<div style="display:grid;grid-template-columns:1fr 65px 35px;gap:7px;align-items:center;padding:7px 0;border-bottom:1px solid var(--cream2)"><div><div style="font-size:.7rem;font-weight:600">'+ps[i].name+'</div><div style="font-size:.55rem;color:var(--ink3)">'+ps[i].sku+' Book: '+ps[i].stock+'</div></div><input type="number" id="st-'+i+'" placeholder="Count" style="border:1.5px solid var(--border);border-radius:7px;padding:5px 7px;font-size:.78rem;text-align:center;width:100%" oninput="chkD('+i+')"><div id="sd-'+i+'" style="font-size:.68rem;font-weight:700;text-align:right"></div></div>';}
-  h+='<button class="btn bi" style="margin-top:12px;width:100%" onclick="saveStockTake()">Save Report</button>';
+  var h='<div class="ib">Enter actual physical count per item. Choose Save Report Only (no stock change) or Apply Adjustment (updates inventory) below.</div>';
+  for(var i=0;i<ps.length;i++){
+    h+='<div style="display:grid;grid-template-columns:1fr 65px 35px;gap:7px;align-items:center;padding:7px 0;border-bottom:1px solid var(--cream2)">';
+    h+='<div><div style="font-size:.7rem;font-weight:600">'+ps[i].name+'</div><div style="font-size:.55rem;color:var(--ink3)">'+ps[i].sku+' Book: '+ps[i].stock+'</div></div>';
+    h+='<input type="number" id="st-'+i+'" placeholder="Count" style="border:1.5px solid var(--border);border-radius:7px;padding:5px 7px;font-size:.78rem;text-align:center;width:100%" oninput="chkD('+i+')">';
+    h+='<div id="sd-'+i+'" style="font-size:.68rem;font-weight:700;text-align:right"></div>';
+    h+='</div>';
+  }
+  h+='<div class="g2" style="margin-top:12px">';
+  h+='<button class="btn bh" onclick="saveStockTake(false)">Save Report Only</button>';
+  h+='<button class="btn bi" onclick="saveStockTake(true)">Apply Adjustment</button>';
+  h+='</div>';
   omo('Physical Verification',h);
 }
-function chkD(i){var inp=$('st-'+i);var d=$('sd-'+i);if(!inp||!d)return;var ph=Number(inp.value);var bk=(window._stProds&&window._stProds[i]&&window._stProds[i].stock)||0;if(inp.value===''){d.textContent='';return;}var df=ph-bk;d.textContent=df===0?'OK':(df>0?'+'+df:''+df);d.style.color=df===0?'var(--sage)':'var(--red)';}
-async function saveStockTake(){var ps=window._stProds||[];var adj=0;for(var i=0;i<ps.length;i++){var inp=$('st-'+i);if(!inp||inp.value==='')continue;var ph=Number(inp.value);if(ph===(ps[i].stock||0))continue;await sb.rpc('process_stock_movement',{p_variant_id:ps[i].id,p_movement_type:'stock_take',p_qty:ph,p_reason:'Physical count: '+ph+' book: '+ps[i].stock,p_user_id:CUP&&CUP.id});adj++;}cmo();await loadData();iInv();toast(adj+' items adjusted','ok');}
-
-
-// FIX 10: Export and Print
-var lastReportData=[];
-var lastReportTitle='Report';
-
-function exportReport(){
-  if(!lastReportData||!lastReportData.length){toast('Generate a report first','warn');return;}
-  var keys=Object.keys(lastReportData[0]);
-  var rows=[keys.join(',')];
-  lastReportData.forEach(function(r){
-    rows.push(keys.map(function(k){return '"'+(String(r[k]||'').replace(/"/g,'""'))+'"';}).join(','));
-  });
-  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=lastReportTitle+'_'+td()+'.csv';
-  a.click();
-  toast('CSV downloaded','ok');
+function chkD(i){
+  var inp=$('st-'+i);var d=$('sd-'+i);if(!inp||!d)return;
+  var ph=Number(inp.value);
+  var bk=(window._stProds&&window._stProds[i]&&window._stProds[i].stock)||0;
+  if(inp.value===''){d.textContent='';return;}
+  var df=ph-bk;
+  d.textContent=df===0?'OK':(df>0?'+'+df:''+df);
+  d.style.color=df===0?'var(--sage)':'var(--red)';
 }
-
-function printReport(){
-  var rc=document.getElementById('rc');
-  if(!rc){toast('No report','warn');return;}
-  var w=window.open('','_blank');
-  w.document.write('<html><head><title>'+lastReportTitle+'</title><style>body{font-family:Arial;padding:20px;font-size:12px}@media print{button{display:none}}</style></head><body>');
-  w.document.write('<h2>SL Collection - '+lastReportTitle+'</h2><p>'+td()+'</p>');
-  w.document.write(rc.innerHTML);
-  w.document.write('<br><button onclick="window.print()">Print</button></body></html>');
-  w.document.close();
-}
-
-// report wrappers removed
-
-// rRep wrapper removed
-
-// FIX 12: Transaction editing
-function openEditTxn(txnId,txnNo){
-  if(CUP&&CUP.role!=='owner'){toast('Only owner can edit','err');return;}
-  window._editTxnId=txnId;window._editTxnNo=txnNo;
-  omo('Edit: '+txnNo,
-    '<div class="ib">Editing preserves original for audit. A correction note is added.</div>'+
-    '<div class="fg"><label class="lb">Correction Type</label>'+
-    '<select class="sl" id="et-type">'+
-    '<option value="notes">Add Correction Note</option>'+
-    '<option value="amount">Correct Amount</option>'+
-    '<option value="date">Correct Date</option>'+
-    '<option value="cancel">Void / Cancel</option>'+
-    '</select></div>'+
-    '<div class="fg"><label class="lb">New Value</label><input class="ip" id="et-val" placeholder="Enter corrected value"></div>'+
-    '<div class="fg"><label class="lb">Reason *</label><input class="ip" id="et-rsn" placeholder="Wrong entry..."></div>'+
-    '<div class="fg"><label class="lb">Owner Password *</label><input class="ip" id="et-pw" type="password" placeholder="Your password"></div>'+
-    '<button class="btn bi" id="et-btn" onclick="saveEditTxn(this)">Save</button>'
-  );
-}
-
-async function saveEditTxn(btn){
-  var txnId=window._editTxnId;var txnNo=window._editTxnNo;
-  var etype=document.getElementById('et-type')&&document.getElementById('et-type').value;
-  var eVal=(document.getElementById('et-val')&&document.getElementById('et-val').value||'').trim();
-  var eRsn=(document.getElementById('et-rsn')&&document.getElementById('et-rsn').value||'').trim();
-  var ePw=document.getElementById('et-pw')&&document.getElementById('et-pw').value;
-  if(!eRsn){toast('Enter reason','err');return;}
-  if(!ePw){toast('Enter password','err');return;}
-  var auth=await sb.auth.signInWithPassword({email:CU.email,password:ePw});
-  if(auth.error){toast('Wrong password','err');return;}
+async function saveStockTake(applyAdjustment){
+  var ps=window._stProds||[];
+  var counted=0,adj=0;
+  var reportNo=await sb.rpc('generate_transaction_no',{p_prefix:'SCNT'});
   try{
-    if(etype==='cancel'){
-      await sb.from('transactions').update({is_cancelled:true,cancelled_reason:eRsn,cancelled_at:new Date().toISOString(),cancelled_by:CUP&&CUP.id}).eq('id',txnId);
-      toast(txnNo+' voided','ok');
-    } else if(etype==='amount'){
-      await sb.from('transactions').update({total_amount:Number(eVal),notes:'[EDITED] Reason: '+eRsn}).eq('id',txnId);
-      toast('Amount updated','ok');
-    } else if(etype==='date'){
-      await sb.from('transactions').update({transaction_date:eVal,notes:'[DATE CORRECTED] '+eRsn}).eq('id',txnId);
-      toast('Date updated','ok');
-    } else {
-      await sb.from('transactions').update({notes:'[CORRECTION] '+eVal+' | Reason: '+eRsn}).eq('id',txnId);
-      toast('Note added','ok');
+    var report=await sb.from('stock_count_reports').insert({
+      report_no:reportNo.data,count_date:td(),
+      status:applyAdjustment?'adjusted':'saved',
+      performed_by:CUP&&CUP.id,
+      adjusted_at:applyAdjustment?new Date().toISOString():null
+    }).select().single();
+    if(report.error)throw report.error;
+
+    var items=[];
+    for(var i=0;i<ps.length;i++){
+      var inp=$('st-'+i);
+      if(!inp||inp.value==='')continue;
+      var ph=Number(inp.value);
+      counted++;
+      items.push({report_id:report.data.id,variant_id:ps[i].id,system_qty:ps[i].stock||0,physical_qty:ph});
+      if(ph!==(ps[i].stock||0)&&applyAdjustment){
+        await sb.rpc('process_stock_movement',{p_variant_id:ps[i].id,p_movement_type:'stock_take',p_qty:ph,p_reason:'Physical count '+reportNo.data+': counted '+ph+', book was '+ps[i].stock,p_user_id:CUP&&CUP.id});
+        adj++;
+      }
     }
-    cmo();await loadData();genR();
+    if(items.length)await sb.from('stock_count_items').insert(items);
+
+    cmo();await loadData();iInv();
+    if(applyAdjustment){
+      toast('Adjustment applied: '+adj+' items updated. Report: '+reportNo.data,'ok',6000);
+    } else {
+      toast('Variance report saved (no stock changed): '+reportNo.data+'. '+counted+' items counted.','ok',6000);
+    }
   }catch(ex){toast(ex.message,'err');}
 }
-
-// FIX 13: Password change
-function openChangePW(){
-  omo('Change Password',
-    '<div class="fg"><label class="lb">Current Password</label><input class="ip" id="pw-cur" type="password" placeholder="Current password"></div>'+
-    '<div class="fg"><label class="lb">New Password (min 8 chars)</label><input class="ip" id="pw-new" type="password" placeholder="New password"></div>'+
-    '<div class="fg"><label class="lb">Confirm New Password</label><input class="ip" id="pw-conf" type="password" placeholder="Repeat new password"></div>'+
-    '<button class="btn bi" onclick="saveChangePW()">Update Password</button>'
-  );
+function showReservedList(){
+  var reserved=prods.filter(function(p){return(p.reserved||0)>0;});
+  var h='';
+  if(!reserved.length){h='<div class="em"><div class="ei">-</div><p>No reserved stock</p></div>';}
+  else{
+    for(var i=0;i<reserved.length;i++){
+      var p=reserved[i];
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+p.name+'</div><div style="font-size:.6rem;color:var(--ink3)">'+p.sku+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--gold)">'+p.reserved+' reserved</div></div></div></div>';
+    }
+  }
+  omo('Reserved Stock',h);
+}
+async function exportStockReport(){
+  var s=await sb.rpc('get_inventory_report');
+  var data=s.data||[];
+  if(!data.length){toast('No data to export','warn');return;}
+  var rows=['Category,Product,SKU,Colour,Size,Qty Available,Cost Price,Stock Value,Age Days'];
+  data.forEach(function(r){
+    rows.push([r.category||'',r.product_name||'',r.sku||'',r.colour||'',r.size||'',r.qty_available||0,r.purchase_price||r.cost_price||0,r.stock_value||0,r.age_days||0].map(function(v){return'"'+String(v).replace(/"/g,'""')+'"';}).join(','));
+  });
+  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download='StockReport_'+td()+'.csv';a.click();
+  toast('Stock report exported','ok');
 }
 
-async function saveChangePW(){
-  var cur=document.getElementById('pw-cur')&&document.getElementById('pw-cur').value;
-  var nw=document.getElementById('pw-new')&&document.getElementById('pw-new').value;
-  var conf=document.getElementById('pw-conf')&&document.getElementById('pw-conf').value;
-  if(!cur||!nw||!conf){toast('Fill all fields','err');return;}
-  if(nw.length<8){toast('Min 8 characters','err');return;}
-  if(nw!==conf){toast('Passwords do not match','err');return;}
-  var verify=await sb.auth.signInWithPassword({email:CU.email,password:cur});
-  if(verify.error){toast('Current password wrong','err');return;}
-  var result=await sb.auth.updateUser({password:nw});
-  if(result.error){toast(result.error.message,'err');return;}
-  cmo();toast('Password updated!','ok');
-}
-
-// PW button added directly to buildNav below
 
 
-// STOCK WITH CUSTOMER
+// ── STOCK WITH CUSTOMER ──
 function oStockWithCustomer(){
   var h='<div class="ib">Issue stock to customer for home selection. Items tracked separately until sold or returned.</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="swc-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="swc-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\',\'swc-cust\')">List</button></div></div>';
   h+='<div class="fg"><label class="lb">Expected Return Date</label><input class="ip" id="swc-date" type="date"></div>';
   h+='<div class="ct" style="margin-top:8px">Items to Issue</div>';
   h+='<div id="swc-items"></div>';
@@ -1091,11 +1088,68 @@ async function saveSwc(){
     await loadData();cmo();toast('Issued: '+swcNo.data,'ok',5000);
   }catch(ex){toast(ex.message,'err');}
 }
+async function showSwcList(){
+  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').eq('status','issued').order('created_at',{ascending:false});
+  var h='<div class="ib">Tap any entry to process return/sale.</div>';
+  if(!(data.data&&data.data.length)){h+='<div class="em"><div class="ei">-</div><p>No active stock with customers</p></div>';}
+  else{
+    for(var i=0;i<data.data.length;i++){
+      var s=data.data[i];
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer" onclick="processSwcReturn(\''+s.id+'\')">';
+      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+s.transaction_no+'</div>';
+      h+='<div style="font-size:.6rem;color:var(--ink3)">'+s.customer_name+' - Issued: '+s.issue_date+'</div>';
+      h+='<div style="font-size:.6rem;color:var(--ink3)">Items: '+(s.stock_with_customer_items&&s.stock_with_customer_items.length||0)+'</div></div>';
+      h+='<div class="btn bh bsm" style="font-size:.6rem">Process</div></div></div>';
+    }
+  }
+  omo('Stock With Customers',h);
+}
+async function processSwcReturn(swcId){
+  var swc=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').eq('id',swcId).single();
+  if(swc.error||!swc.data){toast('Not found','err');return;}
+  var s=swc.data;var items=s.stock_with_customer_items||[];
+  var h='<div class="ib">Enter qty sold and qty returned for each item.</div>';
+  h+='<div style="font-size:.75rem;font-weight:700;margin-bottom:8px">'+s.customer_name+' - '+s.transaction_no+'</div>';
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||it.product_variants&&it.product_variants.sku||'';
+    h+='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px">';
+    h+='<div style="font-size:.72rem;font-weight:600;margin-bottom:6px">'+nm+' (Issued: '+it.qty_issued+')</div>';
+    h+='<div class="g2"><div class="fg"><label class="lb">Qty Sold</label><input class="ip" id="swcr-sold-'+it.id+'" type="number" placeholder="0" min="0" max="'+it.qty_issued+'"></div>';
+    h+='<div class="fg"><label class="lb">Sale Price Rs</label><input class="ip" id="swcr-price-'+it.id+'" type="number" placeholder="0"></div></div>';
+    h+='<div class="fg"><label class="lb">Qty Returned</label><input class="ip" id="swcr-ret-'+it.id+'" type="number" placeholder="'+it.qty_issued+'" value="'+it.qty_issued+'"></div>';
+    h+='</div>';
+  }
+  h+='<button class="btn bs" onclick="finalizeSwc(\''+swcId+'\')">Finalize</button>';
+  window._swcItems=items;
+  omo('Process Return: '+s.transaction_no,h);
+}
+async function finalizeSwc(swcId){
+  var items=window._swcItems||[];
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  try{
+    for(var i=0;i<items.length;i++){
+      var it=items[i];
+      var sold=Number(document.getElementById('swcr-sold-'+it.id)&&document.getElementById('swcr-sold-'+it.id).value||0);
+      var ret=Number(document.getElementById('swcr-ret-'+it.id)&&document.getElementById('swcr-ret-'+it.id).value||0);
+      var price=Number(document.getElementById('swcr-price-'+it.id)&&document.getElementById('swcr-price-'+it.id).value||0);
+      if(sold+ret>it.qty_issued){toast('Sold + returned cannot exceed issued ('+it.qty_issued+')','err');return;}
+      if(ret>0)await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sales_return',p_qty:ret,p_reason:'SWC return finalize',p_cost_impact:price,p_user_id:CUP&&CUP.id});
+      if(sold>0&&price>0){
+        var sno=await sb.rpc('generate_transaction_no',{p_prefix:'BILL'});
+        await sb.from('transactions').insert({transaction_no:sno.data,transaction_type:'sale',transaction_date:td(),total_amount:sold*price,paid_amount:sold*price,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'SWC finalize: '+swcId});
+      }
+      await sb.from('stock_with_customer_items').update({qty_sold:sold,qty_returned:ret,status:sold>0?'sold':'returned'}).eq('id',it.id);
+    }
+    await sb.from('stock_with_customer').update({status:'completed'}).eq('id',swcId);
+    await loadData();cmo();toast('SWC finalized!','ok',5000);
+  }catch(ex){toast(ex.message,'err');}
+}
 
-// STOCK RESERVATION
+// ── STOCK RESERVATION ──
 function oReservation(){
   var h='<div class="ib">Record advance/token money. Creates customer deposit entry (liability).</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="res-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="res-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\',\'res-cust\')">List</button></div></div>';
   h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="res-prod"><option value="">Select...</option>';
   for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
   h+='</select></div>';
@@ -1131,29 +1185,49 @@ async function saveReservation(){
   }catch(ex){toast(ex.message,'err');}
 }
 
-// SWC button inlined into rInv directly
+var lastReportData=[];
+var lastReportTitle='Report';
 
+// ── REPORTS TAB: Export & Print ──
+function exportReport(){
+  if(!lastReportData||!lastReportData.length){toast('Generate a report first','warn');return;}
+  var keys=Object.keys(lastReportData[0]);
+  var rows=[keys.join(',')];
+  lastReportData.forEach(function(r){rows.push(keys.map(function(k){return '"'+(String(r[k]||'').replace(/"/g,'""'))+'"';}).join(','));});
+  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=lastReportTitle+'_'+td()+'.csv';
+  a.click();
+  toast('CSV downloaded','ok');
+}
+function printReport(){
+  var rc=document.getElementById('rc');
+  if(!rc){toast('No report to print','warn');return;}
+  var w=window.open('','_blank');
+  w.document.write('<html><head><title>'+lastReportTitle+'</title><style>body{font-family:Arial,sans-serif;padding:20px;font-size:12px}@media print{button{display:none}}</style></head><body>');
+  w.document.write('<h2>SL Collection - '+lastReportTitle+'</h2><p>'+td()+'</p>');
+  w.document.write(rc.innerHTML);
+  w.document.write('<br><button onclick="window.print()">Print</button></body></html>');
+  w.document.close();
+}
 
 // ── SALES TAB ──
 function rSalesTab(){
   var h='';
-  // KPI row
   h+='<div class="sg" id="stk"></div>';
-  // Filters
   h+='<div class="df">';
   h+='<input class="ip" id="st-from" type="date" value="'+td()+'">';
   h+='<input class="ip" id="st-to" type="date" value="'+td()+'">';
   h+='<button class="btn bi bsm" onclick="iSalesTab()">Go</button>';
   h+='</div>';
-  // Filter pills
   h+='<div class="pr" style="margin-bottom:10px" id="st-pills">';
-  h+='<div class="pl on" onclick="setSF(\"all\",this)">All</div>';
-  h+='<div class="pl" onclick="setSF(\"cash\",this)">Cash</div>';
-  h+='<div class="pl" onclick="setSF(\"credit\",this)">Credit</div>';
-  h+='<div class="pl" onclick="setSF(\"bank\",this)">Bank</div>';
-  h+='<div class="pl" onclick="setSF(\"emoney\",this)">EMoney</div>';
+  h+='<div class="pl on" onclick="setSF(&quot;all&quot;,this)">All</div>';
+  h+='<div class="pl" onclick="setSF(&quot;cash&quot;,this)">Cash</div>';
+  h+='<div class="pl" onclick="setSF(&quot;credit&quot;,this)">Credit</div>';
+  h+='<div class="pl" onclick="setSF(&quot;bank&quot;,this)">Bank</div>';
+  h+='<div class="pl" onclick="setSF(&quot;emoney&quot;,this)">EMoney</div>';
   h+='</div>';
-  // Export
   h+='<div style="display:flex;gap:8px;margin-bottom:10px">';
   h+='<button class="btn bh bsm" onclick="exportSalesTab()">Export CSV</button>';
   h+='<button class="btn bh bsm" onclick="printSalesTab()">Print</button>';
@@ -1161,10 +1235,8 @@ function rSalesTab(){
   h+='<div id="st-list"></div>';
   return h;
 }
-
 var _sfMode='all';
 var _salesData=[];
-
 function setSF(mode,el){
   _sfMode=mode;
   var ps=document.querySelectorAll('#st-pills .pl');
@@ -1172,7 +1244,6 @@ function setSF(mode,el){
   el.classList.add('on');
   renderSalesTab();
 }
-
 async function iSalesTab(){
   var from=$('st-from')&&$('st-from').value||td();
   var to=$('st-to')&&$('st-to').value||td();
@@ -1182,12 +1253,8 @@ async function iSalesTab(){
   _salesData=(s.data||[]).filter(function(r){return!r.transactions||!r.transactions.is_cancelled;});
   renderSalesTab();
 }
-
 function renderSalesTab(){
-  // Filter by payment mode
   var data=_sfMode==='all'?_salesData:_salesData.filter(function(r){return r.payment_mode===_sfMode;});
-
-  // KPIs
   var totRev=data.reduce(function(s,r){return s+Number(r.total_amount||0);},0);
   var totProfit=data.reduce(function(s,r){return s+Number(r.gross_profit||0);},0);
   var totBills=data.length;
@@ -1198,54 +1265,38 @@ function renderSalesTab(){
     '<div class="sc sg2"><div class="sl2">Gross Profit</div><div class="sv">'+fmt(totProfit)+'</div><div style="font-size:.54rem;color:var(--sage)">'+(totRev?((totProfit/totRev)*100).toFixed(1):0)+'%</div></div>'+
     '<div class="sc go"><div class="sl2">Avg Bill</div><div class="sv">'+fmt(avgBill)+'</div></div>'+
     '<div class="sc rd"><div class="sl2">Outstanding</div><div class="sv">'+fmt(data.filter(function(r){return r.payment_mode==='credit';}).reduce(function(s,r){return s+Number(r.total_amount||0)-Number(r.paid_amount||0);},0))+'</div></div>';
-
-  // Sales list
   var list=$('st-list');if(!list)return;
   if(!data.length){list.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No sales in this range</p></div>';return;}
-
   var h='<div style="border:1px solid #E8D8C0;border-radius:var(--r);overflow:hidden">';
   h+='<div style="display:grid;grid-template-columns:1fr 1.2fr .8fr .8fr .5fr;background:var(--ink);color:white;padding:7px 11px">';
-  h+='<div style="font-size:.54rem;font-weight:700">BILL</div>';
-  h+='<div style="font-size:.54rem;font-weight:700">CUSTOMER</div>';
-  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">AMOUNT</div>';
-  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">PROFIT</div>';
-  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">MODE</div>';
-  h+='</div>';
-
+  h+='<div style="font-size:.54rem;font-weight:700">BILL</div><div style="font-size:.54rem;font-weight:700">CUSTOMER</div>';
+  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">AMOUNT</div><div style="text-align:right;font-size:.54rem;font-weight:700">PROFIT</div>';
+  h+='<div style="text-align:right;font-size:.54rem;font-weight:700">MODE</div></div>';
   for(var i=0;i<data.length;i++){
     var r=data[i];
     var isCredit=r.payment_mode==='credit';
     var outstanding=isCredit?Number(r.total_amount||0)-Number(r.paid_amount||0):0;
-    h+='<div style="display:grid;grid-template-columns:1fr 1.2fr .8fr .8fr .5fr;padding:8px 11px;border-top:1px solid var(--cream2);background:white;cursor:pointer" onclick="showSaleDetail(this.dataset.id)" data-id="'+r.id+'">';
+    h+='<div style="display:grid;grid-template-columns:1fr 1.2fr .8fr .8fr .5fr;padding:8px 11px;border-top:1px solid var(--cream2);background:white;cursor:pointer" data-id="'+r.id+'" onclick="showSaleDetail(this.dataset.id)">';
     h+='<div><div style="font-size:.68rem;font-weight:700">'+(r.transactions&&r.transactions.transaction_no||'')+'</div><div style="font-size:.54rem;color:var(--ink3)">'+r.sale_date+'</div></div>';
-    h+='<div><div style="font-size:.66rem;font-weight:600">'+( r.customer_name||'Walk-in')+'</div>'+(outstanding>0?'<div style="font-size:.52rem;color:var(--red)">Due: '+fmt(outstanding)+'</div>':'')+'</div>';
+    h+='<div><div style="font-size:.66rem;font-weight:600">'+(r.customer_name||'Walk-in')+'</div>'+(outstanding>0?'<div style="font-size:.52rem;color:var(--red)">Due: '+fmt(outstanding)+'</div>':'')+'</div>';
     h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(r.total_amount)+'</div></div>';
     h+='<div style="text-align:right"><div style="font-size:.68rem;font-weight:600;color:var(--sage)">'+fmt(r.gross_profit)+'</div></div>';
-    h+='<div style="text-align:right"><div style="font-size:.52rem;background:var(--cream2);padding:2px 5px;border-radius:4px">'+( r.payment_mode||'')+'</div></div>';
-    h+='</div>';
-    // Items detail (collapsed)
+    h+='<div style="text-align:right"><div style="font-size:.52rem;background:var(--cream2);padding:2px 5px;border-radius:4px">'+(r.payment_mode||'')+'</div></div></div>';
     if(r.sale_items&&r.sale_items.length){
       h+='<div style="background:#F8F3EC;padding:5px 11px 7px;border-top:1px solid var(--cream2)">';
       for(var j=0;j<r.sale_items.length;j++){
         var si=r.sale_items[j];
         var snm=si.product_variants&&si.product_variants.products&&si.product_variants.products.name||si.product_variants&&si.product_variants.sku||'';
-        h+='<div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--ink3);padding:1px 0">';
-        h+='<span>'+snm+' x'+si.qty+'</span>';
-        h+='<span>'+fmt(si.sale_price*si.qty)+'</span>';
-        h+='</div>';
+        h+='<div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--ink3);padding:1px 0"><span>'+snm+' x'+si.qty+'</span><span>'+fmt(si.sale_price*si.qty)+'</span></div>';
       }
       h+='</div>';
     }
   }
-  h+='<div style="display:flex;justify-content:space-between;padding:8px 11px;background:var(--cream2);font-size:.72rem;font-weight:700"><span>Total ('+data.length+' bills)</span><span>'+fmt(totRev)+'</span></div>';
-  h+='</div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:8px 11px;background:var(--cream2);font-size:.72rem;font-weight:700"><span>Total ('+data.length+' bills)</span><span>'+fmt(totRev)+'</span></div></div>';
   list.innerHTML=h;
-
-  // Store for export
   lastReportData=data.map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Mode:r.payment_mode};});
   lastReportTitle='Sales';
 }
-
 function showSaleDetail(saleId){
   var r=_salesData.find(function(s){return s.id===saleId;});
   if(!r)return;
@@ -1255,9 +1306,7 @@ function showSaleDetail(saleId){
   h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Customer</span><span style="font-size:.7rem;font-weight:600">'+r.customer_name+'</span></div>';
   h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Payment</span><span style="font-size:.7rem">'+r.payment_mode+'</span></div>';
   h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="font-size:.65rem;color:var(--ink3)">Total</span><span style="font-size:.85rem;font-weight:700">'+fmt(r.total_amount)+'</span></div>';
-  h+='<div style="display:flex;justify-content:space-between"><span style="font-size:.65rem;color:var(--ink3)">Gross Profit</span><span style="font-size:.8rem;font-weight:700;color:var(--sage)">'+fmt(r.gross_profit)+'</span></div>';
-  h+='</div>';
-  // Items
+  h+='<div style="display:flex;justify-content:space-between"><span style="font-size:.65rem;color:var(--ink3)">Gross Profit</span><span style="font-size:.8rem;font-weight:700;color:var(--sage)">'+fmt(r.gross_profit)+'</span></div></div>';
   h+='<div class="ct">Items Sold</div>';
   var items=r.sale_items||[];
   for(var i=0;i<items.length;i++){
@@ -1265,19 +1314,14 @@ function showSaleDetail(saleId){
     var snm=si.product_variants&&si.product_variants.products&&si.product_variants.products.name||'';
     var marg=(si.sale_price-si.purchase_price)*si.qty;
     h+='<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--cream2)">';
-    h+='<div><div style="font-size:.72rem;font-weight:600">'+snm+'</div>';
-    h+='<div style="font-size:.58rem;color:var(--ink3)">'+( si.product_variants&&si.product_variants.sku||'')+'</div></div>';
-    h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(si.sale_price)+' x'+si.qty+'</div>';
-    h+='<div style="font-size:.58rem;color:var(--sage)">Margin: '+fmt(marg)+'</div></div>';
-    h+='</div>';
+    h+='<div><div style="font-size:.72rem;font-weight:600">'+snm+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(si.product_variants&&si.product_variants.sku||'')+'</div></div>';
+    h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(si.sale_price)+' x'+si.qty+'</div><div style="font-size:.58rem;color:var(--sage)">Margin: '+fmt(marg)+'</div></div></div>';
   }
-  // Edit button (owner only)
   var txnId=r.transaction_id;var txnNo=r.transactions&&r.transactions.transaction_no||'';
   window._dtxnId=txnId;window._dtxnNo=txnNo;
   if(CUP&&CUP.role==='owner')h+='<button class="btn bh" style="margin-top:12px" onclick="openEditTxn(window._dtxnId,window._dtxnNo)">Edit / Void</button>';
   omo('Sale Detail',h);
 }
-
 function exportSalesTab(){
   if(!lastReportData||!lastReportData.length){toast('No data to export','warn');return;}
   var keys=Object.keys(lastReportData[0]);
@@ -1288,7 +1332,6 @@ function exportSalesTab(){
   a.download='Sales_'+td()+'.csv';a.click();
   toast('CSV downloaded','ok');
 }
-
 function printSalesTab(){
   var el=$('st-list');if(!el){toast('No data','warn');return;}
   var w=window.open('','_blank');
@@ -1297,6 +1340,77 @@ function printSalesTab(){
   w.document.write(el.innerHTML);
   w.document.write('<br><button onclick="window.print()">Print</button></body></html>');
   w.document.close();
+}
+
+
+// ── TRANSACTION EDITING (Owner only) ──
+function openEditTxn(txnId,txnNo){
+  if(CUP&&CUP.role!=='owner'){toast('Only owner can edit','err');return;}
+  window._editTxnId=txnId;window._editTxnNo=txnNo;
+  omo('Edit: '+txnNo,
+    '<div class="ib">Editing preserves original for audit. A correction note is added.</div>'+
+    '<div class="fg"><label class="lb">Correction Type</label>'+
+    '<select class="sl" id="et-type">'+
+    '<option value="notes">Add Correction Note</option>'+
+    '<option value="amount">Correct Amount</option>'+
+    '<option value="date">Correct Date</option>'+
+    '<option value="cancel">Void / Cancel</option>'+
+    '</select></div>'+
+    '<div class="fg"><label class="lb">New Value</label><input class="ip" id="et-val" placeholder="Enter corrected value"></div>'+
+    '<div class="fg"><label class="lb">Reason *</label><input class="ip" id="et-rsn" placeholder="Wrong entry..."></div>'+
+    '<div class="fg"><label class="lb">Owner Password *</label><input class="ip" id="et-pw" type="password" placeholder="Your password"></div>'+
+    '<button class="btn bi" id="et-btn" onclick="saveEditTxn(this)">Save</button>'
+  );
+}
+async function saveEditTxn(btn){
+  var txnId=window._editTxnId;var txnNo=window._editTxnNo;
+  var etype=document.getElementById('et-type')&&document.getElementById('et-type').value;
+  var eVal=(document.getElementById('et-val')&&document.getElementById('et-val').value||'').trim();
+  var eRsn=(document.getElementById('et-rsn')&&document.getElementById('et-rsn').value||'').trim();
+  var ePw=document.getElementById('et-pw')&&document.getElementById('et-pw').value;
+  if(!eRsn){toast('Enter reason','err');return;}
+  if(!ePw){toast('Enter password','err');return;}
+  var auth=await sb.auth.signInWithPassword({email:CU.email,password:ePw});
+  if(auth.error){toast('Wrong password','err');return;}
+  try{
+    if(etype==='cancel'){
+      await sb.from('transactions').update({is_cancelled:true,cancelled_reason:eRsn,cancelled_at:new Date().toISOString(),cancelled_by:CUP&&CUP.id}).eq('id',txnId);
+      toast(txnNo+' voided','ok');
+    } else if(etype==='amount'){
+      await sb.from('transactions').update({total_amount:Number(eVal),notes:'[EDITED] Reason: '+eRsn}).eq('id',txnId);
+      toast('Amount updated','ok');
+    } else if(etype==='date'){
+      await sb.from('transactions').update({transaction_date:eVal,notes:'[DATE CORRECTED] '+eRsn}).eq('id',txnId);
+      toast('Date updated','ok');
+    } else {
+      await sb.from('transactions').update({notes:'[CORRECTION] '+eVal+' | Reason: '+eRsn}).eq('id',txnId);
+      toast('Note added','ok');
+    }
+    cmo();await loadData();
+  }catch(ex){toast(ex.message,'err');}
+}
+
+// ── PASSWORD CHANGE ──
+function openChangePW(){
+  omo('Change Password',
+    '<div class="fg"><label class="lb">Current Password</label><input class="ip" id="pw-cur" type="password" placeholder="Current password"></div>'+
+    '<div class="fg"><label class="lb">New Password (min 8 chars)</label><input class="ip" id="pw-new" type="password" placeholder="New password"></div>'+
+    '<div class="fg"><label class="lb">Confirm New Password</label><input class="ip" id="pw-conf" type="password" placeholder="Repeat new password"></div>'+
+    '<button class="btn bi" onclick="saveChangePW()">Update Password</button>'
+  );
+}
+async function saveChangePW(){
+  var cur=document.getElementById('pw-cur')&&document.getElementById('pw-cur').value;
+  var nw=document.getElementById('pw-new')&&document.getElementById('pw-new').value;
+  var conf=document.getElementById('pw-conf')&&document.getElementById('pw-conf').value;
+  if(!cur||!nw||!conf){toast('Fill all fields','err');return;}
+  if(nw.length<8){toast('Min 8 characters','err');return;}
+  if(nw!==conf){toast('Passwords do not match','err');return;}
+  var verify=await sb.auth.signInWithPassword({email:CU.email,password:cur});
+  if(verify.error){toast('Current password wrong','err');return;}
+  var result=await sb.auth.updateUser({password:nw});
+  if(result.error){toast(result.error.message,'err');return;}
+  cmo();toast('Password updated!','ok');
 }
 
 </script>
