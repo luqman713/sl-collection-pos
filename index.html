@@ -142,6 +142,10 @@ function emo2(c){var m={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Tro
 function colCode(c){if(!c)return'CLR';var m={black:'BLK',white:'WHT',blue:'BLU','navy blue':'NVY',navy:'NVY',red:'RED',green:'GRN',pink:'PNK',yellow:'YLW',orange:'ORG',brown:'BRN',maroon:'MRN',grey:'GRY',gray:'GRY',multi:'MLT'};var l=c.toLowerCase().trim();if(m[l])return m[l];var keys=Object.keys(m);for(var i=0;i<keys.length;i++){if(l.indexOf(keys[i])>=0)return m[keys[i]];}return c.replace(/[^a-zA-Z]/g,'').toUpperCase().substring(0,3)||'CLR';}
 function szCode(s){if(!s)return'STD';var m={SMALL:'S',MEDIUM:'M',LARGE:'L','EXTRA LARGE':'XL','FREE SIZE':'FRE'};return m[s.toUpperCase().trim()]||s.toUpperCase().substring(0,3);}
 
+var MY_SESSION_ID=null;
+var sessionWatchTimer=null;
+var idleTimer=null;
+
 async function login(){
   var emailEl=$('em'),pwEl=$('pw'),errEl=$('le'),btn=$('lb2');
   var email=emailEl?emailEl.value.trim():'';
@@ -154,6 +158,23 @@ async function login(){
     CU=r.data.user;
     var ur=await sb.from('users').select('*').eq('auth_id',CU.id).single();
     CUP=ur.data;
+
+    if(CUP&&CUP.is_active===false){
+      await sb.auth.signOut();
+      if(errEl){errEl.style.display='block';errEl.textContent='Account disabled. Contact owner.';}
+      if(btn){btn.textContent='Sign In';btn.disabled=false;}
+      return;
+    }
+
+    MY_SESSION_ID='s_'+Date.now()+'_'+Math.random().toString(36).slice(2,9);
+    var device=(navigator.userAgent.match(/Android|iPhone|iPad|Macintosh|Windows/)||['Device'])[0];
+    if(CUP&&CUP.id){
+      await sb.rpc('start_user_session',{p_user_id:CUP.id,p_session_id:MY_SESSION_ID,p_device:device});
+      logActivity('login',null,{device:device});
+    }
+    startSessionWatch();
+    startIdleTimer();
+
     await loadData();
     $('ls').style.display='none';
     $('app').style.display='block';
@@ -165,6 +186,43 @@ async function login(){
     if(errEl){errEl.style.display='block';errEl.textContent=''+ex.message;}
     if(btn){btn.textContent='Sign In';btn.disabled=false;}
   }
+}
+
+// ── SESSION SECURITY ──
+function startSessionWatch(){
+  if(sessionWatchTimer)clearInterval(sessionWatchTimer);
+  sessionWatchTimer=setInterval(async function(){
+    if(!CUP||!CUP.id||!MY_SESSION_ID)return;
+    var chk=await sb.rpc('check_user_session',{p_user_id:CUP.id,p_session_id:MY_SESSION_ID});
+    if(chk.data&&!chk.data.valid){
+      clearInterval(sessionWatchTimer);
+      alert('You have been logged out — your account was used on another device, or access was revoked.');
+      forceLogout();
+    }
+  },20000);
+}
+function startIdleTimer(){
+  if(idleTimer)clearTimeout(idleTimer);
+  var reset=function(){
+    clearTimeout(idleTimer);
+    idleTimer=setTimeout(function(){
+      alert('Logged out due to inactivity (15 min).');
+      forceLogout();
+    },15*60*1000);
+  };
+  ['click','keydown','touchstart','scroll'].forEach(function(ev){document.addEventListener(ev,reset);});
+  reset();
+}
+function forceLogout(){
+  if(sessionWatchTimer)clearInterval(sessionWatchTimer);
+  if(idleTimer)clearTimeout(idleTimer);
+  sb.auth.signOut();
+  CU=null;CUP=null;cart=[];
+  $('app').style.display='none';$('ls').style.display='flex';
+}
+async function logActivity(action,module,details){
+  if(!CUP||!CUP.id)return;
+  try{await sb.rpc('log_activity',{p_user_id:CUP.id,p_action:action,p_module:module||null,p_details:details||{}});}catch(e){}
 }
 
 document.getElementById('pw').addEventListener('keypress',function(e){if(e.key==='Enter')login();});
@@ -184,7 +242,14 @@ sb.auth.getSession().then(async function(r2){
   }catch(ex2){console.error('session err:',ex2);}
 });
 
-async function logout(){await sb.auth.signOut();CU=null;CUP=null;cart=[];$('app').style.display='none';$('ls').style.display='flex';}
+async function logout(){
+  if(sessionWatchTimer)clearInterval(sessionWatchTimer);
+  if(idleTimer)clearTimeout(idleTimer);
+  logActivity('logout',null,{});
+  await sb.auth.signOut();
+  CU=null;CUP=null;cart=[];
+  $('app').style.display='none';$('ls').style.display='flex';
+}
 
 async function loadData(){
   var p=await sb.from('product_variants').select('*,products(name,categories(name,code))').eq('is_active',true);
@@ -217,6 +282,24 @@ function buildNav(){
       pb.id='pw-btn';pb.className='xb';pb.textContent='PW';
       pb.title='Change Password';pb.onclick=openChangePW;
       xb.parentNode.insertBefore(pb,xb);
+    }
+  }
+  // Owner: Activity Log button
+  if(CUP&&CUP.role==='owner'&&!document.getElementById('act-btn')){
+    var xb2=document.querySelector('.xb');
+    if(xb2&&xb2.parentNode){
+      var ab=document.createElement('button');
+      ab.id='act-btn';ab.className='xb';ab.textContent='Log';
+      ab.title='Activity Log';ab.onclick=showActivityLog;
+      xb2.parentNode.insertBefore(ab,xb2);
+    }
+  }
+  // Last login display
+  if(CUP&&CUP.last_login_at){
+    var brandEl=document.querySelector('.brand small');
+    if(brandEl){
+      var d=new Date(CUP.last_login_at);
+      brandEl.textContent='POS - Rawalpindi | Last: '+d.toLocaleDateString()+' '+d.toLocaleTimeString().slice(0,5);
     }
   }
 }
@@ -405,6 +488,7 @@ async function completeSale(){
     await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     await sb.rpc('post_transaction_ledger',{p_txn_id:tr.data.id,p_txn_type:'sale',p_payment_mode:payMode,p_total:tot,p_paid:payMode==='credit'?0:tot,p_party_id:custId,p_account_id:accId2,p_split_cash:splitCash,p_user_id:CUP&&CUP.id});
     await sb.from('ledger_entries').insert({transaction_id:tr.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cst2,description:'COGS '+bn.data,created_by:CUP&&CUP.id});
+    logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
     await loadData();
     toast('Done: '+bn.data+' | '+fmt(tot)+' | Margin: '+fmt(mg),'ok',5000);
     cart=[];if($('bc'))$('bc').value='';renderCart();srch();
@@ -616,6 +700,7 @@ async function savePur(){
     // FIX 1: Update inventory stock on purchase
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
+    logActivity('purchase_completed','buy',{sku:skuN.data,qty:qty,cost:cst,supplier:sup});
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
     var flds=['pn','pz','pcl','pq','pcs','ps2'];for(var fi=0;fi<flds.length;fi++){var fe=$(flds[fi]);if(fe)fe.value='';}
@@ -730,6 +815,7 @@ async function saveCash(){
     if(catId)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc});
     await sb.rpc('post_transaction_ledger',{p_txn_id:t.data.id,p_txn_type:dir==='in'?'receipt':'expense',p_payment_mode:'cash',p_total:amt,p_paid:amt,p_party_id:partyId,p_account_id:accId,p_user_id:CUP&&CUP.id});
     if(partyId)await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'party',party_id:partyId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
+    logActivity(dir==='in'?'receipt':'payment','cash',{amount:amt,description:dsc});
     toast((dir==='in'?'Receipt':'Payment')+': '+fmt(amt),'ok');
     if($('cdsc'))$('cdsc').value='';if($('camt'))$('camt').value='';if($('cpty'))$('cpty').value='';
     await loadData();iCash();
@@ -883,6 +969,7 @@ async function saveStockMove(mtype){
     }
   }
 
+  logActivity('stock_movement','stock',{type:mtype,product:p.name,qty:qty,value:totalVal,reason:rsn});
   if(mtype!=='purchase_return'){
     toast((SMOVE_LABELS[mtype]||mtype)+': '+qty+' x '+p.name+' | Rs'+totalVal.toLocaleString()+' logged','ok',5000);
   }
@@ -956,7 +1043,8 @@ function openStockTake(){
     h+='<div id="sd-'+i+'" style="font-size:.68rem;font-weight:700;text-align:right"></div>';
     h+='</div>';
   }
-  h+='<div class="g2" style="margin-top:12px">';
+  h+='<div class="fg" style="margin-top:10px"><label class="lb">Owner Password (required to Apply Adjustment)</label><input class="ip" id="st-pw" type="password" placeholder="Password"></div>';
+  h+='<div class="g2">';
   h+='<button class="btn bh" onclick="saveStockTake(false)">Save Report Only</button>';
   h+='<button class="btn bi" onclick="saveStockTake(true)">Apply Adjustment</button>';
   h+='</div>';
@@ -972,6 +1060,12 @@ function chkD(i){
   d.style.color=df===0?'var(--sage)':'var(--red)';
 }
 async function saveStockTake(applyAdjustment){
+  if(applyAdjustment){
+    var pw=document.getElementById('st-pw')&&document.getElementById('st-pw').value;
+    if(!pw){toast('Password required to apply adjustment','err');return;}
+    var auth=await sb.auth.signInWithPassword({email:CU.email,password:pw});
+    if(auth.error){toast('Wrong password','err');return;}
+  }
   var ps=window._stProds||[];
   var counted=0,adj=0;
   var reportNo=await sb.rpc('generate_transaction_no',{p_prefix:'SCNT'});
@@ -1386,6 +1480,7 @@ async function saveEditTxn(btn){
       await sb.from('transactions').update({notes:'[CORRECTION] '+eVal+' | Reason: '+eRsn}).eq('id',txnId);
       toast('Note added','ok');
     }
+    logActivity('transaction_edited','edit',{txn_no:txnNo,type:etype,reason:eRsn});
     cmo();await loadData();
   }catch(ex){toast(ex.message,'err');}
 }
@@ -1411,6 +1506,29 @@ async function saveChangePW(){
   var result=await sb.auth.updateUser({password:nw});
   if(result.error){toast(result.error.message,'err');return;}
   cmo();toast('Password updated!','ok');
+}
+
+
+// ── ACTIVITY LOG VIEWER (Owner only) ──
+async function showActivityLog(){
+  if(CUP&&CUP.role!=='owner'){toast('Owner only','err');return;}
+  var log=await sb.from('user_activity_log').select('*,users(full_name)').order('created_at',{ascending:false}).limit(100);
+  var h='<div class="ib">Last 100 actions across all users.</div>';
+  var rows=log.data||[];
+  if(!rows.length){h+='<div class="em"><p>No activity yet</p></div>';}
+  else{
+    var actColors={login:'var(--sage)',logout:'var(--ink3)',sale_completed:'var(--gold)',purchase_completed:'var(--sage)',stock_movement:'var(--red)',transaction_edited:'var(--red)',receipt:'var(--sage)',payment:'var(--red)'};
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      var d=new Date(r.created_at);
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--cream2)">';
+      h+='<div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;background:'+(actColors[r.action]||'var(--ink3)')+'"></div>';
+      h+='<div style="flex:1"><div style="font-size:.68rem;font-weight:600">'+(r.users&&r.users.full_name||'Unknown')+' - '+r.action.replace(/_/g,' ')+'</div>';
+      h+='<div style="font-size:.55rem;color:var(--ink3)">'+d.toLocaleDateString()+' '+d.toLocaleTimeString().slice(0,5)+(r.module?' - '+r.module:'')+'</div></div>';
+      h+='</div>';
+    }
+  }
+  omo('Activity Log',h);
 }
 
 </script>
