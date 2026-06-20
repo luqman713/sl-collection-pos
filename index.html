@@ -113,6 +113,9 @@ html,body{height:100%;background:var(--cream);color:var(--ink);max-width:480px;m
   <div id="ct"></div>
 </div>
 <div class="toast" id="tst"></div>
+<datalist id="dl-customers"></datalist>
+<datalist id="dl-suppliers"></datalist>
+<datalist id="dl-allparties"></datalist>
 <div class="mo" id="mo">
   <div class="mb">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:13px;">
@@ -265,6 +268,23 @@ async function loadData(){
     var inv2=await sb.from('inventory').select('variant_id,qty_damaged,qty_sales_return,qty_purchase_return,qty_other,qty_with_customer,qty_reserved');
     (inv2.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.damaged=i.qty_damaged||0;p2.salesRet=i.qty_sales_return||0;p2.purRet=i.qty_purchase_return||0;p2.other=i.qty_other||0;p2.withCustomer=i.qty_with_customer||0;p2.reserved=i.qty_reserved||0;}});
   }catch(e){/* columns not yet migrated */}
+  updateDatalists();
+}
+function updateDatalists(){
+  var dc=document.getElementById('dl-customers');
+  var ds=document.getElementById('dl-suppliers');
+  if(dc){
+    var custs=parties.filter(function(p){return p.party_type==='customer';});
+    dc.innerHTML=custs.map(function(p){return'<option value="'+p.name.replace(/"/g,'&quot;')+'">';}).join('');
+  }
+  if(ds){
+    var sups=parties.filter(function(p){return p.party_type==='supplier';});
+    ds.innerHTML=sups.map(function(p){return'<option value="'+p.name.replace(/"/g,'&quot;')+'">';}).join('');
+  }
+  var dap=document.getElementById('dl-allparties');
+  if(dap){
+    dap.innerHTML=parties.map(function(p){return'<option value="'+p.name.replace(/"/g,'&quot;')+'">';}).join('');
+  }
 }
 
 function buildNav(){
@@ -357,7 +377,7 @@ function rBill(){
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px"><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3)">Cart <span id="cb2" style="background:var(--ink);color:white;border-radius:10px;padding:1px 6px;font-size:.55rem">0</span></div></div>';
   h+='<div id="ci"></div><div id="bs2" style="display:none"></div><div id="ba" style="display:none"></div>';
   h+='<div class="card" style="margin-top:10px"><div class="ct">New Sale</div>';
-  h+='<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="bc" placeholder="Walk-in" style="flex:1" oninput="onCI()"><button class="btn bh bsm" onclick="pickP(\'customer\')">List</button><button class="btn bh bsm" onclick="newPM(\'customer\')">New</button></div><div id="cb" style="display:none;font-size:.6rem;margin-top:3px"></div></div>';
+  h+='<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="bc" list="dl-customers" placeholder="Walk-in" style="flex:1" oninput="onCI()"><button class="btn bh bsm" onclick="newPM(\'customer\')">New</button></div><div id="cb" style="display:none;font-size:.6rem;margin-top:3px"></div></div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPM(\'bank\',this)">Bank</div><div class="pl" onclick="setPM(\'emoney\',this)">EMoney</div><div class="pl" onclick="setPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPM(\'split\',this)">Split</div></div></div>';
   h+='<div id="pd"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Discount Rs</label><input class="ip" id="disc" type="number" placeholder="0" min="0" oninput="updSum()"></div><div class="fg"><label class="lb">Discount %</label><input class="ip" id="disc-pct" type="number" placeholder="0" min="0" max="100" oninput="calcDiscPct()"></div></div>';
@@ -641,7 +661,7 @@ function rBuy(){
   h+='<div class="fg"><label class="lb">Colour</label><input class="ip" id="pcl" placeholder="Navy Blue..." oninput="updSKU()"></div>';
   h+='<div class="sku-prev"><div style="font-size:.55rem;color:var(--ink3);text-transform:uppercase;margin-bottom:3px">SKU Preview</div><div class="sku-code" id="sku">Select category...</div></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="pq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs</label><input class="ip" id="pcs" type="number" placeholder="0"></div></div>';
-  h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\')">List</button><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
+  h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
   h+='<div class="ib">Sale price set at billing time.</div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">Owner</div></div></div>';
   h+='<div id="ppd"></div><div id="pprev" style="display:none;background:#FDF5E4;border:1.5px solid var(--gold);border-radius:9px;padding:10px 12px;margin-bottom:12px"></div>';
@@ -785,7 +805,7 @@ function rCash(){
   h+='</div></div>';
   h+='<div class="card"><div class="ct">New Entry</div>';
   h+='<div class="fg"><label class="lb">Date</label><input class="ip" id="cd" type="date" value="'+td()+'"></div>';
-  h+='<div class="fg"><label class="lb">Customer / Supplier (optional)</label><div style="display:flex;gap:6px"><input class="ip" id="cpty" placeholder="Name..." style="flex:1"><button class="btn bh bsm" onclick="pickCashParty()">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Customer / Supplier (optional)</label><input class="ip" id="cpty" list="dl-allparties" placeholder="Type or select name..."></div>';
   h+='<div class="fg"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
   h+='<div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details"></div>';
   h+='<div class="fg"><label class="lb">Direction</label><select class="sl" id="cdr"><option value="out">Money Out</option><option value="in">Money In</option></select></div>';
@@ -839,7 +859,7 @@ function oStockMove(mtype){
   }
   h+='</select></div>';
   if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
-  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><div style="display:flex;gap:6px"><input class="ip" id="sm-sup" placeholder="Required" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'supplier\',\'sm-sup\')">List</button></div></div>';
+  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><input class="ip" id="sm-sup" list="dl-suppliers" placeholder="Type or select supplier"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sm-qty" type="number" placeholder="0" oninput="autoFillSmCost()"></div>';
   h+='<div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
   if(mtype==='damaged')h+='<div class="fg"><label class="lb">Damage Stage</label><select class="sl" id="sm-stage"><option value="in_shop">Found in shop</option><option value="on_receipt">Received damaged</option><option value="customer_return">Customer returned damaged</option></select></div>';
@@ -1133,7 +1153,7 @@ async function exportStockReport(){
 // ── STOCK WITH CUSTOMER ──
 function oStockWithCustomer(){
   var h='<div class="ib">Issue stock to customer for home selection. Items tracked separately until sold or returned.</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="swc-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\',\'swc-cust\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="swc-cust" list="dl-customers" placeholder="Type or select customer"></div>';
   h+='<div class="fg"><label class="lb">Expected Return Date</label><input class="ip" id="swc-date" type="date"></div>';
   h+='<div class="ct" style="margin-top:8px">Items to Issue</div>';
   h+='<div id="swc-items"></div>';
@@ -1243,7 +1263,7 @@ async function finalizeSwc(swcId){
 // ── STOCK RESERVATION ──
 function oReservation(){
   var h='<div class="ib">Record advance/token money. Creates customer deposit entry (liability).</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><div style="display:flex;gap:6px"><input class="ip" id="res-cust" placeholder="Customer name" style="flex:1"><button class="btn bh bsm" onclick="pickP(\'customer\',\'res-cust\')">List</button></div></div>';
+  h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="res-cust" list="dl-customers" placeholder="Type or select customer"></div>';
   h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="res-prod"><option value="">Select...</option>';
   for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
   h+='</select></div>';
