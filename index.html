@@ -611,10 +611,7 @@ function rInv(){
   h+='<div class="sc" style="border-left-color:var(--gold)"><div class="sl2">Reserved</div><div class="sv">'+totReserved+'</div></div>';
   h+='<div class="sc" style="border-left-color:#6B3E1A"><div class="sl2">With Customer</div><div class="sv">'+totWithCust+'</div></div>';
   h+='<div class="sc rd"><div class="sl2">Damaged</div><div class="sv">'+totDamaged+'</div></div></div>';
-  h+='<div class="g2" style="margin-bottom:8px">';
-  h+='<button class="btn bs bsm" onclick="oStockMove(\'sales_return\')">Return In</button>';
-  h+='<button class="btn bh bsm" onclick="oStockMove(\'purchase_return\')">Return Out</button>';
-  h+='</div>';
+  h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockMove(\'purchase_return\')">Return Out</button>';
   h+='<div class="g2" style="margin-bottom:12px">';
   h+='<button class="btn br bsm" onclick="oStockMove(\'damaged\')">Damaged</button>';
   h+='<button class="btn bh bsm" onclick="oStockMove(\'other\')">Other</button>';
