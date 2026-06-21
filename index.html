@@ -631,7 +631,12 @@ function rInv(){
   h+='<button class="btn br bsm" onclick="oStockMove(\'damaged\')">Damaged</button>';
   h+='<button class="btn bh bsm" onclick="oStockMove(\'other\')">Other</button>';
   h+='</div>';
-  if(CUP&&CUP.role==='owner')h+='<button class="btn bi" style="width:100%;margin-bottom:12px" onclick="openStockTake()">Physical Verification</button>';
+  if(CUP&&CUP.role==='owner'){
+    h+='<div class="g2" style="margin-bottom:12px">';
+    h+='<button class="btn bi" onclick="openStockTake()">Physical Verification</button>';
+    h+='<button class="btn bh" onclick="showStockCountReports()">View Count Reports</button>';
+    h+='</div>';
+  }
   h+='<div class="g2" style="margin-bottom:8px"><button class="btn bh" onclick="oStockWithCustomer()">Issue to Customer</button><button class="btn bh" onclick="showSwcList()">View With Customer</button></div>';
   h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="showReservedList()">View Reserved Stock</button>';
   h+='<input class="ip" id="is" placeholder="Search..." oninput="iInv()" style="margin-bottom:10px">';
@@ -1177,19 +1182,201 @@ async function saveStockTake(applyAdjustment){
     if(btnEl){btnEl.disabled=false;btnEl.textContent=applyAdjustment?'Apply Adjustment':'Save Report Only';}
   }
 }
-function showReservedList(){
-  var reserved=prods.filter(function(p){return(p.reserved||0)>0;});
-  var h='';
-  if(!reserved.length){h='<div class="em"><div class="ei">-</div><p>No reserved stock</p></div>';}
+// ── PHYSICAL COUNT REPORT VIEWER ──
+async function showStockCountReports(){
+  var rep=await sb.from('stock_count_reports').select('*').order('created_at',{ascending:false}).limit(30);
+  var usersRes=await sb.from('users').select('id,full_name');
+  var userMap={};(usersRes.data||[]).forEach(function(u){userMap[u.id]=u.full_name;});
+  var h='<div class="ib">Tap a report to view item-level detail and export.</div>';
+  var rows=rep.data||[];
+  if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No count reports yet</p></div>';}
   else{
-    for(var i=0;i<reserved.length;i++){
-      var p=reserved[i];
-      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
-      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+p.name+'</div><div style="font-size:.6rem;color:var(--ink3)">'+p.sku+'</div></div>';
-      h+='<div style="text-align:right"><div style="font-size:.85rem;font-weight:700;color:var(--gold)">'+p.reserved+' reserved</div></div></div></div>';
+    window._countReports=rows;
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      var statusColor=r.status==='adjusted'?'var(--sage)':r.status==='saved'?'var(--gold)':'var(--ink3)';
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer" onclick="openCountReportDetail('+i+')">';
+      h+='<div style="display:flex;justify-content:space-between"><div>';
+      h+='<div style="font-size:.75rem;font-weight:700">'+r.report_no+'</div>';
+      h+='<div style="font-size:.6rem;color:var(--ink3)">'+r.count_date+' - '+(userMap[r.performed_by]||'Unknown')+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-size:.6rem;font-weight:700;padding:2px 7px;border-radius:5px;background:var(--cream2);color:'+statusColor+'">'+r.status.toUpperCase()+'</div></div>';
+      h+='</div></div>';
     }
   }
+  omo('Physical Count Reports',h);
+}
+
+async function openCountReportDetail(idx){
+  var rep=window._countReports[idx];if(!rep)return;
+  var items=await sb.from('stock_count_items').select('*,product_variants(sku,products(name))').eq('report_id',rep.id).order('created_at');
+  var rows=items.data||[];
+  window._curCountReport={report:rep,items:rows};
+  var h='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:10px">';
+  h+='<div style="display:flex;justify-content:space-between"><span style="font-size:.65rem;color:var(--ink3)">Date</span><span style="font-size:.7rem;font-weight:600">'+rep.count_date+'</span></div>';
+  h+='<div style="display:flex;justify-content:space-between"><span style="font-size:.65rem;color:var(--ink3)">Status</span><span style="font-size:.7rem;font-weight:700">'+rep.status.toUpperCase()+'</span></div>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h+='<button class="btn bh bsm" onclick="exportCountReportCSV()">Export CSV</button>';
+  h+='<button class="btn bh bsm" onclick="exportCountReportExcel()">Export Excel</button>';
+  h+='</div>';
+  h+='<div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">';
+  h+='<div style="display:grid;grid-template-columns:1.6fr .7fr .7fr .6fr;background:var(--ink);color:white;padding:6px 10px">';
+  h+='<div style="font-size:.52rem;font-weight:700">ITEM</div><div style="text-align:right;font-size:.52rem;font-weight:700">SYSTEM</div><div style="text-align:right;font-size:.52rem;font-weight:700">PHYSICAL</div><div style="text-align:right;font-size:.52rem;font-weight:700">VAR</div>';
+  h+='</div>';
+  for(var i=0;i<rows.length;i++){
+    var it=rows[i];
+    var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
+    var sku=it.product_variants&&it.product_variants.sku||'';
+    var v=it.variance||0;
+    h+='<div style="display:grid;grid-template-columns:1.6fr .7fr .7fr .6fr;padding:7px 10px;border-top:1px solid var(--cream2);background:white">';
+    h+='<div><div style="font-size:.66rem;font-weight:600">'+nm+'</div><div style="font-size:.5rem;color:var(--ink3);font-family:monospace">'+sku+'</div></div>';
+    h+='<div style="text-align:right;font-size:.68rem">'+it.system_qty+'</div>';
+    h+='<div style="text-align:right;font-size:.68rem;font-weight:700">'+it.physical_qty+'</div>';
+    h+='<div style="text-align:right;font-size:.68rem;font-weight:700;color:'+(v===0?'var(--sage)':'var(--red)')+'">'+(v>0?'+':'')+v+'</div>';
+    h+='</div>';
+  }
+  h+='</div>';
+  omo(rep.report_no,h);
+}
+
+function exportCountReportCSV(){
+  var d=window._curCountReport;if(!d){toast('No report loaded','warn');return;}
+  var rows=['Item Code,Item Description,System Qty,Physical Qty,Variance'];
+  d.items.forEach(function(it){
+    var nm=(it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'').replace(/"/g,'""');
+    var sku=it.product_variants&&it.product_variants.sku||'';
+    rows.push('"'+sku+'","'+nm+'",'+it.system_qty+','+it.physical_qty+','+(it.variance||0));
+  });
+  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=d.report.report_no+'.csv';a.click();
+  toast('CSV exported','ok');
+}
+
+function exportCountReportExcel(){
+  var d=window._curCountReport;if(!d){toast('No report loaded','warn');return;}
+  var html='<table border="1"><tr><th>Item Code</th><th>Item Description</th><th>System Qty</th><th>Physical Qty</th><th>Variance</th></tr>';
+  d.items.forEach(function(it){
+    var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
+    var sku=it.product_variants&&it.product_variants.sku||'';
+    html+='<tr><td>'+sku+'</td><td>'+nm+'</td><td>'+it.system_qty+'</td><td>'+it.physical_qty+'</td><td>'+(it.variance||0)+'</td></tr>';
+  });
+  html+='</table>';
+  var blob=new Blob([html],{type:'application/vnd.ms-excel'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=d.report.report_no+'.xls';a.click();
+  toast('Excel file exported','ok');
+}
+
+async function showReservedList(){
+  var res=await sb.from('stock_reservations').select('*,parties(name,current_balance),stock_reservation_items(*,product_variants(sku,purchase_price,products(name)))').eq('status','active').order('created_at',{ascending:false});
+  var h='<div class="ib">Tap a reservation to Complete Sale or Cancel & Release.</div>';
+  var rows=res.data||[];
+  if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No active reservations</p></div>';}
+  else{
+    window._activeReservations=rows;
+    for(var i=0;i<rows.length;i++){
+      var r=rows[i];
+      var items=r.stock_reservation_items||[];
+      var itemTxt=items.map(function(it){return(it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'')+' x'+it.qty_reserved;}).join(', ');
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer" onclick="openReservationDetail('+i+')">';
+      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+r.customer_name+'</div>';
+      h+='<div style="font-size:.6rem;color:var(--ink3)">'+itemTxt+'</div>';
+      h+='<div style="font-size:.56rem;color:var(--ink3)">'+r.reservation_no+' - '+r.reservation_date+'</div></div>';
+      h+='<div style="text-align:right"><div style="font-size:.8rem;font-weight:700;color:var(--gold)">Adv: '+fmt(r.advance_amount)+'</div></div></div></div>';
+    }
+  }
+  h+='<div class="ct" style="margin-top:10px">Recently Closed</div>';
+  var past=await sb.from('stock_reservations').select('reservation_no,customer_name,status,advance_amount,reservation_date').neq('status','active').order('created_at',{ascending:false}).limit(10);
+  var prows=past.data||[];
+  if(!prows.length)h+='<div class="em" style="padding:14px"><p style="font-size:.65rem">No history yet</p></div>';
+  else{for(var j=0;j<prows.length;j++){var pr=prows[j];h+='<div class="rr"><span>'+pr.customer_name+' - '+pr.reservation_no+'</span><span style="font-weight:700;color:'+(pr.status==='completed'?'var(--sage)':'var(--red)')+'">'+pr.status+'</span></div>';}}
   omo('Reserved Stock',h);
+}
+
+function openReservationDetail(idx){
+  var r=window._activeReservations[idx];
+  if(!r)return;
+  window._curReservation=r;
+  var items=r.stock_reservation_items||[];
+  var it=items[0]||{};
+  var pname=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
+  var cost=it.product_variants&&it.product_variants.purchase_price||0;
+  var h='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
+  h+='<div style="font-size:.8rem;font-weight:700">'+r.customer_name+'</div>';
+  h+='<div style="font-size:.65rem;color:var(--ink3);margin-bottom:8px">'+r.reservation_no+' - '+r.reservation_date+'</div>';
+  h+='<div style="font-size:.72rem">'+pname+' x'+it.qty_reserved+'</div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-top:8px"><span style="font-size:.65rem;color:var(--ink3)">Advance Paid</span><span style="font-weight:700;color:var(--gold)">'+fmt(r.advance_amount)+'</span></div>';
+  h+='</div>';
+  h+='<div class="ct">Complete Sale</div>';
+  h+='<div class="fg"><label class="lb">Final Sale Price (total)</label><input class="ip" id="rsv-finalprice" type="number" value="'+(it.sale_price*it.qty_reserved||'')+'" placeholder="0"></div>';
+  h+='<div class="fg"><label class="lb">Remaining Balance Payment</label><select class="sl" id="rsv-paymode"><option value="cash">Cash Now</option><option value="credit">Credit (AR)</option></select></div>';
+  h+='<button class="btn bs" style="margin-bottom:14px" onclick="completeReservationSale()">Complete Sale</button>';
+  h+='<div class="ct">Cancel Reservation</div>';
+  h+='<div class="fg"><label class="lb">Advance Money</label><select class="sl" id="rsv-cancelmode"><option value="refund">Refund to Customer (cash out)</option><option value="forfeit">Forfeit (keep as shop income)</option></select></div>';
+  h+='<button class="btn br" onclick="cancelReservation()">Cancel & Release Stock</button>';
+  omo('Reservation: '+r.reservation_no,h);
+}
+
+async function completeReservationSale(){
+  var r=window._curReservation;if(!r)return;
+  var finalPrice=Number(document.getElementById('rsv-finalprice')&&document.getElementById('rsv-finalprice').value||0);
+  var payMode2=document.getElementById('rsv-paymode')&&document.getElementById('rsv-paymode').value;
+  if(!finalPrice||finalPrice<=0){toast('Enter final sale price','err');return;}
+  var items=r.stock_reservation_items||[];
+  var it=items[0];if(!it){toast('No item found','err');return;}
+  var cost=(it.product_variants&&it.product_variants.purchase_price)||0;
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  try{
+    // Deduct stock + release the reserved hold
+    await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sale',p_qty:it.qty_reserved,p_reason:'Reservation completed: '+r.reservation_no,p_cost_impact:cost,p_user_id:CUP&&CUP.id});
+    var p3=prods.find(function(p){return p.id===it.variant_id;});
+    if(p3)await sb.from('inventory').update({qty_reserved:Math.max(0,(p3.reserved||0)-it.qty_reserved)}).eq('variant_id',it.variant_id);
+
+    var saleIns=await insertWithUniqueNo('transactions','BILL',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:r.customer_party_id,total_amount:finalPrice,paid_amount:finalPrice,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Reservation completed: '+r.reservation_no};});
+    var txnId=saleIns.data.id;
+    // Full invoice as debit on customer (nets against the advance credit already on file)
+    await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:finalPrice,description:'Sale (Reservation): '+r.reservation_no,created_by:CUP&&CUP.id});
+    var remaining=Math.max(0,finalPrice-Number(r.advance_amount||0));
+    if(remaining>0&&payMode2==='cash'&&ca){
+      await sb.from('ledger_entries').insert([
+        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:remaining,description:'Balance received: '+r.reservation_no,created_by:CUP&&CUP.id},
+        {transaction_id:txnId,entry_date:td(),entry_type:'credit',account_category:'party',party_id:r.customer_party_id,amount:remaining,description:'Balance settled: '+r.reservation_no,created_by:CUP&&CUP.id}
+      ]);
+    }
+    await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*it.qty_reserved,description:'COGS: '+r.reservation_no,created_by:CUP&&CUP.id});
+    await sb.from('stock_reservations').update({status:'completed'}).eq('id',r.id);
+    logActivity('reservation_completed','reservation',{reservation_no:r.reservation_no,final_price:finalPrice});
+    await loadData();cmo();toast('Sale completed: '+saleIns.no,'ok',6000);
+  }catch(ex){toast(ex.message,'err');}
+}
+
+async function cancelReservation(){
+  var r=window._curReservation;if(!r)return;
+  var mode=document.getElementById('rsv-cancelmode')&&document.getElementById('rsv-cancelmode').value;
+  if(!confirm('Cancel reservation '+r.reservation_no+'? This releases the stock hold.'))return;
+  var items=r.stock_reservation_items||[];
+  var it=items[0];
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  try{
+    if(it){
+      var p3=prods.find(function(p){return p.id===it.variant_id;});
+      if(p3)await sb.from('inventory').update({qty_reserved:Math.max(0,(p3.reserved||0)-it.qty_reserved)}).eq('variant_id',it.variant_id);
+    }
+    var cancelIns=await insertWithUniqueNo('transactions','RESCX',function(noVal){return{transaction_no:noVal,transaction_type:'payment_made',transaction_date:td(),party_id:r.customer_party_id,total_amount:r.advance_amount,paid_amount:mode==='refund'?r.advance_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:(mode==='refund'?'Refund':'Forfeit')+' reservation: '+r.reservation_no};});
+    var txnId=cancelIns.data.id;
+    if(mode==='refund'&&ca){
+      await sb.from('ledger_entries').insert([
+        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:r.advance_amount,description:'Refund deposit: '+r.reservation_no,created_by:CUP&&CUP.id},
+        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:r.advance_amount,description:'Refund cash out: '+r.reservation_no,created_by:CUP&&CUP.id}
+      ]);
+    } else {
+      await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:r.advance_amount,description:'Forfeited deposit (kept as income): '+r.reservation_no,created_by:CUP&&CUP.id});
+    }
+    await sb.from('stock_reservations').update({status:'cancelled'}).eq('id',r.id);
+    logActivity('reservation_cancelled','reservation',{reservation_no:r.reservation_no,mode:mode});
+    await loadData();cmo();toast('Reservation cancelled, stock released','ok',5000);
+  }catch(ex){toast(ex.message,'err');}
 }
 async function exportStockReport(){
   var s=await sb.rpc('get_inventory_report');
