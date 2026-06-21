@@ -131,6 +131,15 @@ window.onerror=function(m,s,l){var e=document.getElementById('le');if(e){e.style
 var sb=(function(){var c=supabase.createClient('https://fqubaesqzfmxvbtqconu.supabase.co','eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZxdWJhZXNxemZteHZidHFjb251Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxODIwNTMsImV4cCI6MjA5NDc1ODA1M30.vqDRl0LGYOukQBRK7aegaXgCKxi-r65IwyNZKvGnUIk');return c;})();
 var $=function(id){return document.getElementById(id);};
 var fmt=function(n){return 'Rs'+Number(n||0).toLocaleString();};
+// Bulletproof unique-number generator: tries the RPC sequence first,
+// falls back to a timestamp+random suffix that CANNOT collide (bypasses broken counters)
+async function genUniqueNo(prefix,attemptNum){
+  if(attemptNum===0){
+    var r=await sb.rpc('generate_transaction_no',{p_prefix:prefix});
+    if(r.data)return r.data;
+  }
+  return prefix+'-'+Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase();
+}
 var td=function(){return new Date().toISOString().split('T')[0];};
 var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
 var CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF','Maxi':'MAX','Kurti':'KRT','Shalwar':'SHL','Palazzo':'PLZ','Skirt':'SKT','Leggings':'LGG','Night Suit':'NGT','Inner Wear':'INW','Others':'OTH'};
@@ -708,12 +717,12 @@ async function savePur(){
         prodId=prod.data.id;
       }
     }
-    // Retry up to 3 times if SKU collides (handles double-tap race condition)
+    // Bulletproof retry: bypass broken counter after first failure with timestamp-based unique SKU
     var skuN,variant;
     for(var attempt=0;attempt<3;attempt++){
-      skuN=await sb.rpc('generate_transaction_no',{p_prefix:prefix});
-      variant=await sb.from('product_variants').insert({product_id:prodId,sku:skuN.data,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id}).select().single();
-      if(!variant.error)break;
+      var skuVal=await genUniqueNo(prefix,attempt);
+      variant=await sb.from('product_variants').insert({product_id:prodId,sku:skuVal,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id}).select().single();
+      if(!variant.error){skuN={data:skuVal};break;}
       if(variant.error&&variant.error.message&&variant.error.message.indexOf('duplicate')>=0){
         await new Promise(function(r){setTimeout(r,150*(attempt+1));});
         continue;
@@ -721,7 +730,14 @@ async function savePur(){
       throw variant.error;
     }
     if(variant.error)throw variant.error;
-    var txn=await sb.from('transactions').insert({transaction_no:purNo.data,transaction_type:'purchase',transaction_date:td(),party_id:sp&&sp.id||null,total_amount:tot,paid_amount:pd,payment_status:purPayMode==='credit'?'credit':purPayMode==='partial'?'partial':'paid',performed_by:CUP&&CUP.id}).select().single();
+    var txn,txnNoUsed;
+    for(var ta=0;ta<3;ta++){
+      txnNoUsed=ta===0?purNo.data:await genUniqueNo('PUR',ta);
+      txn=await sb.from('transactions').insert({transaction_no:txnNoUsed,transaction_type:'purchase',transaction_date:td(),party_id:sp&&sp.id||null,total_amount:tot,paid_amount:pd,payment_status:purPayMode==='credit'?'credit':purPayMode==='partial'?'partial':'paid',performed_by:CUP&&CUP.id}).select().single();
+      if(!txn.error)break;
+      if(txn.error&&txn.error.message&&txn.error.message.indexOf('duplicate')>=0){await new Promise(function(r){setTimeout(r,150*(ta+1));});continue;}
+      throw txn.error;
+    }
     if(txn.error)throw txn.error;
     var pur=await sb.from('purchases').insert({transaction_id:txn.data.id,supplier_party_id:sp&&sp.id||null,purchase_date:td(),total_amount:tot,paid_amount:pd,payment_mode:purPayMode,payment_source_account_id:payAccId}).select().single();
     if(pur.error)throw pur.error;
@@ -1207,12 +1223,12 @@ async function saveSwc(){
   var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
   if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
   try{
-    // Retry up to 3 times if transaction_no collides (handles double-tap race condition)
+    // Bulletproof retry: bypass broken counter after first failure with timestamp-based unique number
     var swcNo,swc;
     for(var attempt=0;attempt<3;attempt++){
-      swcNo=await sb.rpc('generate_transaction_no',{p_prefix:'SWC'});
-      swc=await sb.from('stock_with_customer').insert({transaction_no:swcNo.data,customer_party_id:cp&&cp.id,customer_name:cust,issue_date:td(),expected_return:document.getElementById('swc-date')&&document.getElementById('swc-date').value||null,notes:document.getElementById('swc-notes')&&document.getElementById('swc-notes').value||'',performed_by:CUP&&CUP.id}).select().single();
-      if(!swc.error)break;
+      var swcVal=await genUniqueNo('SWC',attempt);
+      swc=await sb.from('stock_with_customer').insert({transaction_no:swcVal,customer_party_id:cp&&cp.id,customer_name:cust,issue_date:td(),expected_return:document.getElementById('swc-date')&&document.getElementById('swc-date').value||null,notes:document.getElementById('swc-notes')&&document.getElementById('swc-notes').value||'',performed_by:CUP&&CUP.id}).select().single();
+      if(!swc.error){swcNo={data:swcVal};break;}
       if(swc.error&&swc.error.message&&swc.error.message.indexOf('duplicate')>=0){
         await new Promise(function(r){setTimeout(r,150*(attempt+1));});
         continue;
