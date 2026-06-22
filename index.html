@@ -369,8 +369,16 @@ async function iDash(){
   if(ca){var ob=await sb.from('opening_balances').select('id').eq('balance_date',td()).eq('account_id',ca.id).maybeSingle();if(!ob.data){var obEl=$('ob');if(obEl)obEl.style.display='block';}}
   var s=await sb.rpc('get_dashboard_summary',{p_date:td()});
   var ds=$('ds');var dr=$('dr');
+  // Net Sales: subtract sale returns from gross sales figures
+  var monthStart=td().slice(0,8)+'01';
+  var todayRetQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').eq('transaction_date',td());
+  var monthRetQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',monthStart);
+  var todayRet=(todayRetQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
+  var monthRet=(monthRetQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
   if(s.data&&ds){
-    ds.innerHTML='<div class="sc"><div class="sl2">Today Sales</div><div class="sv">'+fmt(s.data.today_sales)+'</div></div><div class="sc sg2"><div class="sl2">Profit</div><div class="sv">'+fmt(s.data.today_profit)+'</div></div><div class="sc go"><div class="sl2">Cash</div><div class="sv">'+fmt(s.data.cash_balance)+'</div></div><div class="sc rd"><div class="sl2">Expenses</div><div class="sv">'+fmt(s.data.today_expenses)+'</div></div><div class="sc"><div class="sl2">Monthly</div><div class="sv">'+fmt(s.data.monthly_sales)+'</div></div><div class="sc sg2"><div class="sl2">M.Profit</div><div class="sv">'+fmt(s.data.monthly_profit)+'</div></div><div class="sc" style="border-left-color:var(--ink3)"><div class="sl2">Receivables</div><div class="sv">'+fmt(s.data.total_receivables)+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(s.data.total_payables)+'</div></div>';
+    var netToday=Math.max(0,Number(s.data.today_sales||0)-todayRet);
+    var netMonthly=Math.max(0,Number(s.data.monthly_sales||0)-monthRet);
+    ds.innerHTML='<div class="sc"><div class="sl2">Net Sales (Today)</div><div class="sv">'+fmt(netToday)+'</div>'+(todayRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(todayRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">Profit</div><div class="sv">'+fmt(s.data.today_profit)+'</div></div><div class="sc go"><div class="sl2">Cash</div><div class="sv">'+fmt(s.data.cash_balance)+'</div></div><div class="sc rd"><div class="sl2">Expenses</div><div class="sv">'+fmt(s.data.today_expenses)+'</div></div><div class="sc"><div class="sl2">Net Sales (Month)</div><div class="sv">'+fmt(netMonthly)+'</div>'+(monthRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(monthRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">M.Profit</div><div class="sv">'+fmt(s.data.monthly_profit)+'</div></div><div class="sc" style="border-left-color:var(--ink3)"><div class="sl2">Receivables</div><div class="sv">'+fmt(s.data.total_receivables)+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(s.data.total_payables)+'</div></div>';
     if(dr){var ob2=ca?ca.opening_balance:0;dr.innerHTML='<div class="ct" style="color:var(--gold)">Cash Reconciliation</div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>Opening</span><span>'+fmt(ob2)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>+ Sales</span><span>'+fmt(s.data.today_sales)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>- Expenses</span><span>- '+fmt(s.data.today_expenses)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:7px;margin-top:5px;color:var(--sage)"><span>Expected</span><span>'+fmt(ob2+Number(s.data.today_sales)-Number(s.data.today_expenses))+'</span></div>';}
   }
   var sl=await sb.from('sales').select('*,transactions(transaction_no)').eq('sale_date',td()).order('created_at',{ascending:false}).limit(10);
@@ -833,11 +841,48 @@ async function genR(){
   else if(rTab2==='pl')await rPL(from,to,c);
   else rLedRep(c);
 }
-async function rSales(f,t,c){lastReportTitle='Sales_'+f+'_'+t;var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled)').gte('sale_date',f).lte('sale_date',t).order('sale_date',{ascending:false});var v=(s.data||[]).filter(function(s){return!s.transactions||!s.transactions.is_cancelled;});var tot=v.reduce(function(s,t){return s+Number(t.total_amount||0);},0);var mg=v.reduce(function(s,t){return s+Number(t.gross_profit||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Total</div><div class="sv">'+fmt(tot)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+v.length+' bills</div></div><div class="sc sg2"><div class="sl2">Margin</div><div class="sv">'+fmt(mg)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Transactions</div><div>'+f+' to '+t+'</div></div>'+v.map(function(s){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(s.transactions&&s.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+s.sale_date+' - '+s.customer_name+' - '+s.payment_mode+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(s.total_amount)+'</div><div style="font-size:.58rem;color:var(--sage)">+'+fmt(s.gross_profit)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(tot)+'</span></div></div>';  lastReportData=(s.data||[]).map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Payment:r.payment_mode};});
+async function rSales(f,t,c){
+  lastReportTitle='Sales_'+f+'_'+t;
+  var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled)').gte('sale_date',f).lte('sale_date',t).order('sale_date',{ascending:false});
+  var v=(s.data||[]).filter(function(s){return!s.transactions||!s.transactions.is_cancelled;});
+  var tot=v.reduce(function(s,t){return s+Number(t.total_amount||0);},0);
+  var mg=v.reduce(function(s,t){return s+Number(t.gross_profit||0);},0);
+  var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t);
+  var retTot=(retQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
+  var netTot=Math.max(0,tot-retTot);
+  c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Net Sales</div><div class="sv">'+fmt(netTot)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+v.length+' bills</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(retTot)+'</div></div><div class="sc sg2"><div class="sl2">Margin</div><div class="sv">'+fmt(mg)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Transactions</div><div>'+f+' to '+t+'</div></div>'+v.map(function(s){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(s.transactions&&s.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+s.sale_date+' - '+s.customer_name+' - '+s.payment_mode+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(s.total_amount)+'</div><div style="font-size:.58rem;color:var(--sage)">+'+fmt(s.gross_profit)+'</div></span></div>';}).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Sales Returns</span><span>- '+fmt(retTot)+'</span></div><div class="rf"><span>Net Sales</span><span>'+fmt(netTot)+'</span></div></div>';
+  lastReportData=v.map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Payment:r.payment_mode};});
 }
-async function rPur(f,t,c){var p=await sb.from('purchases').select('*,transactions(transaction_no),parties(name)').gte('purchase_date',f).lte('purchase_date',t).order('purchase_date',{ascending:false});var tot=(p.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Total</div><div class="sv">'+fmt(tot)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Purchases</div></div>'+(p.data||[]).map(function(pr){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(pr.transactions&&pr.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+pr.purchase_date+' - '+(pr.parties&&pr.parties.name||'')+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(pr.total_amount)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(tot)+'</span></div></div>';}
+async function rPur(f,t,c){
+  var p=await sb.from('purchases').select('*,transactions(transaction_no),parties(name)').gte('purchase_date',f).lte('purchase_date',t).order('purchase_date',{ascending:false});
+  var tot=(p.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);
+  var pretQ=await sb.from('transactions').select('total_amount').eq('transaction_type','purchase_return').gte('transaction_date',f).lte('transaction_date',t);
+  var pretTot=(pretQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
+  var netTot=Math.max(0,tot-pretTot);
+  c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Net Purchases</div><div class="sv">'+fmt(netTot)+'</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(pretTot)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Purchases</div></div>'+(p.data||[]).map(function(pr){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(pr.transactions&&pr.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+pr.purchase_date+' - '+(pr.parties&&pr.parties.name||'')+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(pr.total_amount)+'</div></span></div>';}).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Purchase Returns</span><span>- '+fmt(pretTot)+'</span></div><div class="rf"><span>Net Purchases</span><span>'+fmt(netTot)+'</span></div></div>';
+}
 async function rStock(c){var inv=await sb.rpc('get_inventory_report');var tv=(inv.data||[]).reduce(function(s,p){return s+Number(p.stock_value||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">SKUs</div><div class="sv">'+(inv.data||[]).length+'</div></div><div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div></div><div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">'+(inv.data||[]).map(function(p){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(p.product_name||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(p.sku||'')+' - '+(p.age_days||0)+'d</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(p.qty_available<=2?'var(--red)':'var(--sage)')+'">'+( p.qty_available||0)+'</div><div style="font-size:.58rem;color:var(--ink3)">'+fmt(p.stock_value||0)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total Value</span><span>'+fmt(tv)+'</span></div></div>';}
-async function rPL(f,t,c){var s=await sb.from('sales').select('total_amount,gross_profit').gte('sale_date',f).lte('sale_date',t);var e=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('direction','out');var rev=(s.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);var gp=(s.data||[]).reduce(function(s,t){return s+Number(t.gross_profit||0);},0);var exp=(e.data||[]).reduce(function(s,t){return s+Number(t.amount||0);},0);var np=gp-exp;c.innerHTML='<div style="margin-bottom:14px"><div class="rh"><div>P&L: '+f+' to '+t+'</div></div><div class="rr"><span>Revenue</span><span style="font-weight:700">'+fmt(rev)+'</span></div><div class="rr"><span style="color:var(--red)">- COGS</span><span style="color:var(--red)">- '+fmt(rev-gp)+'</span></div><div class="rr" style="background:var(--cream2)"><span style="font-weight:700;color:var(--sage)">Gross Profit</span><span style="font-weight:700;color:var(--sage)">'+fmt(gp)+'</span></div><div class="rr"><span style="color:var(--red)">- Expenses</span><span style="color:var(--red)">- '+fmt(exp)+'</span></div><div class="rf" style="color:'+(np>=0?'var(--sage)':'var(--red)')+'"><span>Net Profit</span><span>'+fmt(np)+'</span></div></div><div class="sg"><div class="sc sg2"><div class="sl2">Gross %</div><div class="sv">'+(rev>0?((gp/rev)*100).toFixed(1):0)+'%</div></div><div class="sc '+(np>=0?'sg2':'rd')+'"><div class="sl2">Net %</div><div class="sv">'+(rev>0?((np/rev)*100).toFixed(1):0)+'%</div></div></div>';}
+async function rPL(f,t,c){
+  var s=await sb.from('sales').select('total_amount,gross_profit').gte('sale_date',f).lte('sale_date',t);
+  var e=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('direction','out');
+  var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t);
+  var grossRev=(s.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);
+  var salesReturns=(retQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
+  var netRev=Math.max(0,grossRev-salesReturns);
+  var gpGross=(s.data||[]).reduce(function(s,t){return s+Number(t.gross_profit||0);},0);
+  var gp=gpGross-salesReturns; // returns treated as full margin reduction (no separate cost-of-return tracked)
+  var exp=(e.data||[]).reduce(function(s,t){return s+Number(t.amount||0);},0);
+  var np=gp-exp;
+  c.innerHTML='<div style="margin-bottom:14px"><div class="rh"><div>P&L: '+f+' to '+t+'</div></div>'+
+    '<div class="rr"><span>Gross Sales</span><span style="font-weight:700">'+fmt(grossRev)+'</span></div>'+
+    '<div class="rr"><span style="color:var(--red)">- Sales Returns</span><span style="color:var(--red)">- '+fmt(salesReturns)+'</span></div>'+
+    '<div class="rr" style="background:var(--cream2)"><span style="font-weight:700">Net Sales</span><span style="font-weight:700">'+fmt(netRev)+'</span></div>'+
+    '<div class="rr"><span style="color:var(--red)">- COGS</span><span style="color:var(--red)">- '+fmt(grossRev-gpGross)+'</span></div>'+
+    '<div class="rr" style="background:var(--cream2)"><span style="font-weight:700;color:var(--sage)">Gross Profit</span><span style="font-weight:700;color:var(--sage)">'+fmt(gp)+'</span></div>'+
+    '<div class="rr"><span style="color:var(--red)">- Expenses</span><span style="color:var(--red)">- '+fmt(exp)+'</span></div>'+
+    '<div class="rf" style="color:'+(np>=0?'var(--sage)':'var(--red)')+'"><span>Net Profit</span><span>'+fmt(np)+'</span></div></div>'+
+    '<div class="sg"><div class="sc sg2"><div class="sl2">Gross %</div><div class="sv">'+(netRev>0?((gp/netRev)*100).toFixed(1):0)+'%</div></div><div class="sc '+(np>=0?'sg2':'rd')+'"><div class="sl2">Net %</div><div class="sv">'+(netRev>0?((np/netRev)*100).toFixed(1):0)+'%</div></div></div>';
+}
 function rLedRep(c){var cr=parties.filter(function(p){return p.party_type==='customer'&&p.current_balance>0;});var sp2=parties.filter(function(p){return p.party_type==='supplier'&&p.current_balance>0;});c.innerHTML='<div class="sg"><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Receivables</div><div class="sv">'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Customer Outstanding</div></div>'+cr.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div><div style="margin-bottom:14px"><div class="rh"><div>Supplier Payables</div></div>'+sp2.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>';}
 
 
@@ -905,7 +950,7 @@ function oStockMove(mtype){
   }
   h+='</select></div>';
   if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
-  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier *</label><input class="ip" id="sm-sup" list="dl-suppliers" placeholder="Type or select supplier"></div>';
+  if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier (optional)</label><input class="ip" id="sm-sup" list="dl-suppliers" placeholder="Leave blank if no recovery expected"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sm-qty" type="number" placeholder="0" oninput="autoFillSmCost()"></div>';
   h+='<div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
   if(mtype==='damaged')h+='<div class="fg"><label class="lb">Damage Stage</label><select class="sl" id="sm-stage"><option value="in_shop">Found in shop</option><option value="on_receipt">Received damaged</option><option value="customer_return">Customer returned damaged</option></select></div>';
@@ -942,12 +987,14 @@ async function saveStockMove(mtype){
   // ── STEP 2: Purchase Return specific mandatory fields ──
   if(mtype==='purchase_return'){
     var supName=($('sm-sup')&&$('sm-sup').value||'').trim();
-    if(!supName){toast('Supplier name is required for purchase return','err');$('sm-sup')&&$('sm-sup').focus();return;}
-    // Verify supplier exists in ledger
-    var spCheck=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
-    if(!spCheck){
-      var ok=confirm('Supplier "'+supName+'" not found in ledger.\nCreate new supplier record?');
-      if(!ok){toast('Select a valid supplier from List','err');return;}
+    // Supplier is OPTIONAL: some returns have no recovery/payable adjustment (e.g. disposed/written-off stock).
+    // Only verify/offer-create when a name was actually entered.
+    if(supName){
+      var spCheck=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
+      if(!spCheck){
+        var ok=confirm('Supplier "'+supName+'" not found in ledger.\nCreate new supplier record?');
+        if(!ok){toast('Leave Supplier blank to proceed without one, or pick a valid name','err');return;}
+      }
     }
   }
 
@@ -985,31 +1032,35 @@ async function saveStockMove(mtype){
   // ── STEP 6: Purchase Return — create transaction + ledger entry ──
   if(mtype==='purchase_return'){
     var supName2=($('sm-sup')&&$('sm-sup').value||'').trim();
-    var sp=parties.find(function(p){return p.name===supName2&&p.party_type==='supplier';});
-    if(!sp){
-      var nsp=await sb.from('parties').insert({party_type:'supplier',name:supName2,created_by:CUP&&CUP.id}).select().single();
-      if(nsp.data){parties.push(nsp.data);sp=nsp.data;}
-    }
-    if(sp){
-      var pretIns=await insertWithUniqueNo('transactions','PRET',function(noVal){return{
-        transaction_no:noVal,transaction_type:'purchase_return',
-        transaction_date:td(),party_id:sp.id,
-        total_amount:totalVal,paid_amount:0,
-        payment_status:'pending',performed_by:CUP&&CUP.id,
-        notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn
-      };});
-      var no2={data:pretIns.no};var txn2={data:pretIns.data};
-      if(txn2.data){
-        // DR Supplier Payable (reduces what we owe) / CR Inventory
-        await sb.from('ledger_entries').insert({
-          transaction_id:txn2.data.id,entry_date:td(),
-          entry_type:'debit',account_category:'party',
-          party_id:sp.id,amount:totalVal,
-          description:'Purchase Return: '+p.name+' x'+qty,
-          created_by:CUP&&CUP.id
-        });
-        toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | Supplier: '+sp.name,'ok',7000);
+    var sp=null;
+    if(supName2){
+      sp=parties.find(function(p){return p.name===supName2&&p.party_type==='supplier';});
+      if(!sp){
+        var nsp=await sb.from('parties').insert({party_type:'supplier',name:supName2,created_by:CUP&&CUP.id}).select().single();
+        if(nsp.data){parties.push(nsp.data);sp=nsp.data;}
       }
+    }
+    // Transaction is always recorded, with or without a supplier — keeps Net Purchases reporting accurate either way
+    var pretIns=await insertWithUniqueNo('transactions','PRET',function(noVal){return{
+      transaction_no:noVal,transaction_type:'purchase_return',
+      transaction_date:td(),party_id:sp&&sp.id||null,
+      total_amount:totalVal,paid_amount:0,
+      payment_status:sp?'pending':'paid',performed_by:CUP&&CUP.id,
+      notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn+(sp?'':' (No supplier — no payable recovery expected)')
+    };});
+    var no2={data:pretIns.no};var txn2={data:pretIns.data};
+    if(sp&&txn2.data){
+      // DR Supplier Payable (reduces what we owe)
+      await sb.from('ledger_entries').insert({
+        transaction_id:txn2.data.id,entry_date:td(),
+        entry_type:'debit',account_category:'party',
+        party_id:sp.id,amount:totalVal,
+        description:'Purchase Return: '+p.name+' x'+qty,
+        created_by:CUP&&CUP.id
+      });
+      toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | Supplier: '+sp.name,'ok',7000);
+    } else {
+      toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | No supplier (stock written off, no recovery)','ok',7000);
     }
   }
 
@@ -1616,6 +1667,7 @@ function setSF(mode,el){
   el.classList.add('on');
   renderSalesTab();
 }
+var _salesReturnsTotal=0;
 async function iSalesTab(){
   var from=$('st-from')&&$('st-from').value||td();
   var to=$('st-to')&&$('st-to').value||td();
@@ -1623,18 +1675,22 @@ async function iSalesTab(){
   if(list)list.innerHTML='<div class="em"><div style="width:22px;height:22px;border:2px solid rgba(0,0,0,.1);border-radius:50%;border-top-color:var(--gold);animation:sp .8s linear infinite;margin:0 auto"></div></div>';
   var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled),sale_items(qty,sale_price,purchase_price,product_variants(sku,products(name)))').gte('sale_date',from).lte('sale_date',to).order('created_at',{ascending:false});
   _salesData=(s.data||[]).filter(function(r){return!r.transactions||!r.transactions.is_cancelled;});
+  var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',from).lte('transaction_date',to);
+  _salesReturnsTotal=(retQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
   renderSalesTab();
 }
 function renderSalesTab(){
   var data=_sfMode==='all'?_salesData:_salesData.filter(function(r){return r.payment_mode===_sfMode;});
   var totRev=data.reduce(function(s,r){return s+Number(r.total_amount||0);},0);
+  var netRev=Math.max(0,totRev-(_salesReturnsTotal||0));
   var totProfit=data.reduce(function(s,r){return s+Number(r.gross_profit||0);},0);
   var totBills=data.length;
   var avgBill=totBills?Math.round(totRev/totBills):0;
   var kpi=$('stk');
   if(kpi)kpi.innerHTML=
-    '<div class="sc"><div class="sl2">Revenue</div><div class="sv">'+fmt(totRev)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+totBills+' bills</div></div>'+
-    '<div class="sc sg2"><div class="sl2">Gross Profit</div><div class="sv">'+fmt(totProfit)+'</div><div style="font-size:.54rem;color:var(--sage)">'+(totRev?((totProfit/totRev)*100).toFixed(1):0)+'%</div></div>'+
+    '<div class="sc"><div class="sl2">Net Sales</div><div class="sv">'+fmt(netRev)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+totBills+' bills</div></div>'+
+    '<div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(_salesReturnsTotal||0)+'</div></div>'+
+    '<div class="sc sg2"><div class="sl2">Gross Profit</div><div class="sv">'+fmt(totProfit)+'</div><div style="font-size:.54rem;color:var(--sage)">'+(netRev?((totProfit/netRev)*100).toFixed(1):0)+'%</div></div>'+
     '<div class="sc go"><div class="sl2">Avg Bill</div><div class="sv">'+fmt(avgBill)+'</div></div>'+
     '<div class="sc rd"><div class="sl2">Outstanding</div><div class="sv">'+fmt(data.filter(function(r){return r.payment_mode==='credit';}).reduce(function(s,r){return s+Number(r.total_amount||0)-Number(r.paid_amount||0);},0))+'</div></div>';
   var list=$('st-list');if(!list)return;
