@@ -294,6 +294,7 @@ async function loadData(){
     (inv2.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.damaged=i.qty_damaged||0;p2.salesRet=i.qty_sales_return||0;p2.purRet=i.qty_purchase_return||0;p2.other=i.qty_other||0;p2.withCustomer=i.qty_with_customer||0;p2.reserved=i.qty_reserved||0;}});
   }catch(e){/* columns not yet migrated */}
   updateDatalists();
+  await loadStoreSettings();
 }
 function updateDatalists(){
   var dc=document.getElementById('dl-customers');
@@ -327,6 +328,16 @@ function buildNav(){
       pb.id='pw-btn';pb.className='xb';pb.textContent='PW';
       pb.title='Change Password';pb.onclick=openChangePW;
       xb.parentNode.insertBefore(pb,xb);
+    }
+  }
+  // Owner: Store Settings button
+  if(CUP&&CUP.role==='owner'&&!document.getElementById('set-btn')){
+    var xb3=document.querySelector('.xb');
+    if(xb3&&xb3.parentNode){
+      var sb2=document.createElement('button');
+      sb2.id='set-btn';sb2.className='xb';sb2.textContent='Settings';
+      sb2.title='Store Settings';sb2.onclick=openStoreSettings;
+      xb3.parentNode.insertBefore(sb2,xb3);
     }
   }
   // Owner: Activity Log button
@@ -375,11 +386,16 @@ async function iDash(){
   var monthRetQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',monthStart);
   var todayRet=(todayRetQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
   var monthRet=(monthRetQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
+  // FIX: real Expense figure (nature='expense'), not raw cash-out which now includes Payments too
+  var todayExpQ=await sb.from('cash_entries').select('amount').eq('nature','expense').eq('entry_date',td());
+  var realTodayExp=(todayExpQ.data||[]).reduce(function(s2,r){return s2+Number(r.amount||0);},0);
+  var todayOutQ=await sb.from('cash_entries').select('amount').eq('direction','out').eq('entry_date',td());
+  var todayCashOut=(todayOutQ.data||[]).reduce(function(s2,r){return s2+Number(r.amount||0);},0);
   if(s.data&&ds){
     var netToday=Math.max(0,Number(s.data.today_sales||0)-todayRet);
     var netMonthly=Math.max(0,Number(s.data.monthly_sales||0)-monthRet);
-    ds.innerHTML='<div class="sc"><div class="sl2">Net Sales (Today)</div><div class="sv">'+fmt(netToday)+'</div>'+(todayRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(todayRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">Profit</div><div class="sv">'+fmt(s.data.today_profit)+'</div></div><div class="sc go"><div class="sl2">Cash</div><div class="sv">'+fmt(s.data.cash_balance)+'</div></div><div class="sc rd"><div class="sl2">Expenses</div><div class="sv">'+fmt(s.data.today_expenses)+'</div></div><div class="sc"><div class="sl2">Net Sales (Month)</div><div class="sv">'+fmt(netMonthly)+'</div>'+(monthRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(monthRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">M.Profit</div><div class="sv">'+fmt(s.data.monthly_profit)+'</div></div><div class="sc" style="border-left-color:var(--ink3)"><div class="sl2">Receivables</div><div class="sv">'+fmt(s.data.total_receivables)+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(s.data.total_payables)+'</div></div>';
-    if(dr){var ob2=ca?ca.opening_balance:0;dr.innerHTML='<div class="ct" style="color:var(--gold)">Cash Reconciliation</div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>Opening</span><span>'+fmt(ob2)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>+ Sales</span><span>'+fmt(s.data.today_sales)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>- Expenses</span><span>- '+fmt(s.data.today_expenses)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:7px;margin-top:5px;color:var(--sage)"><span>Expected</span><span>'+fmt(ob2+Number(s.data.today_sales)-Number(s.data.today_expenses))+'</span></div>';}
+    ds.innerHTML='<div class="sc"><div class="sl2">Net Sales (Today)</div><div class="sv">'+fmt(netToday)+'</div>'+(todayRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(todayRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">Profit</div><div class="sv">'+fmt(s.data.today_profit)+'</div></div><div class="sc go"><div class="sl2">Cash</div><div class="sv">'+fmt(s.data.cash_balance)+'</div></div><div class="sc rd"><div class="sl2">Expenses</div><div class="sv">'+fmt(realTodayExp)+'</div></div><div class="sc"><div class="sl2">Net Sales (Month)</div><div class="sv">'+fmt(netMonthly)+'</div>'+(monthRet>0?'<div style="font-size:.5rem;color:var(--red)">Returns: -'+fmt(monthRet)+'</div>':'')+'</div><div class="sc sg2"><div class="sl2">M.Profit</div><div class="sv">'+fmt(s.data.monthly_profit)+'</div></div><div class="sc" style="border-left-color:var(--ink3)"><div class="sl2">Receivables</div><div class="sv">'+fmt(s.data.total_receivables)+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(s.data.total_payables)+'</div></div>';
+    if(dr){var ob2=ca?ca.opening_balance:0;dr.innerHTML='<div class="ct" style="color:var(--gold)">Cash Reconciliation</div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>Opening</span><span>'+fmt(ob2)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>+ Sales</span><span>'+fmt(s.data.today_sales)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:5px"><span>- Cash Out</span><span>- '+fmt(todayCashOut)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:7px;margin-top:5px;color:var(--sage)"><span>Expected</span><span>'+fmt(ob2+Number(s.data.today_sales)-Number(todayCashOut))+'</span></div>';}
   }
   var sl=await sb.from('sales').select('*,transactions(transaction_no)').eq('sale_date',td()).order('created_at',{ascending:false}).limit(10);
   var dd=$('dd');if(!dd)return;
@@ -411,6 +427,8 @@ function rBill(){
   h+='<div id="ci"></div><div id="bs2" style="display:none"></div><div id="ba" style="display:none"></div>';
   h+='<div class="card" style="margin-top:10px"><div class="ct">New Sale</div>';
   h+='<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="bc" list="dl-customers" placeholder="Walk-in" style="flex:1" oninput="onCI()"><button class="btn bh bsm" onclick="newPM(\'customer\')">New</button></div><div id="cb" style="display:none;font-size:.6rem;margin-top:3px"></div></div>';
+  h+='<div class="fg"><label class="lb">Customer WhatsApp (optional)</label><input class="ip" id="bphone" type="tel" placeholder="03XX-XXXXXXX" oninput="onPhoneInput()"></div>';
+  h+='<div class="fg" id="bwa-wrap" style="display:none;margin-bottom:0"><label class="lb"><input type="checkbox" id="bwa" style="accent-color:var(--gold);margin-right:4px">Send Invoice via WhatsApp after sale</label></div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPM(\'bank\',this)">Bank</div><div class="pl" onclick="setPM(\'emoney\',this)">EMoney</div><div class="pl" onclick="setPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPM(\'split\',this)">Split</div></div></div>';
   h+='<div id="pd"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Discount Rs</label><input class="ip" id="disc" type="number" placeholder="0" min="0" oninput="updSum()"></div><div class="fg"><label class="lb">Discount %</label><input class="ip" id="disc-pct" type="number" placeholder="0" min="0" max="100" oninput="calcDiscPct()"></div></div>';
@@ -437,6 +455,26 @@ function setPM(m,el){
   else if(m==='split')d.innerHTML='<div class="g2"><div class="fg"><label class="lb">Cash Rs</label><input class="ip" id="sc2" type="number" placeholder="0"></div><div class="fg"><label class="lb">Rest via</label><select class="sl" id="ss"><option value="credit">Credit</option></select></div></div>';
 }
 function onCI(){var n=($('bc')&&$('bc').value||'').trim();var el=$('cb');if(!el)return;var p=parties.find(function(p){return p.name===n&&p.party_type==='customer';});if(p&&p.current_balance!==0){el.style.display='block';el.textContent='Outstanding: '+fmt(Math.abs(p.current_balance))+' '+(p.current_balance>0?'(owes)':'(credit)');}else el.style.display='none';}
+
+// ── WHATSAPP PHONE HELPERS ──
+function normalizePhone(raw){
+  var digits=(raw||'').replace(/[^0-9]/g,'');
+  if(!digits)return '';
+  if(digits.length===11&&digits.charAt(0)==='0')return '92'+digits.slice(1); // 03XXXXXXXXX -> 923XXXXXXXXX
+  if(digits.length===10&&digits.charAt(0)==='3')return '92'+digits; // 3XXXXXXXXX -> 923XXXXXXXXX
+  if(digits.charAt(0)==='0')return '92'+digits.slice(1);
+  return digits; // already has country code or other intl format
+}
+function isValidPhone(raw){
+  var n=normalizePhone(raw);
+  return n.length>=10&&n.length<=15;
+}
+function onPhoneInput(){
+  var valid=isValidPhone($('bphone')&&$('bphone').value||'');
+  var wrap=$('bwa-wrap');
+  if(wrap)wrap.style.display=valid?'block':'none';
+  if(!valid&&$('bwa'))$('bwa').checked=false;
+}
 function setBC(c,el){bCat=c;var ps=document.querySelectorAll('#cp .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');srch();}
 function srch(){
   var q=($('bs')&&$('bs').value||'').toLowerCase();
@@ -535,15 +573,27 @@ async function completeSale(){
     var trIns=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:td(),party_id:custId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP&&CUP.id};});
     var bn={data:trIns.no};var tr={data:trIns.data};
     var accId2=payMode==='cash'?ca&&ca.id:payMode==='bank'?bankId:payMode==='emoney'?emId:ca&&ca.id;
-    var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:accId2,gross_profit:mg}).select().single();
+    var custPhone=($('bphone')&&$('bphone').value||'').trim();
+    var wantsWA=$('bwa')&&$('bwa').checked&&isValidPhone(custPhone);
+    var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,customer_phone:custPhone||null,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:accId2,gross_profit:mg}).select().single();
     if(sr2.error)throw sr2.error;
     await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     await sb.rpc('post_transaction_ledger',{p_txn_id:tr.data.id,p_txn_type:'sale',p_payment_mode:payMode,p_total:tot,p_paid:payMode==='credit'?0:tot,p_party_id:custId,p_account_id:accId2,p_split_cash:splitCash,p_user_id:CUP&&CUP.id});
     await sb.from('ledger_entries').insert({transaction_id:tr.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cst2,description:'COGS '+bn.data,created_by:CUP&&CUP.id});
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
+
+    // Snapshot for post-sale actions (Print / WhatsApp) — cart gets cleared right after
+    window._lastSale={
+      saleId:sr2.data.id,billNo:bn.data,customer:cust,phone:custPhone,
+      items:cart.map(function(it){return{name:it.name,qty:it.qty,price:it.price,sku:it.sku};}),
+      subtotal:subtotal,discount:disc,total:tot,paymentMode:payMode,
+      cashier:(CUP&&CUP.full_name)||'',date:td()
+    };
+
     await loadData();
-    toast('Done: '+bn.data+' | '+fmt(tot)+' | Margin: '+fmt(mg),'ok',5000);
-    cart=[];if($('bc'))$('bc').value='';renderCart();srch();
+    cart=[];if($('bc'))$('bc').value='';if($('bphone'))$('bphone').value='';if($('bwa'))$('bwa').checked=false;
+    renderCart();srch();
+    showSaleCompleteModal(wantsWA);
   }catch(ex){toast('Error: '+ex.message,'err');}
   if(btn){btn.textContent='Complete Sale';btn.disabled=false;}
 }
@@ -785,7 +835,7 @@ async function savePur(){
 
 function rLed(){
   var h='<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px" id="lt">';
-  var tabs=[['cust','Customers'],['sup','Suppliers'],['own','Owner'],['loan','Loans']];
+  var tabs=[['cust','Customers'],['sup','Suppliers'],['comm','Committees'],['own','Owner'],['loan','Loans']];
   for(var i=0;i<tabs.length;i++)h+='<div class="pl'+(i===0?' on':'')+'" onclick="setLT(\''+tabs[i][0]+'\',this)">'+tabs[i][1]+'</div>';
   h+='</div><div id="lc"></div>';
   h+='<div class="ib" style="margin-top:8px">Ledger entries are auto-generated from Sales, Purchases, Returns, Payments, and Receipts. Manual entry is disabled for accounting integrity.</div>';
@@ -796,7 +846,7 @@ function iLed(){renderLed();}
 function setLT(t,el){lTab=t;var ps=document.querySelectorAll('#lt .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');renderLed();}
 async function renderLed(){
   var c=$('lc');if(!c)return;
-  var tmap={cust:'customer',sup:'supplier',own:'owner',loan:'loan'};
+  var tmap={cust:'customer',sup:'supplier',comm:'committee',own:'owner',loan:'loan'};
   var pt=tmap[lTab];
   var items=parties.filter(function(p){return p.party_type===pt&&(p.current_balance||0)!==0;});
   if(!items.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No outstanding balances</p></div>';return;}
@@ -817,7 +867,7 @@ async function showStmt(id){
   omo(it&&it.name||'Statement',h);
 }
 function oLE(){omo('Add Entry','<div class="fg"><label class="lb">Party Name</label><input class="ip" id="le-p" placeholder="Name"></div><div class="fg"><label class="lb">Type</label><select class="sl" id="le-t"><option>Payment Received</option><option>Payment Made</option><option>Owner Deposit</option><option>Owner Withdrawal</option><option>Loan Received</option><option>Repayment</option></select></div><div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="le-a" type="number" placeholder="0"></div><div class="fg"><label class="lb">Notes</label><input class="ip" id="le-n" placeholder="Optional"></div><button class="btn bi" onclick="saveLE()">Save</button>');}
-async function saveLE(){var pn=$('le-p')&&$('le-p').value.trim();var t=$('le-t')&&$('le-t').value;var amt=Number($('le-a')&&$('le-a').value||0);var n=$('le-n')&&$('le-n').value||'';if(!pn||!amt){toast('Fill party and amount','err');return;}var tmap={cust:'customer',sup:'supplier',own:'owner',loan:'loan'};var pt=tmap[lTab];var p=parties.find(function(p){return p.name===pn&&p.party_type===pt;});if(!p){var nr=await sb.from('parties').insert({party_type:pt,name:pn,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);p=nr.data;}}var isCr=['Payment Received','Owner Deposit','Loan Received'].includes(t);var leIns=await insertWithUniqueNo('transactions','MAN',function(noVal){return{transaction_no:noVal,transaction_type:'payment_received',transaction_date:td(),party_id:p&&p.id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:t+': '+n};});var no={data:leIns.no};var txn={data:leIns.data};await sb.from('ledger_entries').insert({transaction_id:txn.data&&txn.data.id,entry_date:td(),entry_type:isCr?'credit':'debit',account_category:'party',party_id:p&&p.id,amount:amt,description:t+': '+n,created_by:CUP&&CUP.id});cmo();toast('Entry saved','ok');renderLed();}
+async function saveLE(){var pn=$('le-p')&&$('le-p').value.trim();var t=$('le-t')&&$('le-t').value;var amt=Number($('le-a')&&$('le-a').value||0);var n=$('le-n')&&$('le-n').value||'';if(!pn||!amt){toast('Fill party and amount','err');return;}var tmap={cust:'customer',sup:'supplier',comm:'committee',own:'owner',loan:'loan'};var pt=tmap[lTab];var p=parties.find(function(p){return p.name===pn&&p.party_type===pt;});if(!p){var nr=await sb.from('parties').insert({party_type:pt,name:pn,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);p=nr.data;}}var isCr=['Payment Received','Owner Deposit','Loan Received'].includes(t);var leIns=await insertWithUniqueNo('transactions','MAN',function(noVal){return{transaction_no:noVal,transaction_type:'payment_received',transaction_date:td(),party_id:p&&p.id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:t+': '+n};});var no={data:leIns.no};var txn={data:leIns.data};await sb.from('ledger_entries').insert({transaction_id:txn.data&&txn.data.id,entry_date:td(),entry_type:isCr?'credit':'debit',account_category:'party',party_id:p&&p.id,amount:amt,description:t+': '+n,created_by:CUP&&CUP.id});cmo();toast('Entry saved','ok');renderLed();}
 
 
 function rRep(){
@@ -864,7 +914,9 @@ async function rPur(f,t,c){
 async function rStock(c){var inv=await sb.rpc('get_inventory_report');var tv=(inv.data||[]).reduce(function(s,p){return s+Number(p.stock_value||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">SKUs</div><div class="sv">'+(inv.data||[]).length+'</div></div><div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div></div><div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">'+(inv.data||[]).map(function(p){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(p.product_name||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(p.sku||'')+' - '+(p.age_days||0)+'d</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(p.qty_available<=2?'var(--red)':'var(--sage)')+'">'+( p.qty_available||0)+'</div><div style="font-size:.58rem;color:var(--ink3)">'+fmt(p.stock_value||0)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total Value</span><span>'+fmt(tv)+'</span></div></div>';}
 async function rPL(f,t,c){
   var s=await sb.from('sales').select('total_amount,gross_profit').gte('sale_date',f).lte('sale_date',t);
-  var e=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('direction','out');
+  // FIX: only genuine Expense/Income natures hit P&L — Receipts/Payments (now also in cash_entries) are excluded
+  var e=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('nature','expense');
+  var inc=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('nature','income');
   var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t);
   var grossRev=(s.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);
   var salesReturns=(retQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
@@ -872,18 +924,28 @@ async function rPL(f,t,c){
   var gpGross=(s.data||[]).reduce(function(s,t){return s+Number(t.gross_profit||0);},0);
   var gp=gpGross-salesReturns; // returns treated as full margin reduction (no separate cost-of-return tracked)
   var exp=(e.data||[]).reduce(function(s,t){return s+Number(t.amount||0);},0);
-  var np=gp-exp;
+  var otherInc=(inc.data||[]).reduce(function(s,t){return s+Number(t.amount||0);},0);
+  var np=gp+otherInc-exp;
   c.innerHTML='<div style="margin-bottom:14px"><div class="rh"><div>P&L: '+f+' to '+t+'</div></div>'+
     '<div class="rr"><span>Gross Sales</span><span style="font-weight:700">'+fmt(grossRev)+'</span></div>'+
     '<div class="rr"><span style="color:var(--red)">- Sales Returns</span><span style="color:var(--red)">- '+fmt(salesReturns)+'</span></div>'+
     '<div class="rr" style="background:var(--cream2)"><span style="font-weight:700">Net Sales</span><span style="font-weight:700">'+fmt(netRev)+'</span></div>'+
     '<div class="rr"><span style="color:var(--red)">- COGS</span><span style="color:var(--red)">- '+fmt(grossRev-gpGross)+'</span></div>'+
     '<div class="rr" style="background:var(--cream2)"><span style="font-weight:700;color:var(--sage)">Gross Profit</span><span style="font-weight:700;color:var(--sage)">'+fmt(gp)+'</span></div>'+
+    '<div class="rr"><span style="color:var(--sage)">+ Other Income</span><span style="color:var(--sage)">+ '+fmt(otherInc)+'</span></div>'+
     '<div class="rr"><span style="color:var(--red)">- Expenses</span><span style="color:var(--red)">- '+fmt(exp)+'</span></div>'+
     '<div class="rf" style="color:'+(np>=0?'var(--sage)':'var(--red)')+'"><span>Net Profit</span><span>'+fmt(np)+'</span></div></div>'+
     '<div class="sg"><div class="sc sg2"><div class="sl2">Gross %</div><div class="sv">'+(netRev>0?((gp/netRev)*100).toFixed(1):0)+'%</div></div><div class="sc '+(np>=0?'sg2':'rd')+'"><div class="sl2">Net %</div><div class="sv">'+(netRev>0?((np/netRev)*100).toFixed(1):0)+'%</div></div></div>';
 }
-function rLedRep(c){var cr=parties.filter(function(p){return p.party_type==='customer'&&p.current_balance>0;});var sp2=parties.filter(function(p){return p.party_type==='supplier'&&p.current_balance>0;});c.innerHTML='<div class="sg"><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Receivables</div><div class="sv">'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Customer Outstanding</div></div>'+cr.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div><div style="margin-bottom:14px"><div class="rh"><div>Supplier Payables</div></div>'+sp2.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>';}
+function rLedRep(c){
+  var cr=parties.filter(function(p){return p.party_type==='customer'&&p.current_balance>0;});
+  var sp2=parties.filter(function(p){return p.party_type==='supplier'&&p.current_balance>0;});
+  var comm=parties.filter(function(p){return p.party_type==='committee';});
+  c.innerHTML='<div class="sg"><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Receivables</div><div class="sv">'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div></div>'+
+  '<div style="margin-bottom:14px"><div class="rh"><div>Customer Outstanding</div></div>'+cr.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>'+
+  '<div style="margin-bottom:14px"><div class="rh"><div>Supplier Payables</div></div>'+sp2.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>'+
+  '<div style="margin-bottom:14px"><div class="rh"><div>Committee Balances</div></div>'+comm.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--gold)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(comm.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>';
+}
 
 
 function rCash(){
@@ -895,44 +957,179 @@ function rCash(){
   for(var i=0;i<accs.length;i++)h+='<div><div style="font-size:.55rem;opacity:.5">'+accs[i].name+'</div><div style="font-size:.72rem;font-weight:600;color:'+(accs[i].current_balance>=0?'#90EE90':'#FFB3B3')+'">'+fmt(accs[i].current_balance)+'</div></div>';
   h+='</div></div>';
   h+='<div class="card"><div class="ct">New Entry</div>';
+  h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option><option value="expense">Expense</option><option value="income">Income</option><option value="receipt">Receipt</option><option value="payment">Payment</option></select></div>';
+  h+='<div class="ib" id="cnature-hint" style="display:none"></div>';
   h+='<div class="fg"><label class="lb">Date</label><input class="ip" id="cd" type="date" value="'+td()+'"></div>';
-  h+='<div class="fg"><label class="lb">Customer / Supplier (optional)</label><input class="ip" id="cpty" list="dl-allparties" placeholder="Type or select name..."></div>';
-  h+='<div class="fg"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
+  h+='<div class="g2" id="cpty-wrap" style="display:none">';
+  h+='<div class="fg"><label class="lb" id="cpty-label">Party</label><input class="ip" id="cpty" list="dl-allparties" placeholder="Type or select name..." oninput="onPartyChange()"></div>';
+  h+='<div class="fg"><label class="lb">Party Type</label><select class="sl" id="cptype" onchange="onPartyChange()"><option value="customer">Customer</option><option value="supplier">Supplier</option><option value="committee">Committee</option></select></div>';
+  h+='</div>';
+  h+='<div class="fg" id="cc-wrap"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
   h+='<div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details"></div>';
-  h+='<div class="fg"><label class="lb">Direction</label><select class="sl" id="cdr"><option value="out">Money Out</option><option value="in">Money In</option></select></div>';
   h+='<div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="camt" type="number" placeholder="0"></div>';
   h+='<div class="fg"><label class="lb">Account</label><select class="sl" id="cacc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
+  h+='<div class="ib" id="cclass-preview" style="display:none;border-color:var(--gold)"></div>';
   h+='<button class="btn bi" onclick="saveCash()">Save</button></div>';
+  h+='<div class="pr" style="margin-bottom:8px" id="cl-pills">';
+  h+='<div class="pl on" onclick="setCashFilter(\'all\',this)">All</div>';
+  h+='<div class="pl" onclick="setCashFilter(\'income\',this)">Income</div>';
+  h+='<div class="pl" onclick="setCashFilter(\'expense\',this)">Expense</div>';
+  h+='<div class="pl" onclick="setCashFilter(\'receipt\',this)">Receipts</div>';
+  h+='<div class="pl" onclick="setCashFilter(\'payment\',this)">Payments</div>';
+  h+='</div>';
   h+='<div class="ct" style="margin-top:4px">Recent</div><div id="cl"></div>';
   return h;
 }
-async function iCash(){var cats=await sb.from('expense_categories').select('*').order('sort_order');var sel=$('cc');if(sel&&cats.data)sel.innerHTML=cats.data.map(function(c){return'<option value="'+c.id+'">'+c.name+'</option>';}).join('');loadCash();}
+
+function onNatureChange(){
+  var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
+  var ptyWrap=document.getElementById('cpty-wrap');
+  var ccWrap=document.getElementById('cc-wrap');
+  var hint=document.getElementById('cnature-hint');
+  refreshCategoryOptions();
+  if(!nature){if(ptyWrap)ptyWrap.style.display='none';if(hint)hint.style.display='none';return;}
+  if(nature==='receipt'||nature==='payment'){
+    if(ptyWrap)ptyWrap.style.display='grid';
+    if(ccWrap)ccWrap.style.display='none';
+    if(hint){hint.style.display='block';hint.textContent=(nature==='receipt'?'Receipt: money received from a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.':'Payment: money paid to a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.');}
+  } else {
+    if(ptyWrap)ptyWrap.style.display='none';
+    if(ccWrap)ccWrap.style.display='block';
+    if(hint){hint.style.display='block';hint.textContent=(nature==='income'?'Income: genuine other income. Appears in Profit & Loss.':'Expense: genuine business expense. Appears in Profit & Loss.');}
+  }
+  updateClassPreview();
+}
+function onPartyChange(){updateClassPreview();}
+function updateClassPreview(){
+  var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
+  var ptype=document.getElementById('cptype')&&document.getElementById('cptype').value;
+  var pv=document.getElementById('cclass-preview');
+  if(!pv||!nature)return;
+  var label='';
+  if(nature==='income')label='Income';
+  else if(nature==='expense')label='Expense';
+  else if(nature==='receipt')label=(ptype==='customer'?'Customer Receipt':ptype==='supplier'?'Supplier Receipt':'Committee Receipt');
+  else if(nature==='payment')label=(ptype==='customer'?'Customer Payment':ptype==='supplier'?'Supplier Payment':'Committee Payment');
+  pv.style.display='block';
+  pv.textContent='Will be recorded as: '+label;
+}
+var _cashFilter='all';
+function setCashFilter(f,el){
+  _cashFilter=f;
+  var ps=document.querySelectorAll('#cl-pills .pl');
+  for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');
+  el.classList.add('on');
+  loadCash();
+}
+var _allExpenseCats=[];
+async function iCash(){
+  var cats=await sb.from('expense_categories').select('*').order('sort_order');
+  _allExpenseCats=cats.data||[];
+  refreshCategoryOptions();
+  loadCash();
+}
+function refreshCategoryOptions(){
+  var nature=$('cnature')&&$('cnature').value;
+  var sel=$('cc');if(!sel)return;
+  var wantDir=nature==='income'?'in':'out';
+  var filtered=_allExpenseCats.filter(function(c){return c.direction===wantDir;});
+  if(!filtered.length)filtered=_allExpenseCats;
+  sel.innerHTML=filtered.map(function(c){return'<option value="'+c.id+'">'+c.name+'</option>';}).join('');
+}
 function pickCashParty(){if(!parties.length){toast('No parties','warn');return;}window._cashPties=parties;var h='';for(var i=0;i<parties.length;i++)h+='<div class="pc" onclick="selCashP('+i+')">'+parties[i].name+' <span style="font-size:.58rem;color:var(--ink3)">'+parties[i].party_type+'</span></div>';omo('Select Party',h);}
 function selCashP(i){var p=window._cashPties&&window._cashPties[i];if(p&&$('cpty'))$('cpty').value=p.name;cmo();}
 async function saveCash(){
-  var dt=$('cd')&&$('cd').value||td();var catId=$('cc')&&$('cc').value;var dsc=$('cdsc')&&$('cdsc').value.trim();var amt=Number($('camt')&&$('camt').value||0);var dir=$('cdr')&&$('cdr').value||'out';var accId=$('cacc')&&$('cacc').value;var partyName=$('cpty')&&$('cpty').value.trim()||'';
+  var dt=$('cd')&&$('cd').value||td();
+  var nature=$('cnature')&&$('cnature').value;
+  var catId=$('cc')&&$('cc').value;
+  var dsc=$('cdsc')&&$('cdsc').value.trim();
+  var amt=Number($('camt')&&$('camt').value||0);
+  var accId=$('cacc')&&$('cacc').value;
+  var partyName=($('cpty')&&$('cpty').value||'').trim();
+  var ptype=$('cptype')&&$('cptype').value||'customer';
+
+  // ── Mandatory Transaction Nature ──
+  if(!nature){toast('Select Transaction Nature: Expense, Income, Receipt or Payment','err');return;}
   if(!amt||!dsc){toast('Fill description and amount','err');return;}
-  // FIX 5: Prevent negative balance for outflows
+
+  // Receipt/Payment require a party — they are inherently tied to a counterparty's balance
+  if((nature==='receipt'||nature==='payment')&&!partyName){
+    toast('Receipt/Payment requires a Customer, Supplier or Committee selected','err');
+    $('cpty')&&$('cpty').focus();return;
+  }
+
+  var dir=(nature==='income'||nature==='receipt')?'in':'out';
+
+  // Negative balance guard for outflows
   if(dir==='out'&&accId){
     var payAcc=accs.find(function(a){return a.id===accId;});
     if(payAcc&&(payAcc.current_balance||0)<amt){
       if(!confirm('Warning: This will create negative balance!\n'+payAcc.name+': '+fmt(payAcc.current_balance||0)+'\nAmount: '+fmt(amt)+'\n\nContinue anyway?')){return;}
     }
   }
-  var partyId=null;if(partyName){var ptype=dir==='in'?'customer':'supplier';var pf=parties.find(function(p){return p.name===partyName;});if(!pf){var nr=await sb.from('parties').insert({party_type:ptype,name:partyName,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);pf=nr.data;}}partyId=pf&&pf.id||null;}
+
+  var partyId=null;
+  if(partyName){
+    var pf=parties.find(function(p){return p.name===partyName&&p.party_type===ptype;});
+    if(!pf){
+      var nr=await sb.from('parties').insert({party_type:ptype,name:partyName,created_by:CUP&&CUP.id}).select().single();
+      if(nr.data){parties.push(nr.data);pf=nr.data;}
+    }
+    partyId=pf&&pf.id||null;
+  }
+
+  var category=nature==='income'?'Income':nature==='expense'?'Expense':
+    (ptype==='customer'?'Customer ':ptype==='supplier'?'Supplier ':'Committee ')+(nature==='receipt'?'Receipt':'Payment');
+
   try{
-    var tIns=await insertWithUniqueNo('transactions','CASH',function(noVal){return{transaction_no:noVal,transaction_type:dir==='in'?'receipt':'expense',transaction_date:dt,party_id:partyId,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:dsc};});
-    var no={data:tIns.no};var t={data:tIns.data};
-    if(catId)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc});
-    await sb.rpc('post_transaction_ledger',{p_txn_id:t.data.id,p_txn_type:dir==='in'?'receipt':'expense',p_payment_mode:'cash',p_total:amt,p_paid:amt,p_party_id:partyId,p_account_id:accId,p_user_id:CUP&&CUP.id});
-    if(partyId)await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'party',party_id:partyId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
-    logActivity(dir==='in'?'receipt':'payment','cash',{amount:amt,description:dsc});
-    toast((dir==='in'?'Receipt':'Payment')+': '+fmt(amt),'ok');
+    var tIns=await insertWithUniqueNo('transactions','CASH',function(noVal){return{transaction_no:noVal,transaction_type:nature,transaction_date:dt,party_id:partyId,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:dsc};});
+    var t={data:tIns.data};
+
+    // ── P&L IMPACT: only Income/Expense post to cash_entries (the table P&L reads from) ──
+    if(nature==='income'||nature==='expense'){
+      if(catId)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
+    } else {
+      // Receipt/Payment: still logged for the Cash Tab list, but flagged so reports can exclude it from P&L
+      await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:null,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
+    }
+
+    // ── Single, direct cashflow ledger entry (no shared RPC — avoids double-posting) ──
+    await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'cashflow',cashflow_account_id:accId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
+
+    // ── Single party ledger entry, only when a party is linked ──
+    if(partyId){
+      await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'party',party_id:partyId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
+    }
+
+    logActivity(nature,'cash',{amount:amt,description:dsc,category:category});
+    toast(category+': '+fmt(amt),'ok');
     if($('cdsc'))$('cdsc').value='';if($('camt'))$('camt').value='';if($('cpty'))$('cpty').value='';
     await loadData();iCash();
   }catch(ex){toast(ex.message,'err');}
 }
-async function loadCash(){var c=$('cl');if(!c)return;var e=await sb.from('ledger_entries').select('*').eq('account_category','cashflow').order('created_at',{ascending:false}).limit(20);if(!(e.data&&e.data.length)){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No entries</p></div>';return;}var h='';for(var i=0;i<e.data.length;i++){var en=e.data[i];h+='<div class="card" style="padding:10px 12px;margin-bottom:8px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.72rem;font-weight:600">'+(en.description||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(en.entry_date||'')+'</div></div><div style="text-align:right">'+(en.credit>0?'<div style="font-size:.72rem;font-weight:700;color:var(--sage)">+'+fmt(en.credit)+'</div>':'')+(en.debit>0?'<div style="font-size:.72rem;font-weight:700;color:var(--red)">-'+fmt(en.debit)+'</div>':'')+'</div></div></div>';}c.innerHTML=h;}
+async function loadCash(){
+  var c=$('cl');if(!c)return;
+  var q=sb.from('cash_entries').select('*').order('created_at',{ascending:false}).limit(30);
+  if(_cashFilter!=='all')q=q.eq('nature',_cashFilter);
+  var e=await q;
+  var rows=e.data||[];
+  if(!rows.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No entries</p></div>';return;}
+  var badgeColor={income:'var(--sage)',expense:'var(--red)',receipt:'var(--gold)',payment:'#6B3E1A'};
+  var h='';
+  for(var i=0;i<rows.length;i++){
+    var en=rows[i];
+    var isIn=en.direction==='in';
+    h+='<div class="card" style="padding:10px 12px;margin-bottom:8px">';
+    h+='<div style="display:flex;justify-content:space-between">';
+    h+='<div><div style="font-size:.72rem;font-weight:600">'+(en.description||'')+'</div>';
+    h+='<div style="font-size:.58rem;color:var(--ink3)">'+(en.entry_date||'')+'</div>';
+    if(en.party_category)h+='<div style="font-size:.55rem;font-weight:700;margin-top:2px;color:'+(badgeColor[en.nature]||'var(--ink3)')+'">'+en.party_category+'</div>';
+    h+='</div>';
+    h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(isIn?'var(--sage)':'var(--red)')+'">'+(isIn?'+':'-')+fmt(en.amount)+'</div></div>';
+    h+='</div></div>';
+  }
+  c.innerHTML=h;
+}
 
 
 var SMOVE_LABELS={'sales_return':'Sales Return','purchase_return':'Purchase Return','damaged':'Damaged','other':'Other'};
@@ -1863,6 +2060,143 @@ async function showActivityLog(){
     }
   }
   omo('Activity Log',h);
+}
+
+
+// ── STORE SETTINGS (global config, no hardcoding) ──
+var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',tiktok_handle:'@slcollectio713'};
+async function loadStoreSettings(){
+  try{
+    var r=await sb.from('store_settings').select('*').eq('id',1).maybeSingle();
+    if(r.data)STORE=r.data;
+  }catch(e){/* table not yet migrated — fall back to defaults */}
+}
+
+// ── POST-SALE MODAL ──
+function showSaleCompleteModal(wantsWA){
+  var s=window._lastSale;if(!s)return;
+  var h='<div style="text-align:center;padding:10px 0 16px">';
+  h+='<div style="font-size:1.6rem;margin-bottom:6px">&#10003;</div>';
+  h+='<div style="font-size:1rem;font-weight:700;color:var(--sage)">Sale Completed</div>';
+  h+='<div style="font-size:.7rem;color:var(--ink3);margin-top:4px">'+s.billNo+' &middot; '+fmt(s.total)+'</div>';
+  h+='</div>';
+  if(wantsWA)h+='<div class="ib" style="border-color:var(--gold)">Customer requested an invoice via WhatsApp.</div>';
+  h+='<button class="btn bi" style="margin-bottom:8px" onclick="printReceipt()">Print Receipt</button>';
+  if(s.phone&&isValidPhone(s.phone)){
+    h+='<button class="btn bs" style="margin-bottom:8px" onclick="shareInvoiceWhatsApp()">Share Invoice via WhatsApp</button>';
+  } else {
+    h+='<button class="btn bh" style="margin-bottom:8px;opacity:.6" disabled title="No valid WhatsApp number on this sale">Share Invoice via WhatsApp</button>';
+  }
+  h+='<button class="btn bh" onclick="cmo()">New Sale</button>';
+  omo('',h);
+}
+
+// ── INVOICE TEXT (branded, used for WhatsApp message) ──
+function generateInvoiceText(s){
+  var lines=[];
+  lines.push('*'+STORE.store_name+'*');
+  lines.push(STORE.address);
+  lines.push('WhatsApp: '+STORE.contact_number);
+  lines.push('');
+  lines.push('Invoice: '+s.billNo);
+  lines.push('Date: '+s.date);
+  if(s.customer&&s.customer!=='Walk-in')lines.push('Customer: '+s.customer);
+  lines.push('');
+  lines.push('--- Items ---');
+  s.items.forEach(function(it){
+    lines.push(it.name+'  x'+it.qty+'  @ '+fmt(it.price)+' = '+fmt(it.qty*it.price));
+  });
+  lines.push('');
+  lines.push('Subtotal: '+fmt(s.subtotal));
+  if(s.discount>0)lines.push('Discount: -'+fmt(s.discount));
+  lines.push('*Total: '+fmt(s.total)+'*');
+  lines.push('Payment: '+s.paymentMode);
+  if(s.cashier)lines.push('Served by: '+s.cashier);
+  lines.push('');
+  lines.push('Thank you for shopping with '+STORE.store_name+'.');
+  lines.push('For queries and support: WhatsApp: '+STORE.contact_number);
+  lines.push('Visit us at: '+STORE.address);
+  lines.push('Follow us on TikTok for the latest collections and updates: TikTok: '+STORE.tiktok_handle);
+  lines.push('We look forward to serving you again.');
+  return lines.join('\n');
+}
+
+// ── SHARE VIA WHATSAPP ──
+async function shareInvoiceWhatsApp(){
+  var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
+  if(!s.phone||!isValidPhone(s.phone)){toast('No valid WhatsApp number for this sale','err');return;}
+  var waNum=normalizePhone(s.phone);
+  var text=generateInvoiceText(s);
+  var url='https://wa.me/'+waNum+'?text='+encodeURIComponent(text);
+  try{
+    window.open(url,'_blank');
+    await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'sent'});
+    await sb.from('sales').update({whatsapp_invoice_sent:true,whatsapp_sent_at:new Date().toISOString(),whatsapp_sent_by:CUP&&CUP.id}).eq('id',s.saleId);
+    logActivity('whatsapp_invoice_sent','bill',{bill_no:s.billNo,phone:s.phone});
+    toast('WhatsApp opened with invoice','ok');
+  }catch(ex){
+    // A WhatsApp failure must never affect the already-completed sale
+    try{await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'failed',error_message:ex.message});}catch(e2){}
+    toast('Could not open WhatsApp — sale is already saved','warn');
+  }
+}
+
+// ── PRINT RECEIPT ──
+function printReceipt(){
+  var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
+  var w=window.open('','_blank');
+  var itemRows=s.items.map(function(it){return'<tr><td>'+it.name+'</td><td style="text-align:center">'+it.qty+'</td><td style="text-align:right">'+fmt(it.price)+'</td><td style="text-align:right">'+fmt(it.qty*it.price)+'</td></tr>';}).join('');
+  w.document.write('<html><head><title>'+s.billNo+'</title><style>'+
+    'body{font-family:Arial,sans-serif;max-width:380px;margin:20px auto;font-size:13px;color:#1A0A00}'+
+    'h2{margin:0 0 2px;font-size:18px}.muted{color:#6B3E1A;font-size:11px;margin-bottom:10px}'+
+    'table{width:100%;border-collapse:collapse;margin:10px 0}th,td{padding:4px 2px;border-bottom:1px solid #eee;font-size:12px}'+
+    '.tot{font-weight:bold;font-size:15px;border-top:2px solid #1A0A00;padding-top:6px}'+
+    '.thanks{margin-top:16px;font-size:11px;color:#6B3E1A;border-top:1px dashed #ccc;padding-top:10px}'+
+    '@media print{button{display:none}}</style></head><body>'+
+    '<h2>'+STORE.store_name+'</h2>'+
+    '<div class="muted">'+STORE.address+'<br>WhatsApp: '+STORE.contact_number+'</div>'+
+    '<div><strong>Invoice:</strong> '+s.billNo+'<br><strong>Date:</strong> '+s.date+
+      (s.customer&&s.customer!=='Walk-in'?'<br><strong>Customer:</strong> '+s.customer:'')+'</div>'+
+    '<table><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr>'+itemRows+'</table>'+
+    '<div style="display:flex;justify-content:space-between">Subtotal<span>'+fmt(s.subtotal)+'</span></div>'+
+    (s.discount>0?'<div style="display:flex;justify-content:space-between">Discount<span>-'+fmt(s.discount)+'</span></div>':'')+
+    '<div class="tot" style="display:flex;justify-content:space-between">Total<span>'+fmt(s.total)+'</span></div>'+
+    '<div class="muted" style="margin-top:6px">Payment: '+s.paymentMode+(s.cashier?' &middot; Served by: '+s.cashier:'')+'</div>'+
+    '<div class="thanks">Thank you for shopping with '+STORE.store_name+'.<br>'+
+      'Queries: WhatsApp '+STORE.contact_number+'<br>'+
+      'Follow us on TikTok: '+STORE.tiktok_handle+'<br>'+
+      'We look forward to serving you again.</div>'+
+    '<button onclick="window.print()" style="margin-top:14px;width:100%;padding:8px">Print</button>'+
+    '</body></html>');
+  w.document.close();
+}
+
+// ── STORE SETTINGS MODAL (Owner only) ──
+function openStoreSettings(){
+  if(CUP&&CUP.role!=='owner'){toast('Owner only','err');return;}
+  omo('Store Settings',
+    '<div class="fg"><label class="lb">Store Name</label><input class="ip" id="ss-name" value="'+(STORE.store_name||'')+'"></div>'+
+    '<div class="fg"><label class="lb">Address</label><input class="ip" id="ss-addr" value="'+(STORE.address||'')+'"></div>'+
+    '<div class="fg"><label class="lb">Contact Number</label><input class="ip" id="ss-contact" value="'+(STORE.contact_number||'')+'"></div>'+
+    '<div class="fg"><label class="lb">WhatsApp Number</label><input class="ip" id="ss-wa" value="'+(STORE.whatsapp_number||'')+'"></div>'+
+    '<div class="fg"><label class="lb">TikTok Handle</label><input class="ip" id="ss-tiktok" value="'+(STORE.tiktok_handle||'')+'"></div>'+
+    '<button class="btn bi" onclick="saveStoreSettings()">Save Settings</button>'
+  );
+}
+async function saveStoreSettings(){
+  var upd={
+    store_name:document.getElementById('ss-name')&&document.getElementById('ss-name').value.trim(),
+    address:document.getElementById('ss-addr')&&document.getElementById('ss-addr').value.trim(),
+    contact_number:document.getElementById('ss-contact')&&document.getElementById('ss-contact').value.trim(),
+    whatsapp_number:document.getElementById('ss-wa')&&document.getElementById('ss-wa').value.trim(),
+    tiktok_handle:document.getElementById('ss-tiktok')&&document.getElementById('ss-tiktok').value.trim(),
+    updated_at:new Date().toISOString()
+  };
+  try{
+    await sb.from('store_settings').update(upd).eq('id',1);
+    STORE=Object.assign({},STORE,upd);
+    cmo();toast('Store settings updated','ok');
+  }catch(ex){toast(ex.message,'err');}
 }
 
 </script>
