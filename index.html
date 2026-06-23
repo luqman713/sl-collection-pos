@@ -2122,25 +2122,90 @@ function generateInvoiceText(s){
 }
 
 // ── SHARE VIA WHATSAPP ──
+// ── RENDER RECEIPT AS IMAGE (canvas, in-memory only — never saved to disk/storage) ──
+function renderReceiptCanvas(s){
+  var W=420,padX=22,lineH=20;
+  var itemRows=s.items.length;
+  var H=200+itemRows*22+150;
+  var cv=document.createElement('canvas');
+  cv.width=W;cv.height=H;
+  var ctx=cv.getContext('2d');
+  ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,W,H);
+  var y=34;
+  ctx.fillStyle='#1A0A00';ctx.font='bold 20px Arial';ctx.fillText(STORE.store_name,padX,y);y+=18;
+  ctx.fillStyle='#6B3E1A';ctx.font='11px Arial';
+  ctx.fillText(STORE.address,padX,y);y+=15;
+  ctx.fillText('WhatsApp: '+STORE.contact_number,padX,y);y+=22;
+  ctx.strokeStyle='#E8D8C0';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=22;
+  ctx.fillStyle='#1A0A00';ctx.font='bold 12px Arial';
+  ctx.fillText('Invoice: '+s.billNo,padX,y);y+=lineH;
+  ctx.fillText('Date: '+s.date,padX,y);y+=lineH;
+  if(s.customer&&s.customer!=='Walk-in'){ctx.fillText('Customer: '+s.customer,padX,y);y+=lineH;}
+  y+=4;
+  ctx.font='bold 11px Arial';ctx.fillStyle='#6B3E1A';
+  ctx.fillText('Item',padX,y);ctx.fillText('Qty',W-180,y);ctx.fillText('Price',W-130,y);ctx.fillText('Total',W-70,y);
+  y+=8;ctx.strokeStyle='#1A0A00';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=18;
+  ctx.font='12px Arial';ctx.fillStyle='#1A0A00';
+  s.items.forEach(function(it){
+    var nm=it.name.length>20?it.name.slice(0,18)+'..':it.name;
+    ctx.fillText(nm,padX,y);
+    ctx.fillText(String(it.qty),W-180,y);
+    ctx.fillText(fmt(it.price),W-130,y);
+    ctx.fillText(fmt(it.qty*it.price),W-70,y);
+    y+=20;
+  });
+  y+=4;ctx.strokeStyle='#E8D8C0';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=20;
+  ctx.font='12px Arial';ctx.fillText('Subtotal',padX,y);ctx.fillText(fmt(s.subtotal),W-90,y);y+=18;
+  if(s.discount>0){ctx.fillText('Discount',padX,y);ctx.fillText('-'+fmt(s.discount),W-90,y);y+=18;}
+  ctx.strokeStyle='#1A0A00';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();ctx.lineWidth=1;y+=22;
+  ctx.font='bold 16px Arial';ctx.fillText('Total',padX,y);ctx.fillText(fmt(s.total),W-100,y);y+=26;
+  ctx.font='11px Arial';ctx.fillStyle='#6B3E1A';
+  ctx.fillText('Payment: '+s.paymentMode+(s.cashier?' - Served by: '+s.cashier:''),padX,y);y+=22;
+  ctx.strokeStyle='#E8D8C0';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=18;
+  ctx.font='10px Arial';
+  var thanks=['Thank you for shopping with '+STORE.store_name+'.','Queries: WhatsApp '+STORE.contact_number,'Follow us on TikTok: '+STORE.tiktok_handle,'We look forward to serving you again.'];
+  thanks.forEach(function(line){ctx.fillText(line,padX,y);y+=15;});
+  return cv;
+}
+function canvasToBlob(cv){
+  return new Promise(function(resolve){cv.toBlob(function(b){resolve(b);},'image/png');});
+}
+
+// ── SHARE VIA WHATSAPP — tries native image share first, falls back to text ──
 async function shareInvoiceWhatsApp(){
   var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
   if(!s.phone||!isValidPhone(s.phone)){toast('No valid WhatsApp number for this sale','err');return;}
-  var waNum=normalizePhone(s.phone);
-  var text=generateInvoiceText(s);
-  var url='https://wa.me/'+waNum+'?text='+encodeURIComponent(text);
+  var logged=false;
   try{
-    window.open(url,'_blank');
-    await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'sent'});
-    await sb.from('sales').update({whatsapp_invoice_sent:true,whatsapp_sent_at:new Date().toISOString(),whatsapp_sent_by:CUP&&CUP.id}).eq('id',s.saleId);
-    logActivity('whatsapp_invoice_sent','bill',{bill_no:s.billNo,phone:s.phone});
-    toast('WhatsApp opened with invoice','ok');
+    var cv=renderReceiptCanvas(s);
+    var blob=await canvasToBlob(cv);
+    var file=new File([blob],'Receipt_'+s.billNo+'.png',{type:'image/png'});
+    if(navigator.canShare&&navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:STORE.store_name,text:'Invoice '+s.billNo+' - '+STORE.store_name});
+      await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'sent'});
+      logged=true;
+      await sb.from('sales').update({whatsapp_invoice_sent:true,whatsapp_sent_at:new Date().toISOString(),whatsapp_sent_by:CUP&&CUP.id}).eq('id',s.saleId);
+      logActivity('whatsapp_invoice_sent','bill',{bill_no:s.billNo,phone:s.phone,mode:'image'});
+      toast('Receipt ready to share - pick WhatsApp','ok');
+      return;
+    }
   }catch(ex){
-    // A WhatsApp failure must never affect the already-completed sale
-    try{await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'failed',error_message:ex.message});}catch(e2){}
-    toast('Could not open WhatsApp — sale is already saved','warn');
+    if(ex&&ex.name==='AbortError'){toast('Share cancelled','warn');return;}
+  }
+  try{
+    var waNum=normalizePhone(s.phone);
+    var text=generateInvoiceText(s);
+    var url='https://wa.me/'+waNum+'?text='+encodeURIComponent(text);
+    window.open(url,'_blank');
+    if(!logged)await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'sent'});
+    await sb.from('sales').update({whatsapp_invoice_sent:true,whatsapp_sent_at:new Date().toISOString(),whatsapp_sent_by:CUP&&CUP.id}).eq('id',s.saleId);
+    logActivity('whatsapp_invoice_sent','bill',{bill_no:s.billNo,phone:s.phone,mode:'text'});
+    toast('Receipt image not supported on this device - sent as text instead','ok',5000);
+  }catch(ex2){
+    try{await sb.from('whatsapp_invoice_logs').insert({sale_id:s.saleId,customer_phone:s.phone,sent_by:CUP&&CUP.id,status:'failed',error_message:ex2.message});}catch(e3){}
+    toast('Could not open WhatsApp - sale is already saved','warn');
   }
 }
-
 // ── PRINT RECEIPT ──
 function printReceipt(){
   var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
