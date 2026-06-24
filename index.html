@@ -2135,7 +2135,7 @@ function loadLogoImage(){
 async function renderReceiptCanvas(s){
   var W=420,padX=22,lineH=20;
   var itemRows=s.items.length;
-  var H=200+itemRows*22+150;
+  var H=300+itemRows*20+260;
   var cv=document.createElement('canvas');
   cv.width=W;cv.height=H;
   var ctx=cv.getContext('2d');
