@@ -2064,7 +2064,7 @@ async function showActivityLog(){
 
 
 // ── STORE SETTINGS (global config, no hardcoding) ──
-var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',tiktok_handle:'@slcollectio713'};
+var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',tiktok_handle:'@slcollection713'};
 async function loadStoreSettings(){
   try{
     var r=await sb.from('store_settings').select('*').eq('id',1).maybeSingle();
@@ -2096,7 +2096,7 @@ function generateInvoiceText(s){
   var lines=[];
   lines.push('*'+STORE.store_name+'*');
   lines.push(STORE.address);
-  lines.push('WhatsApp: '+STORE.contact_number);
+  lines.push('Call/WhatsApp: '+STORE.contact_number);
   lines.push('');
   lines.push('Invoice: '+s.billNo);
   lines.push('Date: '+s.date);
@@ -2114,7 +2114,7 @@ function generateInvoiceText(s){
   if(s.cashier)lines.push('Served by: '+s.cashier);
   lines.push('');
   lines.push('Thank you for shopping with '+STORE.store_name+'.');
-  lines.push('For queries and support: WhatsApp: '+STORE.contact_number);
+  lines.push('For queries and support: Call/WhatsApp: '+STORE.contact_number);
   lines.push('Visit us at: '+STORE.address);
   lines.push('Follow us on TikTok for the latest collections and updates: TikTok: '+STORE.tiktok_handle);
   lines.push('We look forward to serving you again.');
@@ -2123,7 +2123,16 @@ function generateInvoiceText(s){
 
 // ── SHARE VIA WHATSAPP ──
 // ── RENDER RECEIPT AS IMAGE (canvas, in-memory only — never saved to disk/storage) ──
-function renderReceiptCanvas(s){
+function loadLogoImage(){
+  return new Promise(function(resolve){
+    var img=new Image();
+    img.crossOrigin='anonymous';
+    img.onload=function(){resolve(img);};
+    img.onerror=function(){resolve(null);}; // logo not uploaded yet — receipt still renders fine without it
+    img.src='logo.png';
+  });
+}
+async function renderReceiptCanvas(s){
   var W=420,padX=22,lineH=20;
   var itemRows=s.items.length;
   var H=200+itemRows*22+150;
@@ -2131,11 +2140,21 @@ function renderReceiptCanvas(s){
   cv.width=W;cv.height=H;
   var ctx=cv.getContext('2d');
   ctx.fillStyle='#FFFFFF';ctx.fillRect(0,0,W,H);
+  var logo=await loadLogoImage();
   var y=34;
-  ctx.fillStyle='#1A0A00';ctx.font='bold 20px Arial';ctx.fillText(STORE.store_name,padX,y);y+=18;
+  var textX=padX;
+  if(logo){
+    var logoSize=42;
+    ctx.save();
+    ctx.beginPath();ctx.arc(padX+logoSize/2,y-12,logoSize/2,0,Math.PI*2);ctx.closePath();ctx.clip();
+    ctx.drawImage(logo,padX,y-12-logoSize/2,logoSize,logoSize);
+    ctx.restore();
+    textX=padX+logoSize+10;
+  }
+  ctx.fillStyle='#1A0A00';ctx.font='bold 20px Arial';ctx.fillText(STORE.store_name,textX,y);y+=18;
   ctx.fillStyle='#6B3E1A';ctx.font='11px Arial';
   ctx.fillText(STORE.address,padX,y);y+=15;
-  ctx.fillText('WhatsApp: '+STORE.contact_number,padX,y);y+=22;
+  ctx.fillText('Call/WhatsApp: '+STORE.contact_number,padX,y);y+=22;
   ctx.strokeStyle='#E8D8C0';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=22;
   ctx.fillStyle='#1A0A00';ctx.font='bold 12px Arial';
   ctx.fillText('Invoice: '+s.billNo,padX,y);y+=lineH;
@@ -2163,7 +2182,7 @@ function renderReceiptCanvas(s){
   ctx.fillText('Payment: '+s.paymentMode+(s.cashier?' - Served by: '+s.cashier:''),padX,y);y+=22;
   ctx.strokeStyle='#E8D8C0';ctx.beginPath();ctx.moveTo(padX,y);ctx.lineTo(W-padX,y);ctx.stroke();y+=18;
   ctx.font='10px Arial';
-  var thanks=['Thank you for shopping with '+STORE.store_name+'.','Queries: WhatsApp '+STORE.contact_number,'Follow us on TikTok: '+STORE.tiktok_handle,'We look forward to serving you again.'];
+  var thanks=['Thank you for shopping with '+STORE.store_name+'.','Queries: Call/WhatsApp '+STORE.contact_number,'Follow us on TikTok: '+STORE.tiktok_handle,'We look forward to serving you again.'];
   thanks.forEach(function(line){ctx.fillText(line,padX,y);y+=15;});
   return cv;
 }
@@ -2177,7 +2196,7 @@ async function shareInvoiceWhatsApp(){
   if(!s.phone||!isValidPhone(s.phone)){toast('No valid WhatsApp number for this sale','err');return;}
   var logged=false;
   try{
-    var cv=renderReceiptCanvas(s);
+    var cv=await renderReceiptCanvas(s);
     var blob=await canvasToBlob(cv);
     var file=new File([blob],'Receipt_'+s.billNo+'.png',{type:'image/png'});
     if(navigator.canShare&&navigator.canShare({files:[file]})){
@@ -2218,8 +2237,8 @@ function printReceipt(){
     '.tot{font-weight:bold;font-size:15px;border-top:2px solid #1A0A00;padding-top:6px}'+
     '.thanks{margin-top:16px;font-size:11px;color:#6B3E1A;border-top:1px dashed #ccc;padding-top:10px}'+
     '@media print{button{display:none}}</style></head><body>'+
-    '<h2>'+STORE.store_name+'</h2>'+
-    '<div class="muted">'+STORE.address+'<br>WhatsApp: '+STORE.contact_number+'</div>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><img src="logo.png" style="width:46px;height:46px;border-radius:50%;flex-shrink:0" onerror="this.style.display=\'none\'"><h2 style="margin:0">'+STORE.store_name+'</h2></div>'+
+    '<div class="muted">'+STORE.address+'<br>Call/WhatsApp: '+STORE.contact_number+'</div>'+
     '<div><strong>Invoice:</strong> '+s.billNo+'<br><strong>Date:</strong> '+s.date+
       (s.customer&&s.customer!=='Walk-in'?'<br><strong>Customer:</strong> '+s.customer:'')+'</div>'+
     '<table><tr><th style="text-align:left">Item</th><th>Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr>'+itemRows+'</table>'+
@@ -2228,7 +2247,7 @@ function printReceipt(){
     '<div class="tot" style="display:flex;justify-content:space-between">Total<span>'+fmt(s.total)+'</span></div>'+
     '<div class="muted" style="margin-top:6px">Payment: '+s.paymentMode+(s.cashier?' &middot; Served by: '+s.cashier:'')+'</div>'+
     '<div class="thanks">Thank you for shopping with '+STORE.store_name+'.<br>'+
-      'Queries: WhatsApp '+STORE.contact_number+'<br>'+
+      'Queries: Call/WhatsApp '+STORE.contact_number+'<br>'+
       'Follow us on TikTok: '+STORE.tiktok_handle+'<br>'+
       'We look forward to serving you again.</div>'+
     '<button onclick="window.print()" style="margin-top:14px;width:100%;padding:8px">Print</button>'+
