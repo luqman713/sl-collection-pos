@@ -640,6 +640,8 @@ function autoFillCost(){
   if(costEl)costEl.value=cost;
 }
 async function processReturn(){
+  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
   var bn=($('sr-b')&&$('sr-b').value||'').trim();
   var vid=$('sr-s')&&$('sr-s').value;
   var qty=Number($('sr-q')&&$('sr-q').value||0);
@@ -1039,6 +1041,8 @@ function refreshCategoryOptions(){
 function pickCashParty(){if(!parties.length){toast('No parties','warn');return;}window._cashPties=parties;var h='';for(var i=0;i<parties.length;i++)h+='<div class="pc" onclick="selCashP('+i+')">'+parties[i].name+' <span style="font-size:.58rem;color:var(--ink3)">'+parties[i].party_type+'</span></div>';omo('Select Party',h);}
 function selCashP(i){var p=window._cashPties&&window._cashPties[i];if(p&&$('cpty'))$('cpty').value=p.name;cmo();}
 async function saveCash(){
+  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
   var dt=$('cd')&&$('cd').value||td();
   var nature=$('cnature')&&$('cnature').value;
   var catId=$('cc')&&$('cc').value;
@@ -1096,9 +1100,20 @@ async function saveCash(){
     // ── Single, direct cashflow ledger entry (no shared RPC — avoids double-posting) ──
     await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'cashflow',cashflow_account_id:accId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
 
-    // ── Single party ledger entry, only when a party is linked ──
+    // ── Party ledger entry: Receipt/Payment each have specific accounting treatment ──
     if(partyId){
-      await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'party',party_id:partyId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
+      var partyEntryType;
+      if(nature==='receipt'){partyEntryType='credit';} // money received — reduces receivable (credit)
+      else if(nature==='payment'&&ptype==='supplier'){partyEntryType='debit';} // payment to supplier — reduces payable (debit = clears the liability)
+      else if(nature==='payment'&&ptype==='customer'){partyEntryType='debit';} // payment to customer (rare refund)
+      else{partyEntryType=dir==='in'?'credit':'debit';}
+      await sb.from('ledger_entries').insert({
+        transaction_id:t.data.id,entry_date:dt,
+        entry_type:partyEntryType,account_category:'party',
+        party_id:partyId,amount:amt,
+        description:(nature==='payment'&&ptype==='supplier'?'Supplier Payment: ':'')+(nature==='receipt'&&ptype==='customer'?'Customer Receipt: ':'')+dsc,
+        created_by:CUP&&CUP.id
+      });
     }
 
     logActivity(nature,'cash',{amount:amt,description:dsc,category:category});
@@ -1106,6 +1121,7 @@ async function saveCash(){
     if($('cdsc'))$('cdsc').value='';if($('camt'))$('camt').value='';if($('cpty'))$('cpty').value='';
     await loadData();iCash();
   }catch(ex){toast(ex.message,'err');}
+  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Save';}}
 }
 async function loadCash(){
   var c=$('cl');if(!c)return;
@@ -1148,6 +1164,7 @@ function oStockMove(mtype){
   h+='</select></div>';
   if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sm-ref" placeholder="BILL-0001"></div>';
   if(mtype==='purchase_return')h+='<div class="fg"><label class="lb">Supplier (optional)</label><input class="ip" id="sm-sup" list="dl-suppliers" placeholder="Leave blank if no recovery expected"></div>';
+  if(mtype==='sales_return')h+='<div class="fg"><label class="lb">Customer (optional)</label><input class="ip" id="sm-cust" list="dl-customers" placeholder="Select to adjust customer balance"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sm-qty" type="number" placeholder="0" oninput="autoFillSmCost()"></div>';
   h+='<div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="sm-cost" type="number" placeholder="0"></div></div>';
   if(mtype==='damaged')h+='<div class="fg"><label class="lb">Damage Stage</label><select class="sl" id="sm-stage"><option value="in_shop">Found in shop</option><option value="on_receipt">Received damaged</option><option value="customer_return">Customer returned damaged</option></select></div>';
@@ -1169,6 +1186,8 @@ function autoFillSmCost(){
 }
 
 async function saveStockMove(mtype){
+  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
   var varId=$('sm-prod')&&$('sm-prod').value;
   var qty=Number($('sm-qty')&&$('sm-qty').value||0);
   var rsn=($('sm-rsn')&&$('sm-rsn').value||'').trim();
@@ -1261,33 +1280,53 @@ async function saveStockMove(mtype){
     }
   }
 
-  // ── STEP 7: Sales Return — optional cash refund ──
+  // ── STEP 7: Sales Return — customer ledger + optional cash refund ──
   if(mtype==='sales_return'){
+    var custNameRet=($('sm-cust')&&$('sm-cust').value||'').trim();
     var ca2=accs.find(function(a){return a.name==='Cash Drawer';});
-    var doR=confirm('Process cash refund to customer?\nAmount: Rs'+totalVal.toLocaleString());
-    if(doR&&ca2){
-      var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{
-        transaction_no:noVal,transaction_type:'sale_return',
-        transaction_date:td(),total_amount:totalVal,
-        paid_amount:totalVal,payment_status:'paid',
-        performed_by:CUP&&CUP.id,
-        notes:'Return: '+p.name+' x'+qty+(refNo?' Ref:'+refNo:'')
-      };});
-      var no3={data:retIns.no};var txn3={data:retIns.data};
-      if(txn3.data)await sb.from('ledger_entries').insert({
-        transaction_id:txn3.data.id,entry_date:td(),
-        entry_type:'debit',account_category:'cashflow',
-        cashflow_account_id:ca2.id,amount:totalVal,
-        description:'Refund: '+p.name,created_by:CUP&&CUP.id
-      });
+    var doR=confirm('Process cash refund?\nAmount: Rs'+totalVal.toLocaleString()+'\n\nNo = reverse balance only, no cash out.');
+    var retCustId=null;
+    if(custNameRet){
+      var retCust=parties.find(function(p){return p.name===custNameRet&&p.party_type==='customer';});
+      if(!retCust){var ncr=await sb.from('parties').insert({party_type:'customer',name:custNameRet,created_by:CUP&&CUP.id}).select().single();if(ncr.data){parties.push(ncr.data);retCust=ncr.data;}}
+      retCustId=retCust&&retCust.id||null;
+    }
+    var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{
+      transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),
+      party_id:retCustId,total_amount:totalVal,paid_amount:doR?totalVal:0,
+      payment_status:doR?'paid':'pending',performed_by:CUP&&CUP.id,
+      notes:'Return: '+p.name+' x'+qty+(refNo?' Ref:'+refNo:'')+(custNameRet?' | Customer: '+custNameRet:'')
+    };});
+    var txn3={data:retIns.data};
+    if(txn3.data){
+      if(doR&&ca2)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:totalVal,description:'Cash Refund: '+p.name,created_by:CUP&&CUP.id});
+      // FIX 6: Adjust customer ledger on return — debit customer (reduces receivable / increases credit)
+      if(retCustId)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:retCustId,amount:totalVal,description:'Sales Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
     }
   }
 
+  // ── FIX 5: Damaged Stock Expense — auto-posts to P&L ──
+  if(mtype==='damaged'){
+    try{
+      var dmgIns=await insertWithUniqueNo('transactions','DMG',function(noVal){return{
+        transaction_no:noVal,transaction_type:'expense',transaction_date:td(),
+        total_amount:totalVal,paid_amount:totalVal,payment_status:'paid',
+        performed_by:CUP&&CUP.id,notes:'Damaged Stock: '+p.name+' x'+qty+'. '+rsn
+      };});
+      // Post to cash_entries with nature='expense' so it appears in P&L
+      await sb.from('cash_entries').insert({
+        transaction_id:dmgIns.data.id,entry_date:td(),amount:totalVal,direction:'out',
+        description:'Damaged Stock Expense: '+p.name+' x'+qty,
+        nature:'expense',party_category:'Damaged Stock Expense'
+      });
+    }catch(de){/* don't block main flow on P&L posting failure */}
+  }
   logActivity('stock_movement','stock',{type:mtype,product:p.name,qty:qty,value:totalVal,reason:rsn});
   if(mtype!=='purchase_return'){
     toast((SMOVE_LABELS[mtype]||mtype)+': '+qty+' x '+p.name+' | Rs'+totalVal.toLocaleString()+' logged','ok',5000);
   }
   await loadData();cmo();iInv();
+  if(btnEl){btnEl.disabled=false;btnEl.textContent='Process '+(SMOVE_LABELS&&SMOVE_LABELS[mtype]||mtype);}
 }
 
 async function showStockDetail(varId){
@@ -1329,22 +1368,35 @@ function oExchange(){
 }
 function calcDiff(){var rp=Number($('ex-rp')&&$('ex-rp').value||0);var ip=Number($('ex-ip')&&$('ex-ip').value||0);var d2=$('ex-diff');if(d2&&(rp||ip)){var diff=ip-rp;d2.style.display='block';d2.textContent=diff>0?'Customer pays extra: '+fmt(diff):diff<0?'Refund: '+fmt(Math.abs(diff)):'No difference';}}
 async function saveExchange(){
-  var cust=$('ex-c')&&$('ex-c').value||'Walk-in';var riId=$('ex-ri')&&$('ex-ri').value;var rq=Number($('ex-rq')&&$('ex-rq').value||1);var rp=Number($('ex-rp')&&$('ex-rp').value||0);var iiId=$('ex-ii')&&$('ex-ii').value;var iq=Number($('ex-iq')&&$('ex-iq').value||1);var ip=Number($('ex-ip')&&$('ex-ip').value||0);var dm=$('ex-dm')&&$('ex-dm').value||'none';
+  var btnEl=event&&event.target;
+  if(btnEl&&btnEl.disabled)return;
+  var cust=($('ex-c')&&$('ex-c').value||'Walk-in').trim();
+  var riId=$('ex-ri')&&$('ex-ri').value;
+  var rq=Number($('ex-rq')&&$('ex-rq').value||1);
+  var rp=Number($('ex-rp')&&$('ex-rp').value||0);
+  var iiId=$('ex-ii')&&$('ex-ii').value;
+  var iq=Number($('ex-iq')&&$('ex-iq').value||1);
+  var ip=Number($('ex-ip')&&$('ex-ip').value||0);
   if(!riId||!iiId){toast('Select both items','err');return;}
   var diff=ip-rp;
-  // FIX 6: Warn on price difference
-  if(Math.abs(diff)>0){
-    var msg='Price difference: '+fmt(Math.abs(diff))+'.\n'+(diff>0?'Customer pays extra: '+fmt(diff):('Refund to customer: '+fmt(Math.abs(diff))))+'.\n\nProceed with exchange?';
-    if(!confirm(msg))return;
-  }var ca=accs.find(function(a){return a.name==='Cash Drawer';});try{
-    var exTxnIns=await insertWithUniqueNo('transactions','EXC',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),total_amount:Math.max(ip,0),paid_amount:Math.max(ip,0),payment_status:'paid',performed_by:CUP&&CUP.id};});
-    var exNo={data:exTxnIns.no};var txn={data:exTxnIns.data};
-    var retP=prods.find(function(p){return p.id===riId;});var issP=prods.find(function(p){return p.id===iiId;});
-    if(retP)await sb.rpc('process_stock_movement',{p_variant_id:riId,p_movement_type:'sales_return',p_qty:rq,p_reason:'Exchange return',p_cost_impact:rp,p_user_id:CUP&&CUP.id});
-    if(issP)await sb.rpc('process_stock_movement',{p_variant_id:iiId,p_movement_type:'sale',p_qty:iq,p_reason:'Exchange issue',p_cost_impact:ip,p_user_id:CUP&&CUP.id});
-    if(Math.abs(diff)>0&&ca){if(dm==='cash_in')await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:diff,description:'Exchange diff: '+exNo.data,created_by:CUP&&CUP.id});else if(dm==='cash_out')await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:Math.abs(diff),description:'Exchange refund: '+exNo.data,created_by:CUP&&CUP.id});}
-    await loadData();cmo();toast('Exchange done: '+exNo.data,'ok',5000);srch();
+  if(Math.abs(diff)>0){if(!confirm('Price difference: '+fmt(Math.abs(diff))+'. Proceed?'))return;}
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  var retP=prods.find(function(p){return p.id===riId;});
+  var issP=prods.find(function(p){return p.id===iiId;});
+  var custParty=cust!=='Walk-in'?parties.find(function(p){return p.name===cust&&p.party_type==='customer';}):null;
+  try{
+    var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:rp*rq,paid_amount:0,payment_status:'pending',performed_by:CUP&&CUP.id,notes:'Exchange Return: '+((retP&&retP.name)||'')+' x'+rq};});
+    if(retP)await sb.rpc('process_stock_movement',{p_variant_id:riId,p_movement_type:'sales_return',p_qty:rq,p_reason:'Exchange return',p_cost_impact:retP.cost||0,p_user_id:CUP&&CUP.id});
+    if(custParty&&retIns.data)await sb.from('ledger_entries').insert({transaction_id:retIns.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:custParty.id,amount:rp*rq,description:'Exchange Return: '+((retP&&retP.name)||''),created_by:CUP&&CUP.id});
+    var exTxnIns=await insertWithUniqueNo('transactions','EXC',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:ip*iq,paid_amount:ip*iq,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Sale: '+((issP&&issP.name)||'')+' x'+iq+' | Ref: '+(retIns.no||'')};});
+    if(issP)await sb.rpc('process_stock_movement',{p_variant_id:iiId,p_movement_type:'sale',p_qty:iq,p_reason:'Exchange issue',p_cost_impact:issP.cost||0,p_user_id:CUP&&CUP.id});
+    if(ca&&diff>0)await sb.from('ledger_entries').insert({transaction_id:exTxnIns.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:diff,description:'Exchange extra received',created_by:CUP&&CUP.id});
+    if(ca&&diff<0)await sb.from('ledger_entries').insert({transaction_id:exTxnIns.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:Math.abs(diff),description:'Exchange refund paid',created_by:CUP&&CUP.id});
+    await loadData();cmo();
+    toast('Exchange: Return '+retIns.no+' | Sale '+exTxnIns.no,'ok',7000);srch();
   }catch(ex){toast(ex.message,'err');}
+  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Exchange';}}
 }
 
 function openStockTake(){
@@ -1780,6 +1832,8 @@ function oReservation(){
   omo('Stock Reservation',h);
 }
 async function saveReservation(){
+  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
   var cust=(document.getElementById('res-cust')&&document.getElementById('res-cust').value||'').trim();
   var vid=document.getElementById('res-prod')&&document.getElementById('res-prod').value;
   var qty=Number(document.getElementById('res-qty')&&document.getElementById('res-qty').value||1);
@@ -2144,12 +2198,9 @@ async function renderReceiptCanvas(s){
   var y=34;
   var textX=padX;
   if(logo){
-    var logoSize=42;
-    ctx.save();
-    ctx.beginPath();ctx.arc(padX+logoSize/2,y-12,logoSize/2,0,Math.PI*2);ctx.closePath();ctx.clip();
-    ctx.drawImage(logo,padX,y-12-logoSize/2,logoSize,logoSize);
-    ctx.restore();
-    textX=padX+logoSize+10;
+    var logoW=64,logoH=42; // matches logo.png aspect ratio — no circular clip, shape is already clean
+    ctx.drawImage(logo,padX,y-12-logoH/2,logoW,logoH);
+    textX=padX+logoW+10;
   }
   ctx.fillStyle='#1A0A00';ctx.font='bold 20px Arial';ctx.fillText(STORE.store_name,textX,y);y+=18;
   ctx.fillStyle='#6B3E1A';ctx.font='11px Arial';
@@ -2237,7 +2288,7 @@ function printReceipt(){
     '.tot{font-weight:bold;font-size:15px;border-top:2px solid #1A0A00;padding-top:6px}'+
     '.thanks{margin-top:16px;font-size:11px;color:#6B3E1A;border-top:1px dashed #ccc;padding-top:10px}'+
     '@media print{button{display:none}}</style></head><body>'+
-    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><img src="logo.png" style="width:46px;height:46px;border-radius:50%;flex-shrink:0" onerror="this.style.display=\'none\'"><h2 style="margin:0">'+STORE.store_name+'</h2></div>'+
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><img src="logo.png" style="width:64px;height:auto;flex-shrink:0" onerror="this.style.display=\'none\'"><h2 style="margin:0">'+STORE.store_name+'</h2></div>'+
     '<div class="muted">'+STORE.address+'<br>Call/WhatsApp: '+STORE.contact_number+'</div>'+
     '<div><strong>Invoice:</strong> '+s.billNo+'<br><strong>Date:</strong> '+s.date+
       (s.customer&&s.customer!=='Walk-in'?'<br><strong>Customer:</strong> '+s.customer:'')+'</div>'+
