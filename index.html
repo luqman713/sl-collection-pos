@@ -1195,10 +1195,10 @@ async function saveStockMove(mtype){
   var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
 
   // ── STEP 1: Common mandatory fields ──
-  if(!varId){toast('Select a product','err');$('sm-prod')&&$('sm-prod').focus();return;}
-  if(!qty||qty<=0){toast('Enter quantity greater than 0','err');$('sm-qty')&&$('sm-qty').focus();return;}
-  if(!cost||cost<=0){toast('Enter cost price — required for valuation','err');$('sm-cost')&&$('sm-cost').focus();return;}
-  if(!rsn||rsn.length<5){toast('Enter reason (min 5 characters) — required for audit','err');$('sm-rsn')&&$('sm-rsn').focus();return;}
+  if(!varId){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Select a product','err');$('sm-prod')&&$('sm-prod').focus();return;}
+  if(!qty||qty<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter quantity greater than 0','err');$('sm-qty')&&$('sm-qty').focus();return;}
+  if(!cost||cost<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter cost price — required for valuation','err');$('sm-cost')&&$('sm-cost').focus();return;}
+  if(!rsn||rsn.length<5){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter reason (min 5 characters) — required for audit','err');$('sm-rsn')&&$('sm-rsn').focus();return;}
 
   // ── STEP 2: Purchase Return specific mandatory fields ──
   if(mtype==='purchase_return'){
@@ -1233,7 +1233,7 @@ async function saveStockMove(mtype){
     'Total Value: Rs'+totalVal.toLocaleString()+'\n'+
     'Reason: '+rsn+'\n\n'+
     'Stock will decrease by '+qty+'.\nLedger will be updated.\n\nProceed?';
-  if(!confirm(summary))return;
+  if(!confirm(summary)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}return;}
 
   // ── STEP 5: Process stock movement ──
   var result=await sb.rpc('process_stock_movement',{
@@ -1242,6 +1242,7 @@ async function saveStockMove(mtype){
     p_cost_impact:cost,p_user_id:CUP&&CUP.id
   });
   if(!result.data||!result.data.success){
+    if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}
     toast('Error: '+(result.data&&result.data.error||'Stock update failed'),'err');return;
   }
 
@@ -1261,7 +1262,7 @@ async function saveStockMove(mtype){
       transaction_no:noVal,transaction_type:'purchase_return',
       transaction_date:td(),party_id:sp&&sp.id||null,
       total_amount:totalVal,paid_amount:0,
-      payment_status:sp?'pending':'paid',performed_by:CUP&&CUP.id,
+      payment_status:'paid',performed_by:CUP&&CUP.id,
       notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn+(sp?'':' (No supplier — no payable recovery expected)')
     };});
     var no2={data:pretIns.no};var txn2={data:pretIns.data};
@@ -1386,7 +1387,7 @@ async function saveExchange(){
   var issP=prods.find(function(p){return p.id===iiId;});
   var custParty=cust!=='Walk-in'?parties.find(function(p){return p.name===cust&&p.party_type==='customer';}):null;
   try{
-    var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:rp*rq,paid_amount:0,payment_status:'pending',performed_by:CUP&&CUP.id,notes:'Exchange Return: '+((retP&&retP.name)||'')+' x'+rq};});
+    var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:rp*rq,paid_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Return: '+((retP&&retP.name)||'')+' x'+rq};});
     if(retP)await sb.rpc('process_stock_movement',{p_variant_id:riId,p_movement_type:'sales_return',p_qty:rq,p_reason:'Exchange return',p_cost_impact:retP.cost||0,p_user_id:CUP&&CUP.id});
     if(custParty&&retIns.data)await sb.from('ledger_entries').insert({transaction_id:retIns.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:custParty.id,amount:rp*rq,description:'Exchange Return: '+((retP&&retP.name)||''),created_by:CUP&&CUP.id});
     var exTxnIns=await insertWithUniqueNo('transactions','EXC',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:ip*iq,paid_amount:ip*iq,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Sale: '+((issP&&issP.name)||'')+' x'+iq+' | Ref: '+(retIns.no||'')};});
@@ -1796,10 +1797,14 @@ async function processSwcReturn(swcId){
   }
   h+='<button class="btn bs" onclick="finalizeSwc(\''+swcId+'\')">Finalize</button>';
   window._swcItems=items;
+  window._activeSwc=s;
   omo('Process Return: '+s.transaction_no,h);
 }
 async function finalizeSwc(swcId){
+  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Finalizing...';}
   var items=window._swcItems||[];
+  var swcData=window._activeSwc||{customer_name:'Walk-in',customer_party_id:null};
   var ca=accs.find(function(a){return a.name==='Cash Drawer';});
   try{
     for(var i=0;i<items.length;i++){
@@ -1807,16 +1812,51 @@ async function finalizeSwc(swcId){
       var sold=Number(document.getElementById('swcr-sold-'+it.id)&&document.getElementById('swcr-sold-'+it.id).value||0);
       var ret=Number(document.getElementById('swcr-ret-'+it.id)&&document.getElementById('swcr-ret-'+it.id).value||0);
       var price=Number(document.getElementById('swcr-price-'+it.id)&&document.getElementById('swcr-price-'+it.id).value||0);
-      if(sold+ret>it.qty_issued){toast('Sold + returned cannot exceed issued ('+it.qty_issued+')','err');return;}
-      if(ret>0)await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sales_return',p_qty:ret,p_reason:'SWC return finalize',p_cost_impact:price,p_user_id:CUP&&CUP.id});
+      if(sold+ret>it.qty_issued){
+        if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}
+        toast('Sold + returned cannot exceed issued ('+it.qty_issued+')','err');return;
+      }
+      // Issue 4: correct inventory movements
+      if(ret>0){
+        await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sales_return',p_qty:ret,p_reason:'SWC return finalize',p_cost_impact:price||0,p_user_id:CUP&&CUP.id});
+        // Also update qty_with_customer back
+        var pRet=prods.find(function(p){return p.id===it.variant_id;});
+        if(pRet)await sb.from('inventory').update({qty_with_customer:Math.max(0,(pRet.withCustomer||0)-ret)}).eq('variant_id',it.variant_id);
+      }
+      // Issue 5: full proper sale posting when SWC converted to sale
       if(sold>0&&price>0){
-        await insertWithUniqueNo('transactions','BILL',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),total_amount:sold*price,paid_amount:sold*price,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'SWC finalize: '+swcId};});
+        var cost=it.product_variants&&it.product_variants.purchase_price||0;
+        var margin=(price-cost)*sold;
+        var saleIns=await insertWithUniqueNo('transactions','BILL',function(noVal){return{
+          transaction_no:noVal,transaction_type:'sale',transaction_date:td(),
+          party_id:swcData.customer_party_id||null,
+          total_amount:sold*price,paid_amount:sold*price,payment_status:'paid',
+          performed_by:CUP&&CUP.id,notes:'SWC Sale: '+swcId
+        };});
+        // Post to sales table (so it shows in Sales tab + reports)
+        var saleRow=await sb.from('sales').insert({
+          transaction_id:saleIns.data.id,customer_party_id:swcData.customer_party_id||null,
+          customer_name:swcData.customer_name||'Walk-in',sale_date:td(),
+          subtotal:sold*price,total_amount:sold*price,paid_amount:sold*price,
+          payment_mode:'cash',gross_profit:margin,performed_by:CUP&&CUP.id
+        }).select().single();
+        // Sale items for reports
+        if(saleRow.data)await sb.from('sale_items').insert({
+          sale_id:saleRow.data.id,transaction_id:saleIns.data.id,
+          variant_id:it.variant_id,qty:sold,purchase_price:cost,sale_price:price
+        });
+        // Ledger: cash in + COGS
+        if(ca)await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:sold*price,description:'SWC Sale: '+swcData.customer_name,created_by:CUP&&CUP.id});
+        await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*sold,description:'COGS SWC: '+swcData.customer_name,created_by:CUP&&CUP.id});
+        // Reduce stock_movement correctly (sale deduction)
+        await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sale',p_qty:sold,p_reason:'SWC finalize sale',p_cost_impact:cost,p_user_id:CUP&&CUP.id});
       }
       await sb.from('stock_with_customer_items').update({qty_sold:sold,qty_returned:ret,status:sold>0?'sold':'returned'}).eq('id',it.id);
     }
     await sb.from('stock_with_customer').update({status:'completed'}).eq('id',swcId);
-    await loadData();cmo();toast('SWC finalized!','ok',5000);
+    await loadData();cmo();toast('SWC finalized! Sale posted to Sales module.','ok',5000);
   }catch(ex){toast(ex.message,'err');}
+  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}}
 }
 
 // ── STOCK RESERVATION ──
