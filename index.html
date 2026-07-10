@@ -580,6 +580,15 @@ async function completeSale(){
     await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     await sb.rpc('post_transaction_ledger',{p_txn_id:tr.data.id,p_txn_type:'sale',p_payment_mode:payMode,p_total:tot,p_paid:payMode==='credit'?0:tot,p_party_id:custId,p_account_id:accId2,p_split_cash:splitCash,p_user_id:CUP&&CUP.id});
     await sb.from('ledger_entries').insert({transaction_id:tr.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cst2,description:'COGS '+bn.data,created_by:CUP&&CUP.id});
+    // Issue 9: post to cash_entries so Cash Book shows all sales receipts
+    if(accId2&&payMode!=='credit'){
+      await sb.from('cash_entries').insert({
+        transaction_id:tr.data.id,entry_date:td(),amount:payMode==='split'?splitCash:tot,
+        direction:'in',account_id:accId2,
+        description:'Sale Receipt: '+bn.data+(cust&&cust!=='Walk-in'?' - '+cust:''),
+        nature:'receipt',party_category:'Customer Receipt'
+      });
+    }
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
     // Snapshot for post-sale actions (Print / WhatsApp) — cart gets cleared right after
@@ -825,6 +834,15 @@ async function savePur(){
     // FIX 1: Update inventory stock on purchase
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
+    // Issue 9: post to cash_entries so Cash Book shows all purchase payments
+    if(payAccId&&purPayMode!=='credit'){
+      await sb.from('cash_entries').insert({
+        transaction_id:txn.data.id,entry_date:td(),amount:pd,
+        direction:'out',account_id:payAccId,
+        description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:''),
+        nature:'payment',party_category:'Supplier Payment'
+      });
+    }
     logActivity('purchase_completed','buy',{sku:skuN.data,qty:qty,cost:cst,supplier:sup});
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
@@ -1209,18 +1227,18 @@ async function saveStockMove(mtype){
       var spCheck=parties.find(function(p){return p.name===supName&&p.party_type==='supplier';});
       if(!spCheck){
         var ok=confirm('Supplier "'+supName+'" not found in ledger.\nCreate new supplier record?');
-        if(!ok){toast('Leave Supplier blank to proceed without one, or pick a valid name','err');return;}
+        if(!ok){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Leave Supplier blank to proceed without one, or pick a valid name','err');return;}
       }
     }
   }
 
   var p=prods.find(function(p){return p.id===varId;});
-  if(!p){toast('Product not found','err');return;}
+  if(!p){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Product not found','err');return;}
 
   // ── STEP 3: Stock availability check ──
   if(['purchase_return','damaged','other'].indexOf(mtype)>=0){
-    if((p.stock||0)<=0){toast('No stock available for '+p.name,'err');return;}
-    if(qty>(p.stock||0)){toast('Cannot exceed available stock ('+p.stock+'). Enter '+p.stock+' or less.','err');$('sm-qty')&&($('sm-qty').value=p.stock);return;}
+    if((p.stock||0)<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('No stock available for '+p.name,'err');return;}
+    if(qty>(p.stock||0)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Cannot exceed available stock ('+p.stock+'). Enter '+p.stock+' or less.','err');$('sm-qty')&&($('sm-qty').value=p.stock);return;}
   }
 
   // ── STEP 4: Show confirmation summary before processing ──
@@ -1236,6 +1254,7 @@ async function saveStockMove(mtype){
   if(!confirm(summary)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}return;}
 
   // ── STEP 5: Process stock movement ──
+  try{
   var result=await sb.rpc('process_stock_movement',{
     p_variant_id:varId,p_movement_type:mtype,p_qty:qty,
     p_reason:rsn,p_reference_no:refNo||null,
@@ -1275,6 +1294,10 @@ async function saveStockMove(mtype){
         description:'Purchase Return: '+p.name+' x'+qty,
         created_by:CUP&&CUP.id
       });
+      // Issue 6: ensure supplier current_balance decreases (debit = reduces payable)
+      await sb.from('parties').update({
+        current_balance:Math.max(0,(sp.current_balance||0)-totalVal)
+      }).eq('id',sp.id);
       toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | Supplier: '+sp.name,'ok',7000);
     } else {
       toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | No supplier (stock written off, no recovery)','ok',7000);
@@ -1302,7 +1325,12 @@ async function saveStockMove(mtype){
     if(txn3.data){
       if(doR&&ca2)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:totalVal,description:'Cash Refund: '+p.name,created_by:CUP&&CUP.id});
       // FIX 6: Adjust customer ledger on return — debit customer (reduces receivable / increases credit)
-      if(retCustId)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:retCustId,amount:totalVal,description:'Sales Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
+      if(retCustId){
+        await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:retCustId,amount:totalVal,description:'Sales Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
+        // Issue 6: update customer balance — sales return reduces receivable
+        var retCustObj=parties.find(function(p){return p.id===retCustId;});
+        if(retCustObj)await sb.from('parties').update({current_balance:Math.max(0,(retCustObj.current_balance||0)-totalVal)}).eq('id',retCustId);
+      }
     }
   }
 
@@ -1327,7 +1355,8 @@ async function saveStockMove(mtype){
     toast((SMOVE_LABELS[mtype]||mtype)+': '+qty+' x '+p.name+' | Rs'+totalVal.toLocaleString()+' logged','ok',5000);
   }
   await loadData();cmo();iInv();
-  if(btnEl){btnEl.disabled=false;btnEl.textContent='Process '+(SMOVE_LABELS&&SMOVE_LABELS[mtype]||mtype);}
+  }catch(smEx){toast('Error: '+smEx.message,'err');}
+  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Process '+(SMOVE_LABELS&&SMOVE_LABELS[mtype]||mtype);}}
 }
 
 async function showStockDetail(varId){
@@ -1764,7 +1793,7 @@ async function saveSwc(){
   }
 }
 async function showSwcList(){
-  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').eq('status','issued').order('created_at',{ascending:false});
+  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').in('status',['issued','partial']).order('created_at',{ascending:false});
   var h='<div class="ib">Tap any entry to process return/sale.</div>';
   if(!(data.data&&data.data.length)){h+='<div class="em"><div class="ei">-</div><p>No active stock with customers</p></div>';}
   else{
@@ -1833,28 +1862,37 @@ async function finalizeSwc(swcId){
           total_amount:sold*price,paid_amount:sold*price,payment_status:'paid',
           performed_by:CUP&&CUP.id,notes:'SWC Sale: '+swcId
         };});
-        // Post to sales table (so it shows in Sales tab + reports)
         var saleRow=await sb.from('sales').insert({
           transaction_id:saleIns.data.id,customer_party_id:swcData.customer_party_id||null,
           customer_name:swcData.customer_name||'Walk-in',sale_date:td(),
           subtotal:sold*price,total_amount:sold*price,paid_amount:sold*price,
           payment_mode:'cash',gross_profit:margin,performed_by:CUP&&CUP.id
         }).select().single();
-        // Sale items for reports
         if(saleRow.data)await sb.from('sale_items').insert({
           sale_id:saleRow.data.id,transaction_id:saleIns.data.id,
           variant_id:it.variant_id,qty:sold,purchase_price:cost,sale_price:price
         });
-        // Ledger: cash in + COGS
         if(ca)await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:sold*price,description:'SWC Sale: '+swcData.customer_name,created_by:CUP&&CUP.id});
         await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*sold,description:'COGS SWC: '+swcData.customer_name,created_by:CUP&&CUP.id});
-        // Reduce stock_movement correctly (sale deduction)
         await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sale',p_qty:sold,p_reason:'SWC finalize sale',p_cost_impact:cost,p_user_id:CUP&&CUP.id});
+        // Issue 4+5: decrement qty_with_customer by sold qty (not zero it out)
+        var pSold=prods.find(function(p){return p.id===it.variant_id;});
+        if(pSold)await sb.from('inventory').update({qty_with_customer:Math.max(0,(pSold.withCustomer||0)-sold)}).eq('variant_id',it.variant_id);
       }
-      await sb.from('stock_with_customer_items').update({qty_sold:sold,qty_returned:ret,status:sold>0?'sold':'returned'}).eq('id',it.id);
+      // Issue 4: partial SWC — only mark 'sold' if ALL qty processed; 'partial' if remainder exists
+      var remaining=it.qty_issued-(sold+ret);
+      var itemStatus=remaining>0?'partial':sold>0?'sold':'returned';
+      await sb.from('stock_with_customer_items').update({qty_sold:sold,qty_returned:ret,status:itemStatus}).eq('id',it.id);
     }
-    await sb.from('stock_with_customer').update({status:'completed'}).eq('id',swcId);
-    await loadData();cmo();toast('SWC finalized! Sale posted to Sales module.','ok',5000);
+    // Issue 4: only mark completed if no partial items remain
+    var allDone=window._swcItems.every(function(it2){
+      var s2=Number(document.getElementById('swcr-sold-'+it2.id)&&document.getElementById('swcr-sold-'+it2.id).value||0);
+      var r2=Number(document.getElementById('swcr-ret-'+it2.id)&&document.getElementById('swcr-ret-'+it2.id).value||0);
+      return s2+r2>=it2.qty_issued;
+    });
+    await sb.from('stock_with_customer').update({status:allDone?'completed':'partial'}).eq('id',swcId);
+    await loadData();cmo();
+    toast(allDone?'SWC fully finalized! Sale posted.':'Partial sale saved. Remaining stock still With Customer.','ok',5000);
   }catch(ex){toast(ex.message,'err');}
   finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}}
 }
@@ -1887,7 +1925,11 @@ async function saveReservation(){
     var resNo={data:resIns.no};var res={data:resIns.data};
     await sb.from('stock_reservation_items').insert({reservation_id:res.data.id,variant_id:vid,qty_reserved:qty,sale_price:Number(document.getElementById('res-price')&&document.getElementById('res-price').value||0)});
     var p3=prods.find(function(p){return p.id===vid;});
-    if(p3)await sb.from('inventory').update({qty_reserved:((p3.reserved||0)+qty)}).eq('variant_id',vid);
+    // Issue 7: reservation reduces available stock AND marks as reserved
+    if(p3)await sb.from('inventory').update({
+      qty_available:Math.max(0,(p3.stock||0)-qty),
+      qty_reserved:((p3.reserved||0)+qty)
+    }).eq('variant_id',vid);
     var txn=await sb.from('transactions').insert({transaction_no:resNo.data,transaction_type:'receipt',transaction_date:td(),party_id:cp&&cp.id,total_amount:adv,paid_amount:adv,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Advance/Token: '+cust}).select().single();
     if(txn.data&&accId){
       await sb.from('ledger_entries').insert([
