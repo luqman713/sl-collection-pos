@@ -158,6 +158,16 @@ async function insertWithUniqueNo(table,prefix,buildRow){
 }
 var td=function(){return new Date().toISOString().split('T')[0];};
 var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
+// ── PRODUCT MASTER DROPDOWNS (loaded from DB) ──
+var _fabrics=[];var _seasons=[];var _segments=[];var _designs=[];var _brands=[];
+// Colour master (static list per spec)
+var COLOURS=['Black','White','Off White','Cream','Beige','Brown','Maroon','Red','Pink','Peach',
+  'Orange','Mustard','Yellow','Olive','Green','Mint Green','Sea Green','Teal','Turquoise',
+  'Blue','Sky Blue','Navy Blue','Royal Blue','Purple','Lavender','Grey','Silver','Golden',
+  'Multi Colour','Other'];
+// Size master (static list per spec)  
+var SIZES=['Free Size','XS','S','M','L','XL','XXL','3XL','4XL','5XL',
+  '24','26','28','30','32','34','36','Other'];
 var CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF','Maxi':'MAX','Kurti':'KRT','Shalwar':'SHL','Palazzo':'PLZ','Skirt':'SKT','Leggings':'LGG','Night Suit':'NGT','Inner Wear':'INW','Others':'OTH'};
 var CEMI={'3PC':'X','2PC':'X','Shirt':'X','Jeans':'X','Trouser':'X','Dupatta':'X','Abaya':'X','Scarf':'X'};
 var CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',prods=[],accs=[],parties=[],bCat='';
@@ -295,6 +305,20 @@ async function loadData(){
   }catch(e){/* columns not yet migrated */}
   updateDatalists();
   await loadStoreSettings();
+  await loadProductMasters();
+}
+async function loadProductMasters(){
+  try{
+    var [f,se,sg,d,b]=await Promise.all([
+      sb.from('fabrics').select('id,name').eq('is_active',true).order('sort_order'),
+      sb.from('seasons').select('id,name').eq('is_active',true).order('sort_order'),
+      sb.from('customer_segments').select('id,name').eq('is_active',true).order('sort_order'),
+      sb.from('designs').select('id,name').eq('is_active',true).order('sort_order'),
+      sb.from('brands').select('id,name').eq('is_active',true).order('name')
+    ]);
+    _fabrics=f.data||[];_seasons=se.data||[];_segments=sg.data||[];
+    _designs=d.data||[];_brands=b.data||[];
+  }catch(e){/* master tables not yet migrated — new fields will be hidden */}
 }
 function updateDatalists(){
   var dc=document.getElementById('dl-customers');
@@ -748,14 +772,26 @@ function iInv(){
 
 
 function rBuy(){
+  // Helper to build dropdown option lists
+  function ddOpts(arr,sel){return arr.map(function(x){var n=x.name||x;var v=x.id?x.id:x;return'<option value="'+v+'">'+(x.name||x)+'</option>';}).join('');}
+  var hasMasters=_fabrics.length>0;
   var h='<div class="card"><div class="ct">New Purchase</div>';
-  h+='<div class="fg"><label class="lb">Product Name</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC"></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Category</label><select class="sl" id="pc2" onchange="updSKU()"><option value="">Select...</option>';
+  h+='<div class="fg"><label class="lb">Product Name *</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC Suit"></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Category *</label><select class="sl" id="pc2" onchange="updSKU()"><option value="">Select...</option>';
   for(var i=0;i<CATS.length;i++)h+='<option>'+CATS[i]+'</option>';
-  h+='</select></div><div class="fg"><label class="lb">Size</label><input class="ip" id="pz" placeholder="M/L/XL" oninput="updSKU()"></div></div>';
-  h+='<div class="fg"><label class="lb">Colour</label><input class="ip" id="pcl" placeholder="Navy Blue..." oninput="updSKU()"></div>';
+  h+='</select></div><div class="fg"><label class="lb">Size *</label><select class="sl" id="pz" onchange="updSKU()"><option value="">Select...</option>'+SIZES.map(function(s){return'<option>'+s+'</option>';}).join('')+'</select></div></div>';
+  h+='<div class="fg"><label class="lb">Colour *</label><select class="sl" id="pcl" onchange="updSKU()"><option value="">Select...</option>'+COLOURS.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div>';
   h+='<div class="sku-prev"><div style="font-size:.55rem;color:var(--ink3);text-transform:uppercase;margin-bottom:3px">SKU Preview</div><div class="sku-code" id="sku">Select category...</div></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="pq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs</label><input class="ip" id="pcs" type="number" placeholder="0"></div></div>';
+  if(hasMasters){
+    h+='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);text-transform:uppercase;margin:10px 0 4px">Product Details</div>';
+    h+='<div class="g2"><div class="fg"><label class="lb">Fabric</label><select class="sl" id="p-fabric"><option value="">Select...</option>'+ddOpts(_fabrics)+'</select></div>';
+    h+='<div class="fg"><label class="lb">Season</label><select class="sl" id="p-season"><option value="">Select...</option>'+ddOpts(_seasons)+'</select></div></div>';
+    h+='<div class="g2"><div class="fg"><label class="lb">Customer Segment</label><select class="sl" id="p-segment"><option value="">Select...</option>'+ddOpts(_segments)+'</select></div>';
+    h+='<div class="fg"><label class="lb">Design</label><select class="sl" id="p-design"><option value="">Select...</option>'+ddOpts(_designs)+'</select></div></div>';
+    h+='<div class="fg"><label class="lb">Brand</label><div style="display:flex;gap:6px"><select class="sl" id="p-brand" style="flex:1"><option value="">Select or add new...</option>'+ddOpts(_brands)+'</select><button class="btn bh bsm" onclick="openAddBrand()">+ New</button></div></div>';
+    h+='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);text-transform:uppercase;margin:10px 0 4px">Purchase Details</div>';
+  }
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="pq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="pcs" type="number" placeholder="0"></div></div>';
   h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
   h+='<div class="ib">Sale price set at billing time.</div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">Owner</div></div></div>';
@@ -764,18 +800,41 @@ function rBuy(){
   return h;
 }
 function updSKU(){var cat=$('pc2')&&$('pc2').value||'';var cl=$('pcl')&&$('pcl').value||'';var sz=$('pz')&&$('pz').value||'';var sk=$('sku');if(!sk)return;if(!cat){sk.textContent='Select category...';return;}sk.textContent=(CCOD[cat]||cat.substring(0,3).toUpperCase())+'-'+colCode(cl)+'-'+szCode(sz)+'-###';}
+function openAddBrand(){
+  omo('Add New Brand','<div class="fg"><label class="lb">Brand Name</label><input class="ip" id="nb-name" placeholder="Brand name"></div><button class="btn bi" onclick="saveNewBrand()">Save Brand</button>');
+}
+async function saveNewBrand(){
+  var nm=(document.getElementById('nb-name')&&document.getElementById('nb-name').value||'').trim();
+  if(!nm){toast('Enter brand name','err');return;}
+  if(_brands.find(function(b){return b.name.toLowerCase()===nm.toLowerCase();})){toast('Brand already exists','warn');return;}
+  var r=await sb.from('brands').insert({name:nm,is_active:true,created_by:CUP&&CUP.id}).select().single();
+  if(r.error){toast(r.error.message,'err');return;}
+  _brands.push(r.data);
+  cmo();toast('Brand added: '+nm,'ok');
+  // Re-render Buy tab to include new brand in dropdown
+  var buyContent=document.getElementById('main-content');
+  if(buyContent&&document.querySelector('#nt .pl.on')&&document.querySelector('#nt .pl.on').textContent==='BUY'){
+    buyContent.innerHTML=rBuy();
+  }
+}
 function setPurPM(m,el){purPayMode=m;var ps=document.querySelectorAll('#ppm .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');var d=$('ppd');if(!d)return;var ca=accs.find(function(a){return a.name==='Cash Drawer';});if(m==='cash')d.innerHTML='<div class="ib">Cash: '+fmt(ca&&ca.current_balance||0)+'</div>';else if(m==='credit')d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Supplier Payable</div>';else if(m==='partial')d.innerHTML='<div class="fg"><label class="lb">Paid Now Rs</label><input class="ip" id="ppd2" type="number" placeholder="0" oninput="updPP()"></div>';else if(m==='owner')d.innerHTML='<div class="ib">Posted to Owner Payable</div>';updPP();}
 function updPP(){var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
 async function savePur(){
   var btnEl=event&&event.target;
   if(btnEl&&btnEl.disabled)return; // block double-tap
   var nm=$('pn')&&$('pn').value.trim();var cat=$('pc2')&&$('pc2').value;var qty=Number($('pq')&&$('pq').value||0);var cst=Number($('pcs')&&$('pcs').value||0);var sup=$('ps2')&&$('ps2').value.trim()||'';
+  var p_fabric=$('p-fabric')&&$('p-fabric').value||null;
+  var p_season=$('p-season')&&$('p-season').value||null;
+  var p_segment=$('p-segment')&&$('p-segment').value||null;
+  var p_design=$('p-design')&&$('p-design').value||null;
+  var p_brand=$('p-brand')&&$('p-brand').value||null;
+  var cl=$('pcl')&&$('pcl').value.trim()||'';
+  var sz=$('pz')&&$('pz').value.trim()||'';
   if(!nm||!cat||!qty||!cst){toast('Fill Name, Category, Qty, Cost','err');return;}
   if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
   if(purPayMode!=='owner'&&!sup){toast('Enter supplier name','err');return;}
   var tot=qty*cst;
   var catCode=CCOD[cat]||cat.substring(0,3).toUpperCase();
-  var cl=$('pcl')&&$('pcl').value.trim()||'';var sz=$('pz')&&$('pz').value.trim()||'';
   var clC=colCode(cl);var szC=szCode(sz);var prefix=catCode+'-'+clC+'-'+szC;
   var purNo=await sb.rpc('generate_transaction_no',{p_prefix:'PUR'});
   var sp=null;
@@ -807,7 +866,13 @@ async function savePur(){
     var skuN,variant;
     for(var attempt=0;attempt<3;attempt++){
       var skuVal=await genUniqueNo(prefix,attempt);
-      variant=await sb.from('product_variants').insert({product_id:prodId,sku:skuVal,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id}).select().single();
+      var variantPayload={product_id:prodId,sku:skuVal,colour:cl,colour_code:clC,size:sz,size_code:szC,purchase_price:cst,created_by:CUP&&CUP.id};
+      if(p_fabric)variantPayload.fabric_id=p_fabric;
+      if(p_season)variantPayload.season_id=p_season;
+      if(p_segment)variantPayload.segment_id=p_segment;
+      if(p_design)variantPayload.design_id=p_design;
+      if(p_brand)variantPayload.brand_id=p_brand;
+      variant=await sb.from('product_variants').insert(variantPayload).select().single();
       if(!variant.error){skuN={data:skuVal};break;}
       if(variant.error&&variant.error.message&&variant.error.message.indexOf('duplicate')>=0){
         await new Promise(function(r){setTimeout(r,150*(attempt+1));});
@@ -846,8 +911,10 @@ async function savePur(){
     logActivity('purchase_completed','buy',{sku:skuN.data,qty:qty,cost:cst,supplier:sup});
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
-    var flds=['pn','pz','pcl','pq','pcs','ps2'];for(var fi=0;fi<flds.length;fi++){var fe=$(flds[fi]);if(fe)fe.value='';}
-    if($('pc2'))$('pc2').value='';if($('sku'))$('sku').textContent='Select category...';if($('pprev'))$('pprev').style.display='none';
+    var flds=['pn','pq','pcs','ps2','p-fabric','p-season','p-segment','p-design','p-brand'];
+    for(var fi=0;fi<flds.length;fi++){var fe=$(flds[fi]);if(fe)fe.value='';}
+    if($('pc2'))$('pc2').value='';if($('pz'))$('pz').value='';if($('pcl'))$('pcl').value='';
+    if($('sku'))$('sku').textContent='Select category...';if($('pprev'))$('pprev').style.display='none';
     if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}
   }catch(ex){toast('Error: '+ex.message,'err');if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}}
 }
