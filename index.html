@@ -389,7 +389,7 @@ function showTab(id,el){
   var c=$('ct');
   if(id==='dash'){c.innerHTML=rDash();iDash();}
   else if(id==='bill'){c.innerHTML=rBill();iBill();}
-  else if(id==='inv'){c.innerHTML=rInv();iInv();}
+  else if(id==='inv'){c.innerHTML=rInv();iInv();loadIRPage(0);}
   else if(id==='buy'){c.innerHTML=rBuy();}
   else if(id==='sales'){c.innerHTML=rSalesTab();iSalesTab();}
   else if(id==='led'){c.innerHTML=rLed();iLed();}
@@ -732,44 +732,11 @@ function rInv(){
   }
   h+='<div class="g2" style="margin-bottom:8px"><button class="btn bh" onclick="oStockWithCustomer()">Issue to Customer</button><button class="btn bh" onclick="showSwcList()">View With Customer</button></div>';
   h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="showReservedList()">View Reserved Stock</button>';
-  h+='<input class="ip" id="is" placeholder="Search..." oninput="iInv()" style="margin-bottom:10px">';
+  h+='<input class="ip" id="is" placeholder="Quick search..." oninput="iInv()" style="margin-bottom:10px">';
   h+='<div id="il"></div>';
+  h+=rInventoryRegister();
   return h;
 }
-function iInv(){
-  var q=($('is')&&$('is').value||'').toLowerCase();
-  var c=$('il');if(!c)return;
-  var p=prods.filter(function(pr){return(pr.stock||0)>0&&(!q||(pr.name||'').toLowerCase().indexOf(q)>=0||(pr.sku||'').toLowerCase().indexOf(q)>=0);});
-  if(!p.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No items</p></div>';return;}
-  var cats={};p.forEach(function(pr){if(!cats[pr.cat])cats[pr.cat]={items:[],qty:0,val:0};cats[pr.cat].items.push(pr);cats[pr.cat].qty+=pr.stock||0;cats[pr.cat].val+=(pr.stock||0)*pr.cost;});
-  var tv2=p.reduce(function(s,pr){return s+(pr.stock||0)*pr.cost;},0);
-  var html='';var catKeys=Object.keys(cats);
-  for(var ci=0;ci<catKeys.length;ci++){
-    var cat=catKeys[ci];var d=cats[cat];
-    html+='<div style="margin-bottom:14px"><div class="rh"><div>'+cat+'</div><div>'+d.qty+' pcs - '+fmt(d.val)+'</div></div>';
-    html+='<div style="border:1px solid #E8D8C0;border-top:none;border-radius:0 0 9px 9px">';
-    html+='<div class="ih"><div>Item</div><div style="text-align:center">Qty</div><div style="text-align:right">Age</div><div style="text-align:right">Value</div></div>';
-    for(var pi=0;pi<d.items.length;pi++){
-      var pr=d.items[pi];
-      var ac2=pr.age>=90?'var(--red)':pr.age>=60?'var(--gold)':pr.age>=30?'#7A6000':'var(--sage)';
-      var vid=pr.id;
-      html+='<div class="ir" id="row-'+vid+'" onclick="showStockDetail(\''+vid+'\')">';
-      html+='<div><div style="font-size:.7rem;font-weight:600">'+pr.name+'</div>';
-      html+='<div style="font-size:.55rem;color:var(--ink3)">'+(pr.colour||'')+(pr.size?' - '+pr.size:'')+'</div>';
-      html+='<div style="font-family:monospace;font-size:.5rem;color:var(--ink3)">'+pr.sku+'</div></div>';
-      html+='<div style="text-align:center"><span style="font-size:.85rem;font-weight:700;color:'+(pr.stock<=2?'var(--red)':'var(--sage)')+'">'+pr.stock+'</span>';
-      if(pr.stock<=2)html+='<div style="font-size:.48rem;color:var(--red)">LOW</div>';
-      html+='</div>';
-      html+='<div style="text-align:right;font-size:.6rem;font-weight:700;color:'+ac2+'">'+pr.age+'d</div>';
-      html+='<div style="text-align:right;font-size:.68rem;font-weight:600">'+fmt((pr.stock||0)*pr.cost)+'</div></div>';
-    }
-    html+='<div class="if2"><div style="font-size:.63rem;font-weight:700;color:var(--ink2)">Total</div><div style="text-align:center;font-size:.7rem;font-weight:700;color:var(--ink2)">'+d.qty+'</div><div></div><div style="text-align:right;font-size:.7rem;font-weight:700;color:var(--ink2)">'+fmt(d.val)+'</div></div>';
-    html+='</div></div>';
-  }
-  html+='<div style="background:var(--ink);color:white;border-radius:9px;padding:11px 13px;display:flex;justify-content:space-between"><div style="font-size:.72rem;font-weight:700">TOTAL</div><div style="font-size:.72rem;font-weight:700">'+p.reduce(function(s,pr){return s+(pr.stock||0);},0)+' pcs - '+fmt(tv2)+'</div></div>';
-  c.innerHTML=html;
-}
-
 
 function rBuy(){
   // Helper to build dropdown option lists
@@ -2481,6 +2448,350 @@ async function saveStoreSettings(){
     STORE=Object.assign({},STORE,upd);
     cmo();toast('Store settings updated','ok');
   }catch(ex){toast(ex.message,'err');}
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+// INVENTORY REGISTER — professional ERP inventory management
+// ═══════════════════════════════════════════════════════════════
+
+var _IR={  // Inventory Register state
+  data:[],total:0,page:0,perPage:25,loading:false,
+  sort:{col:'sku',dir:'asc'},
+  filters:{q:'',cat:'',fabric:'',season:'',segment:'',design:'',colour:'',brand:'',size:'',status:'',age:''},
+  filtersOpen:false
+};
+
+// ── Replace iInv with the full inventory register ──
+function iInv(){
+  // Keep backward-compatible quick search for operational use (Bill tab srch etc.)
+  var q=($('is')&&$('is').value||'').toLowerCase();
+  var il=$('il');
+  if(il){
+    var p=prods.filter(function(pr){return(pr.stock||0)>0&&(!q||(pr.name||'').toLowerCase().indexOf(q)>=0||(pr.sku||'').toLowerCase().indexOf(q)>=0);});
+    renderInvList(p,il);
+  }
+  // Load full inventory register if available
+  if(document.getElementById('ir-table'))loadIRPage(0);
+}
+function renderInvList(p,c){
+  if(!p.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No items</p></div>';return;}
+  var cats={};p.forEach(function(pr){if(!cats[pr.cat])cats[pr.cat]={items:[],qty:0,val:0};cats[pr.cat].items.push(pr);cats[pr.cat].qty+=pr.stock||0;cats[pr.cat].val+=(pr.stock||0)*pr.cost;});
+  var tv2=p.reduce(function(s,pr){return s+(pr.stock||0)*pr.cost;},0);
+  var html='';var catKeys=Object.keys(cats);
+  for(var ci=0;ci<catKeys.length;ci++){
+    var cat=catKeys[ci];var d=cats[cat];
+    html+='<div style="margin-bottom:14px"><div class="rh"><div>'+cat+'</div><div>'+d.qty+' pcs - '+fmt(d.val)+'</div></div>';
+    html+='<div style="border:1px solid #E8D8C0;border-top:none;border-radius:0 0 9px 9px">';
+    html+='<div class="ih"><div>Item</div><div style="text-align:center">Qty</div><div style="text-align:right">Age</div><div style="text-align:right">Value</div></div>';
+    for(var pi=0;pi<d.items.length;pi++){
+      var pr=d.items[pi];
+      var ac2=pr.age>=90?'var(--red)':pr.age>=60?'var(--gold)':pr.age>=30?'#7A6000':'var(--sage)';
+      var vid=pr.id;
+      html+='<div class="ir" id="row-'+vid+'" onclick="showStockDetail(\''+vid+'\')">';
+      html+='<div><div style="font-size:.7rem;font-weight:600">'+pr.name+'</div>';
+      html+='<div style="font-size:.55rem;color:var(--ink3)">'+(pr.colour||'')+(pr.size?' - '+pr.size:'')+'</div>';
+      html+='<div style="font-family:monospace;font-size:.5rem;color:var(--ink3)">'+pr.sku+'</div></div>';
+      html+='<div style="text-align:center"><span style="font-size:.85rem;font-weight:700;color:'+(pr.stock<=2?'var(--red)':'var(--sage)')+'">'+pr.stock+'</span>';
+      if(pr.stock<=2)html+='<div style="font-size:.48rem;color:var(--red)">LOW</div>';
+      html+='</div>';
+      html+='<div style="text-align:right;font-size:.6rem;font-weight:700;color:'+ac2+'">'+pr.age+'d</div>';
+      html+='<div style="text-align:right;font-size:.68rem;font-weight:600">'+fmt((pr.stock||0)*pr.cost)+'</div></div>';
+    }
+    html+='<div class="if2"><div style="font-size:.63rem;font-weight:700;color:var(--ink2)">Total</div><div style="text-align:center;font-size:.7rem;font-weight:700;color:var(--ink2)">'+d.qty+'</div><div></div><div style="text-align:right;font-size:.7rem;font-weight:700;color:var(--ink2)">'+fmt(d.val)+'</div></div>';
+    html+='</div></div>';
+  }
+  html+='<div style="background:var(--ink);color:white;border-radius:9px;padding:11px 13px;display:flex;justify-content:space-between"><div style="font-size:.72rem;font-weight:700">TOTAL</div><div style="font-size:.72rem;font-weight:700">'+p.reduce(function(s,pr){return s+(pr.stock||0);},0)+' pcs - '+fmt(p.reduce(function(s,pr){return s+(pr.stock||0)*pr.cost;},0))+'</div></div>';
+  c.innerHTML=html;
+}
+
+// ── Render Inventory Register section (appended below existing list) ──
+function rInventoryRegister(){
+  var cats=cats||[];
+  var h='<div style="margin-top:16px">';
+  // Header + export buttons
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">';
+  h+='<div style="font-size:.8rem;font-weight:700;color:var(--ink)">Inventory Register</div>';
+  h+='<div style="display:flex;gap:5px">';
+  h+='<button class="btn bh bsm" onclick="exportIR(\'csv\')">CSV</button>';
+  h+='<button class="btn bh bsm" onclick="exportIR(\'excel\')">Excel</button>';
+  h+='<button class="btn bh bsm" onclick="exportIR(\'print\')">Print</button>';
+  h+='<button class="btn bh bsm" onclick="toggleIRFilters()" id="ir-filt-btn">Filter</button>';
+  h+='</div></div>';
+  // Search
+  h+='<input class="ip" id="ir-search" placeholder="Search SKU or product name..." oninput="onIRSearch()" style="margin-bottom:8px">';
+  // Filter panel (hidden by default)
+  h+='<div id="ir-filters" style="display:none;background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:8px">';
+  h+='<div class="g2">';
+  h+='<div class="fg"><label class="lb">Category</label><select class="sl" id="irf-cat" onchange="applyIRFilters()"><option value="">All</option>'+CATS.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label class="lb">Status</label><select class="sl" id="irf-status" onchange="applyIRFilters()"><option value="">All</option><option>Available</option><option>Low Stock</option><option>Dead Stock</option><option>Reserved</option><option>With Customer</option><option>Out of Stock</option></select></div>';
+  h+='</div><div class="g2">';
+  h+='<div class="fg"><label class="lb">Fabric</label><select class="sl" id="irf-fabric" onchange="applyIRFilters()"><option value="">All</option>'+_fabrics.map(function(f){return'<option>'+f.name+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label class="lb">Season</label><select class="sl" id="irf-season" onchange="applyIRFilters()"><option value="">All</option>'+_seasons.map(function(s){return'<option>'+s.name+'</option>';}).join('')+'</select></div>';
+  h+='</div><div class="g2">';
+  h+='<div class="fg"><label class="lb">Colour</label><select class="sl" id="irf-colour" onchange="applyIRFilters()"><option value="">All</option>'+COLOURS.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label class="lb">Size</label><select class="sl" id="irf-size" onchange="applyIRFilters()"><option value="">All</option>'+SIZES.map(function(s){return'<option>'+s+'</option>';}).join('')+'</select></div>';
+  h+='</div><div class="g2">';
+  h+='<div class="fg"><label class="lb">Brand</label><select class="sl" id="irf-brand" onchange="applyIRFilters()"><option value="">All</option>'+_brands.map(function(b){return'<option>'+b.name+'</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label class="lb">Ageing</label><select class="sl" id="irf-age" onchange="applyIRFilters()"><option value="">All</option><option value="0-30">0–30 Days</option><option value="31-60">31–60 Days</option><option value="61-90">61–90 Days</option><option value="91-180">91–180 Days</option><option value="181+">181+ Days</option></select></div>';
+  h+='</div>';
+  h+='<button class="btn bh bsm" onclick="clearIRFilters()">Clear All Filters</button>';
+  h+='</div>';
+  // Table container
+  h+='<div id="ir-table" style="overflow-x:auto"></div>';
+  h+='<div id="ir-pagination" style="display:flex;gap:6px;justify-content:center;margin-top:8px;flex-wrap:wrap"></div>';
+  h+='</div>';
+  return h;
+}
+
+function toggleIRFilters(){
+  var el=document.getElementById('ir-filters');
+  if(!el)return;
+  var open=el.style.display!=='none';
+  el.style.display=open?'none':'block';
+  var btn=document.getElementById('ir-filt-btn');
+  if(btn)btn.textContent=open?'Filter':'Hide Filter';
+}
+
+function clearIRFilters(){
+  ['irf-cat','irf-status','irf-fabric','irf-season','irf-colour','irf-size','irf-brand','irf-age'].forEach(function(id){
+    var el=document.getElementById(id);if(el)el.value='';
+  });
+  var srch=document.getElementById('ir-search');if(srch)srch.value='';
+  _IR.filters={q:'',cat:'',fabric:'',season:'',segment:'',design:'',colour:'',brand:'',size:'',status:'',age:''};
+  loadIRPage(0);
+}
+
+var _irSearchTimer=null;
+function onIRSearch(){
+  clearTimeout(_irSearchTimer);
+  _irSearchTimer=setTimeout(function(){
+    _IR.filters.q=(document.getElementById('ir-search')&&document.getElementById('ir-search').value||'').trim();
+    loadIRPage(0);
+  },300);
+}
+
+function applyIRFilters(){
+  _IR.filters.cat=document.getElementById('irf-cat')&&document.getElementById('irf-cat').value||'';
+  _IR.filters.status=document.getElementById('irf-status')&&document.getElementById('irf-status').value||'';
+  _IR.filters.fabric=document.getElementById('irf-fabric')&&document.getElementById('irf-fabric').value||'';
+  _IR.filters.season=document.getElementById('irf-season')&&document.getElementById('irf-season').value||'';
+  _IR.filters.colour=document.getElementById('irf-colour')&&document.getElementById('irf-colour').value||'';
+  _IR.filters.size=document.getElementById('irf-size')&&document.getElementById('irf-size').value||'';
+  _IR.filters.brand=document.getElementById('irf-brand')&&document.getElementById('irf-brand').value||'';
+  _IR.filters.age=document.getElementById('irf-age')&&document.getElementById('irf-age').value||'';
+  loadIRPage(0);
+}
+
+// ── Sort handler ──
+function sortIR(col){
+  if(_IR.sort.col===col)_IR.sort.dir=_IR.sort.dir==='asc'?'desc':'asc';
+  else{_IR.sort.col=col;_IR.sort.dir='asc';}
+  loadIRPage(_IR.page);
+}
+function irSortIcon(col){return _IR.sort.col===col?(_IR.sort.dir==='asc'?' ▲':' ▼'):' ↕';}
+
+// ── Main data loader ──
+async function loadIRPage(page){
+  if(_IR.loading)return;
+  var tbl=document.getElementById('ir-table');if(!tbl)return;
+  _IR.loading=true;_IR.page=page;
+  tbl.innerHTML='<div class="em"><div style="width:20px;height:20px;border:2px solid rgba(0,0,0,.1);border-radius:50%;border-top-color:var(--gold);animation:sp .8s linear infinite;margin:0 auto"></div></div>';
+  try{
+    var q=sb.from('v_inventory_register').select('*',{count:'exact'});
+    // Search
+    if(_IR.filters.q)q=q.or('sku.ilike.%'+_IR.filters.q+'%,product_name.ilike.%'+_IR.filters.q+'%');
+    // Filters
+    if(_IR.filters.cat)q=q.eq('category',_IR.filters.cat);
+    if(_IR.filters.fabric)q=q.eq('fabric',_IR.filters.fabric);
+    if(_IR.filters.season)q=q.eq('season',_IR.filters.season);
+    if(_IR.filters.colour)q=q.eq('colour',_IR.filters.colour);
+    if(_IR.filters.size)q=q.eq('size',_IR.filters.size);
+    if(_IR.filters.brand)q=q.eq('brand',_IR.filters.brand);
+    if(_IR.filters.status)q=q.eq('stock_status',_IR.filters.status);
+    if(_IR.filters.age){
+      var ageParts=_IR.filters.age.split('-');
+      if(_IR.filters.age==='181+')q=q.gte('age_days',181);
+      else if(ageParts.length===2){q=q.gte('age_days',Number(ageParts[0])).lte('age_days',Number(ageParts[1]));}
+    }
+    // Sort
+    q=q.order(_IR.sort.col,{ascending:_IR.sort.dir==='asc'});
+    // Pagination
+    var from=page*_IR.perPage,to=from+_IR.perPage-1;
+    q=q.range(from,to);
+    var res=await q;
+    _IR.data=res.data||[];_IR.total=res.count||0;
+    renderIRTable();
+    renderIRPagination();
+  }catch(e){tbl.innerHTML='<div class="ib">Inventory Register requires Phase 7 SQL to be run first.</div>';}
+  _IR.loading=false;
+}
+
+function renderIRTable(){
+  var tbl=document.getElementById('ir-table');if(!tbl)return;
+  var rows=_IR.data;
+  if(!rows.length){tbl.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No inventory matching filters</p></div>';return;}
+  var statusColor={'Available':'var(--sage)','Low Stock':'var(--red)','Dead Stock':'var(--red)','Reserved':'var(--gold)','With Customer':'#6B3E1A','Out of Stock':'var(--ink3)'};
+  var cols=[
+    {k:'sku',l:'SKU'},{k:'product_name',l:'Product'},{k:'category',l:'Category'},
+    {k:'fabric',l:'Fabric'},{k:'season',l:'Season'},{k:'size',l:'Size'},
+    {k:'colour',l:'Colour'},{k:'brand',l:'Brand'},
+    {k:'qty_available',l:'Avail'},{k:'qty_reserved',l:'Rsrv'},
+    {k:'qty_with_customer',l:'W/Cust'},{k:'qty_damaged',l:'Dmgd'},
+    {k:'qty_total',l:'Total'},{k:'purchase_price',l:'Cost'},
+    {k:'inventory_value',l:'Value'},{k:'age_days',l:'Age'},
+    {k:'stock_status',l:'Status'}
+  ];
+  var h='<table style="width:100%;border-collapse:collapse;font-size:.62rem;min-width:900px">';
+  h+='<thead><tr style="background:var(--ink);color:white">';
+  cols.forEach(function(col){
+    h+='<th onclick="sortIR(\''+col.k+'\')" style="padding:6px 8px;white-space:nowrap;cursor:pointer;text-align:'+(col.k.indexOf('qty')>=0||col.k==='purchase_price'||col.k==='inventory_value'||col.k==='age_days'?'right':'left')+'">'+col.l+irSortIcon(col.k)+'</th>';
+  });
+  h+='</tr></thead><tbody>';
+  rows.forEach(function(r,i){
+    var bg=i%2===0?'white':'var(--cream2)';
+    h+='<tr style="background:'+bg+';cursor:pointer" onclick="showIRDetail(\''+r.variant_id+'\')" onmouseover="this.style.background=\'var(--cream)\'" onmouseout="this.style.background=\''+bg+'\'">';
+    h+='<td style="padding:6px 8px;font-family:monospace;font-size:.55rem;color:var(--ink3)">'+r.sku+'</td>';
+    h+='<td style="padding:6px 8px;font-weight:600;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+r.product_name+'">'+r.product_name+'</td>';
+    h+='<td style="padding:6px 8px">'+r.category+'</td>';
+    h+='<td style="padding:6px 8px">'+r.fabric+'</td>';
+    h+='<td style="padding:6px 8px">'+r.season+'</td>';
+    h+='<td style="padding:6px 8px">'+r.size+'</td>';
+    h+='<td style="padding:6px 8px">'+r.colour+'</td>';
+    h+='<td style="padding:6px 8px">'+r.brand+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;font-weight:700;color:'+(r.qty_available<=2&&r.qty_available>0?'var(--red)':'var(--sage)')+'">'+r.qty_available+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;color:var(--gold)">'+r.qty_reserved+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;color:#6B3E1A">'+r.qty_with_customer+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;color:var(--red)">'+r.qty_damaged+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;font-weight:700">'+r.qty_total+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right">'+fmt(r.purchase_price)+'</td>';
+    h+='<td style="padding:6px 8px;text-align:right;font-weight:700">'+fmt(r.inventory_value)+'</td>';
+    var ageFmt=r.age_days>=90?'<span style="color:var(--red)">'+r.age_days+'d</span>':r.age_days>=60?'<span style="color:var(--gold)">'+r.age_days+'d</span>':r.age_days+'d';
+    h+='<td style="padding:6px 8px;text-align:right">'+ageFmt+'</td>';
+    h+='<td style="padding:6px 8px"><span style="padding:2px 6px;border-radius:4px;background:var(--cream2);font-size:.55rem;font-weight:700;color:'+(statusColor[r.stock_status]||'var(--ink3)')+'">'+r.stock_status+'</span></td>';
+    h+='</tr>';
+  });
+  h+='</tbody>';
+  // Totals row
+  var totVal=_IR.data.reduce(function(s,r){return s+Number(r.inventory_value||0);},0);
+  var totQty=_IR.data.reduce(function(s,r){return s+Number(r.qty_available||0);},0);
+  h+='<tfoot><tr style="background:var(--ink);color:white;font-weight:700">';
+  cols.forEach(function(col,ci){
+    if(ci===0)h+='<td style="padding:6px 8px">Page Total</td>';
+    else if(col.k==='qty_available')h+='<td style="padding:6px 8px;text-align:right">'+totQty+'</td>';
+    else if(col.k==='inventory_value')h+='<td style="padding:6px 8px;text-align:right">'+fmt(totVal)+'</td>';
+    else h+='<td></td>';
+  });
+  h+='</tr></tfoot>';
+  h+='</table>';
+  tbl.innerHTML=h;
+}
+
+function renderIRPagination(){
+  var pg=document.getElementById('ir-pagination');if(!pg)return;
+  var totalPages=Math.ceil(_IR.total/_IR.perPage);
+  if(totalPages<=1){pg.innerHTML='<div style="font-size:.6rem;color:var(--ink3)">Showing '+_IR.data.length+' of '+_IR.total+' records</div>';return;}
+  var h='<div style="font-size:.6rem;color:var(--ink3);margin-right:8px">'+_IR.total+' records</div>';
+  h+='<button class="btn bh bsm" onclick="loadIRPage(0)" '+(0===_IR.page?'disabled':'')+'>&laquo;</button>';
+  h+='<button class="btn bh bsm" onclick="loadIRPage('+(_IR.page-1)+')" '+(_IR.page===0?'disabled':'')+'>&lsaquo;</button>';
+  var start=Math.max(0,_IR.page-2),end=Math.min(totalPages-1,start+4);
+  for(var p=start;p<=end;p++){h+='<button class="btn '+(p===_IR.page?'bi':'bh')+' bsm" onclick="loadIRPage('+p+')">'+(p+1)+'</button>';}
+  h+='<button class="btn bh bsm" onclick="loadIRPage('+(_IR.page+1)+')" '+(_IR.page>=totalPages-1?'disabled':'')+'>&rsaquo;</button>';
+  h+='<button class="btn bh bsm" onclick="loadIRPage('+(totalPages-1)+')" '+(_IR.page>=totalPages-1?'disabled':'')+'>&raquo;</button>';
+  pg.innerHTML=h;
+}
+
+// ── Row Detail Modal ──
+async function showIRDetail(variantId){
+  var r=_IR.data.find(function(x){return x.variant_id===variantId;});
+  if(!r){var res=await sb.from('v_inventory_register').select('*').eq('variant_id',variantId).single();if(res.data)r=res.data;else{toast('Not found','err');return;}}
+  var h='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px">';
+  var fields=[['SKU',r.sku],['Product',r.product_name],['Category',r.category],['Fabric',r.fabric],
+    ['Season',r.season],['Segment',r.customer_segment],['Size',r.size],['Design',r.design],
+    ['Colour',r.colour],['Brand',r.brand]];
+  fields.forEach(function(f){if(f[1])h+='<div><div style="font-size:.54rem;color:var(--ink3)">'+f[0]+'</div><div style="font-size:.7rem;font-weight:600">'+f[1]+'</div></div>';});
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px">';
+  h+='<div class="sc sg2"><div class="sl2">Available</div><div class="sv">'+r.qty_available+'</div></div>';
+  h+='<div class="sc" style="border-left-color:var(--gold)"><div class="sl2">Reserved</div><div class="sv">'+r.qty_reserved+'</div></div>';
+  h+='<div class="sc" style="border-left-color:#6B3E1A"><div class="sl2">W/Cust</div><div class="sv">'+r.qty_with_customer+'</div></div>';
+  h+='<div class="sc rd"><div class="sl2">Damaged</div><div class="sv">'+r.qty_damaged+'</div></div>';
+  h+='</div>';
+  h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--cream2);border-radius:8px;margin-bottom:10px">';
+  h+='<div><div style="font-size:.55rem;color:var(--ink3)">Unit Cost</div><div style="font-size:.8rem;font-weight:700">'+fmt(r.purchase_price)+'</div></div>';
+  h+='<div><div style="font-size:.55rem;color:var(--ink3)">Inventory Value</div><div style="font-size:.8rem;font-weight:700;color:var(--gold)">'+fmt(r.inventory_value)+'</div></div>';
+  h+='<div><div style="font-size:.55rem;color:var(--ink3)">Age</div><div style="font-size:.8rem;font-weight:700;color:'+(r.age_days>=90?'var(--red)':r.age_days>=60?'var(--gold)':'var(--sage)')+'">'+r.age_days+'d</div></div>';
+  h+='<div><div style="font-size:.55rem;color:var(--ink3)">Status</div><div style="font-size:.8rem;font-weight:700">'+r.stock_status+'</div></div>';
+  h+='</div>';
+  h+='<div id="ir-detail-moves"><div style="font-size:.6rem;color:var(--ink3)">Loading movement history...</div></div>';
+  omo(r.sku+' - '+r.product_name,h);
+  // Load stock movement async
+  var mv=await sb.from('stock_movements').select('*').eq('variant_id',variantId).order('created_at',{ascending:false}).limit(20);
+  var mdiv=document.getElementById('ir-detail-moves');if(!mdiv)return;
+  var mvrows=mv.data||[];
+  if(!mvrows.length){mdiv.innerHTML='<div class="em"><p style="font-size:.65rem">No movement history</p></div>';return;}
+  var mh='<div class="ct">Stock Movement</div><div style="border:1px solid var(--cream2);border-radius:8px;overflow:hidden">';
+  mh+='<div style="display:grid;grid-template-columns:1.2fr 1fr .7fr .7fr .7fr;background:var(--ink);color:white;padding:5px 8px">';
+  ['Date','Type','In','Out','Balance'].forEach(function(l){mh+='<div style="font-size:.52rem;font-weight:700">'+l+'</div>';});
+  mh+='</div>';
+  mvrows.forEach(function(m,i){
+    var isIn=m.quantity_in>0;
+    mh+='<div style="display:grid;grid-template-columns:1.2fr 1fr .7fr .7fr .7fr;padding:5px 8px;background:'+(i%2?'var(--cream2)':'white')+';font-size:.58rem">';
+    mh+='<div>'+(m.created_at||'').slice(0,10)+'</div>';
+    mh+='<div style="text-transform:capitalize">'+(m.movement_type||'').replace(/_/g,' ')+'</div>';
+    mh+='<div style="color:var(--sage);font-weight:700">'+(m.quantity_in>0?'+'+m.quantity_in:'')+'</div>';
+    mh+='<div style="color:var(--red);font-weight:700">'+(m.quantity_out>0?'-'+m.quantity_out:'')+'</div>';
+    mh+='<div style="font-weight:700">'+m.balance_after+'</div>';
+    mh+='</div>';
+  });
+  mh+='</div>';
+  mdiv.innerHTML=mh;
+}
+
+// ── Export functions ──
+async function exportIR(format){
+  toast('Preparing export...','ok',2000);
+  // Load all matching records (no pagination for export)
+  var q=sb.from('v_inventory_register').select('*');
+  if(_IR.filters.q)q=q.or('sku.ilike.%'+_IR.filters.q+'%,product_name.ilike.%'+_IR.filters.q+'%');
+  if(_IR.filters.cat)q=q.eq('category',_IR.filters.cat);
+  if(_IR.filters.fabric)q=q.eq('fabric',_IR.filters.fabric);
+  if(_IR.filters.season)q=q.eq('season',_IR.filters.season);
+  if(_IR.filters.colour)q=q.eq('colour',_IR.filters.colour);
+  if(_IR.filters.size)q=q.eq('size',_IR.filters.size);
+  if(_IR.filters.brand)q=q.eq('brand',_IR.filters.brand);
+  if(_IR.filters.status)q=q.eq('stock_status',_IR.filters.status);
+  if(_IR.filters.age){var ageParts=_IR.filters.age.split('-');if(_IR.filters.age==='181+')q=q.gte('age_days',181);else if(ageParts.length===2){q=q.gte('age_days',Number(ageParts[0])).lte('age_days',Number(ageParts[1]));}}
+  q=q.order(_IR.sort.col,{ascending:_IR.sort.dir==='asc'}).limit(2000);
+  var res=await q;var rows=res.data||[];
+  if(!rows.length){toast('No data to export','warn');return;}
+
+  var cols=['sku','product_name','category','fabric','season','customer_segment','size','design','colour','brand','qty_available','qty_reserved','qty_with_customer','qty_damaged','qty_total','purchase_price','inventory_value','age_days','stock_status'];
+  var labels=['SKU','Product Name','Category','Fabric','Season','Segment','Size','Design','Colour','Brand','Available','Reserved','With Customer','Damaged','Total','Unit Cost','Inventory Value','Age Days','Status'];
+
+  if(format==='csv'){
+    var csvRows=[labels.join(',')];
+    rows.forEach(function(r){csvRows.push(cols.map(function(c){return'"'+(r[c]||'').toString().replace(/"/g,'""')+'"';}).join(','));});
+    var blob=new Blob([csvRows.join('\n')],{type:'text/csv'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Inventory_'+td()+'.csv';a.click();
+    toast('CSV exported','ok');
+  } else if(format==='excel'){
+    var html='<table border="1"><thead><tr>'+labels.map(function(l){return'<th>'+l+'</th>';}).join('')+'</tr></thead><tbody>';
+    rows.forEach(function(r){html+='<tr>'+cols.map(function(c){return'<td>'+(r[c]||'')+'</td>';}).join('')+'</tr>';});
+    html+='</tbody></table>';
+    var blob=new Blob([html],{type:'application/vnd.ms-excel'});
+    var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Inventory_'+td()+'.xls';a.click();
+    toast('Excel exported','ok');
+  } else if(format==='print'){
+    var w=window.open('','_blank');
+    var tbl='<table border="1" style="border-collapse:collapse;font-size:11px;width:100%"><thead><tr style="background:#1A0A00;color:white">'+labels.map(function(l){return'<th style="padding:4px 6px">'+l+'</th>';}).join('')+'</tr></thead><tbody>';
+    rows.forEach(function(r,i){tbl+='<tr style="background:'+(i%2?'#f5f0eb':'white')+'">';tbl+=cols.map(function(c){return'<td style="padding:3px 6px">'+(r[c]||'')+'</td>';}).join('');tbl+='</tr>';});
+    tbl+='</tbody></table>';
+    w.document.write('<html><head><title>Inventory Register</title><style>body{font-family:Arial;padding:14px}@media print{button{display:none}}</style></head><body>');
+    w.document.write('<h2>SL Collection — Inventory Register</h2><p>'+STORE.store_name+' | Date: '+td()+'</p>');
+    w.document.write(tbl+'<br><button onclick="window.print()">Print</button></body></html>');
+    w.document.close();
+  }
 }
 
 </script>
