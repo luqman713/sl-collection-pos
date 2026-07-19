@@ -738,9 +738,8 @@ function rInv(){
   return h;
 }
 
+function ddOpts(arr){return arr.map(function(x){var v=x.id?x.id:x;return'<option value="'+v+'">'+(x.name||x)+'</option>';}).join('');}
 function rBuy(){
-  // Helper to build dropdown option lists
-  function ddOpts(arr,sel){return arr.map(function(x){var n=x.name||x;var v=x.id?x.id:x;return'<option value="'+v+'">'+(x.name||x)+'</option>';}).join('');}
   var hasMasters=_fabrics.length>0;
   var h='<div class="card"><div class="ct">New Purchase</div>';
   h+='<div class="fg"><label class="lb">Product Name *</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC Suit"></div>';
@@ -777,12 +776,15 @@ async function saveNewBrand(){
   var r=await sb.from('brands').insert({name:nm,is_active:true,created_by:CUP&&CUP.id}).select().single();
   if(r.error){toast(r.error.message,'err');return;}
   _brands.push(r.data);
-  cmo();toast('Brand added: '+nm,'ok');
-  // Re-render Buy tab to include new brand in dropdown
-  var buyContent=document.getElementById('main-content');
-  if(buyContent&&document.querySelector('#nt .pl.on')&&document.querySelector('#nt .pl.on').textContent==='BUY'){
-    buyContent.innerHTML=rBuy();
+  // Update the brand dropdown in-place without re-rendering the whole Buy tab
+  var brandSel=document.getElementById('p-brand');
+  if(brandSel){
+    var opt=document.createElement('option');
+    opt.value=r.data.id;opt.textContent=nm;
+    brandSel.appendChild(opt);
+    brandSel.value=r.data.id; // auto-select the new brand
   }
+  cmo();toast('Brand added and selected: '+nm,'ok');
 }
 function setPurPM(m,el){purPayMode=m;var ps=document.querySelectorAll('#ppm .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');var d=$('ppd');if(!d)return;var ca=accs.find(function(a){return a.name==='Cash Drawer';});if(m==='cash')d.innerHTML='<div class="ib">Cash: '+fmt(ca&&ca.current_balance||0)+'</div>';else if(m==='credit')d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Supplier Payable</div>';else if(m==='partial')d.innerHTML='<div class="fg"><label class="lb">Paid Now Rs</label><input class="ip" id="ppd2" type="number" placeholder="0" oninput="updPP()"></div>';else if(m==='owner')d.innerHTML='<div class="ib">Posted to Owner Payable</div>';updPP();}
 function updPP(){var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
@@ -2630,7 +2632,8 @@ async function loadIRPage(page){
   _IR.loading=true;_IR.page=page;
   tbl.innerHTML='<div class="em"><div style="width:20px;height:20px;border:2px solid rgba(0,0,0,.1);border-radius:50%;border-top-color:var(--gold);animation:sp .8s linear infinite;margin:0 auto"></div></div>';
   try{
-    var q=sb.from('v_inventory_register').select('*',{count:'exact'});
+    var q=sb.from('v_inventory_register').select('*',{count:'exact'})
+      .gt('qty_total',0); // Fix 2: hide zero-qty items (out of stock)
     // Search
     if(_IR.filters.q)q=q.or('sku.ilike.%'+_IR.filters.q+'%,product_name.ilike.%'+_IR.filters.q+'%');
     // Filters
@@ -2784,7 +2787,7 @@ async function showIRDetail(variantId){
 async function exportIR(format){
   toast('Preparing export...','ok',2000);
   // Load all matching records (no pagination for export)
-  var q=sb.from('v_inventory_register').select('*');
+  var q=sb.from('v_inventory_register').select('*').gt('qty_total',0);
   if(_IR.filters.q)q=q.or('sku.ilike.%'+_IR.filters.q+'%,product_name.ilike.%'+_IR.filters.q+'%');
   if(_IR.filters.cat)q=q.eq('category',_IR.filters.cat);
   if(_IR.filters.fabric)q=q.eq('fabric',_IR.filters.fabric);
