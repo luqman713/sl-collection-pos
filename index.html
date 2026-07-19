@@ -339,8 +339,8 @@ function updateDatalists(){
 
 function buildNav(){
   var tabs=CUP&&CUP.role==='owner'
-    ?[{id:'dash',l:'Dashboard'},{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'rep',l:'Reports'},{id:'cash',l:'Cash'}]
-    :[{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'cash',l:'Cash'}];
+    ?[{id:'dash',l:'Dashboard'},{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'inventory',l:'Inventory'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'rep',l:'Reports'},{id:'cash',l:'Cash'}]
+    :[{id:'bill',l:'Bill'},{id:'sales',l:'Sales'},{id:'inv',l:'Stock'},{id:'inventory',l:'Inventory'},{id:'buy',l:'Buy'},{id:'led',l:'Ledger'},{id:'cash',l:'Cash'}];
   var html='';for(var i=0;i<tabs.length;i++)html+='<div class="ni'+(i===0?' on':'')+'" onclick="showTab(\''+tabs[i].id+'\',this)">'+tabs[i].l+'</div>';
   $('nt').innerHTML=html;
   showTab(tabs[0].id,null);
@@ -389,9 +389,10 @@ function showTab(id,el){
   var c=$('ct');
   if(id==='dash'){c.innerHTML=rDash();iDash();}
   else if(id==='bill'){c.innerHTML=rBill();iBill();}
-  else if(id==='inv'){c.innerHTML=rInv();iInv();loadIRPage(0);}
+  else if(id==='inv'){c.innerHTML=rInv();iInv();}
   else if(id==='buy'){c.innerHTML=rBuy();}
   else if(id==='sales'){c.innerHTML=rSalesTab();iSalesTab();}
+  else if(id==='inventory'){c.innerHTML=rInventoryTab();loadIRPage(0);}
   else if(id==='led'){c.innerHTML=rLed();iLed();}
   else if(id==='rep'){c.innerHTML=rRep();iRep();}
   else if(id==='cash'){c.innerHTML=rCash();iCash();}
@@ -734,7 +735,6 @@ function rInv(){
   h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="showReservedList()">View Reserved Stock</button>';
   h+='<input class="ip" id="is" placeholder="Quick search..." oninput="iInv()" style="margin-bottom:10px">';
   h+='<div id="il"></div>';
-  h+=rInventoryRegister();
   return h;
 }
 
@@ -2826,6 +2826,13 @@ async function exportIR(format){
   }
 }
 
+
+// ── INVENTORY TAB — dedicated full-screen inventory register ──
+function rInventoryTab(){
+  var h='<div class="sg" id="ir-kpi"></div>';
+  h+=rInventoryRegister();
+  return h;
+}
 </script>
 </body>
 </html>
