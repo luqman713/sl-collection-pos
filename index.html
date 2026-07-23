@@ -949,14 +949,20 @@ async function genR(){
 }
 async function rSales(f,t,c){
   lastReportTitle='Sales_'+f+'_'+t;
-  var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled)').gte('sale_date',f).lte('sale_date',t).order('sale_date',{ascending:false});
+  var s=await sb.from('sales').select('*,transactions(transaction_no,is_cancelled),sale_items(qty,sale_price,purchase_price,product_variants(sku,colour,size,products(name)))').gte('sale_date',f).lte('sale_date',t).order('sale_date',{ascending:false});
   var v=(s.data||[]).filter(function(s){return!s.transactions||!s.transactions.is_cancelled;});
   var tot=v.reduce(function(s,t){return s+Number(t.total_amount||0);},0);
   var mg=v.reduce(function(s,t){return s+Number(t.gross_profit||0);},0);
   var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t);
   var retTot=(retQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
   var netTot=Math.max(0,tot-retTot);
-  c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Net Sales</div><div class="sv">'+fmt(netTot)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+v.length+' bills</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(retTot)+'</div></div><div class="sc sg2"><div class="sl2">Margin</div><div class="sv">'+fmt(mg)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Transactions</div><div>'+f+' to '+t+'</div></div>'+v.map(function(s){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(s.transactions&&s.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+s.sale_date+' - '+s.customer_name+' - '+s.payment_mode+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(s.total_amount)+'</div><div style="font-size:.58rem;color:var(--sage)">+'+fmt(s.gross_profit)+'</div></span></div>';}).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Sales Returns</span><span>- '+fmt(retTot)+'</span></div><div class="rf"><span>Net Sales</span><span>'+fmt(netTot)+'</span></div></div>';
+  c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Net Sales</div><div class="sv">'+fmt(netTot)+'</div><div style="font-size:.54rem;color:var(--ink3)">'+v.length+' bills</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(retTot)+'</div></div><div class="sc sg2"><div class="sl2">Margin</div><div class="sv">'+fmt(mg)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Transactions</div><div>'+f+' to '+t+'</div></div>'+v.map(function(s){
+      var items=(s.sale_items||[]).map(function(si){
+        var pv=si.product_variants||{};var prod=pv.products||{};
+        return (prod.name||pv.sku||'')+(pv.colour?' | '+pv.colour:'')+(pv.size?' | '+pv.size:'');
+      }).filter(Boolean).join('; ');
+      return '<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(s.transactions&&s.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+s.sale_date+' - '+s.customer_name+' - '+s.payment_mode+'</div>'+(items?'<div style="font-size:.52rem;color:var(--ink3)">'+items+'</div>':'')+'</span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(s.total_amount)+'</div><div style="font-size:.58rem;color:var(--sage)">+'+fmt(s.gross_profit)+'</div></span></div>';
+    }).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Sales Returns</span><span>- '+fmt(retTot)+'</span></div><div class="rf"><span>Net Sales</span><span>'+fmt(netTot)+'</span></div></div>';
   lastReportData=v.map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Payment:r.payment_mode};});
 }
 async function rPur(f,t,c){
@@ -1017,8 +1023,8 @@ function rCash(){
   h+='<div class="ib" id="cnature-hint" style="display:none"></div>';
   h+='<div class="fg"><label class="lb">Date</label><input class="ip" id="cd" type="date" value="'+td()+'"></div>';
   h+='<div class="g2" id="cpty-wrap" style="display:none">';
-  h+='<div class="fg"><label class="lb" id="cpty-label">Party</label><input class="ip" id="cpty" list="dl-allparties" placeholder="Type or select name..." oninput="onPartyChange()"></div>';
-  h+='<div class="fg"><label class="lb">Party Type</label><select class="sl" id="cptype" onchange="onPartyChange()"><option value="customer">Customer</option><option value="supplier">Supplier</option><option value="committee">Committee</option></select></div>';
+  h+='<div class="fg"><label class="lb">Party Type</label><select class="sl" id="cptype" onchange="onPartyChange();refreshCashPartyList()"><option value="customer">Customer</option><option value="supplier">Supplier</option><option value="committee">Committee</option></select></div>';
+  h+='<div class="fg"><label class="lb" id="cpty-label">Party (outstanding balance)</label><select class="sl" id="cpty" onchange="onPartyChange()"><option value="">Select...</option></select></div>';
   h+='</div>';
   h+='<div class="fg" id="cc-wrap"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
   h+='<div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details"></div>';
@@ -1037,6 +1043,21 @@ function rCash(){
   return h;
 }
 
+function refreshCashPartyList(){
+  var ptype=document.getElementById('cptype')&&document.getElementById('cptype').value||'customer';
+  var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
+  var sel=document.getElementById('cpty');if(!sel)return;
+  // Issue 1: only show parties with outstanding balance (receipts/payments context)
+  var filtered=parties.filter(function(p){
+    return p.party_type===ptype && (p.current_balance||0)!==0;
+  });
+  // If none with balance, show all of that type
+  if(!filtered.length)filtered=parties.filter(function(p){return p.party_type===ptype;});
+  sel.innerHTML='<option value="">Select...</option>'+filtered.map(function(p){
+    var bal=p.current_balance||0;
+    return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
+  }).join('');
+}
 function onNatureChange(){
   var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
   var ptyWrap=document.getElementById('cpty-wrap');
@@ -1047,6 +1068,7 @@ function onNatureChange(){
   if(nature==='receipt'||nature==='payment'){
     if(ptyWrap)ptyWrap.style.display='grid';
     if(ccWrap)ccWrap.style.display='none';
+    setTimeout(refreshCashPartyList,0); // populate balance-filtered list
     if(hint){hint.style.display='block';hint.textContent=(nature==='receipt'?'Receipt: money received from a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.':'Payment: money paid to a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.');}
   } else {
     if(ptyWrap)ptyWrap.style.display='none';
@@ -1103,7 +1125,10 @@ async function saveCash(){
   var dsc=$('cdsc')&&$('cdsc').value.trim();
   var amt=Number($('camt')&&$('camt').value||0);
   var accId=$('cacc')&&$('cacc').value;
-  var partyName=($('cpty')&&$('cpty').value||'').trim();
+  var cpsel=$('cpty');
+  var partyId2=cpsel&&cpsel.value||'';
+  var partyName2=cpsel&&cpsel.options&&cpsel.selectedIndex>=0?cpsel.options[cpsel.selectedIndex].getAttribute('data-name')||'':'';
+  var partyName=partyName2||($('cpty')&&$('cpty').value||'').trim();
   var ptype=$('cptype')&&$('cptype').value||'customer';
 
   // ── Mandatory Transaction Nature ──
@@ -1127,7 +1152,9 @@ async function saveCash(){
   }
 
   var partyId=null;
-  if(partyName){
+  if(partyId2){
+    partyId=partyId2; // directly from select value (UUID)
+  } else if(partyName){
     var pf=parties.find(function(p){return p.name===partyName&&p.party_type===ptype;});
     if(!pf){
       var nr=await sb.from('parties').insert({party_type:ptype,name:partyName,created_by:CUP&&CUP.id}).select().single();
@@ -1710,7 +1737,32 @@ async function completeReservationSale(){
 
     var saleIns=await insertWithUniqueNo('transactions','BILL',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:r.customer_party_id,total_amount:finalPrice,paid_amount:finalPrice,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Reservation completed: '+r.reservation_no};});
     var txnId=saleIns.data.id;
-    // Full invoice as debit on customer (nets against the advance credit already on file)
+    var margin=(finalPrice-cost*it.qty_reserved);
+    // Issue 7: Post to sales table so it appears in Sales reports
+    var saleRow=await sb.from('sales').insert({
+      transaction_id:txnId,customer_party_id:r.customer_party_id,
+      customer_name:r.customer_name||'Walk-in',sale_date:td(),
+      subtotal:finalPrice,total_amount:finalPrice,paid_amount:finalPrice,
+      payment_mode:payMode2==='cash'?'cash':'credit',
+      gross_profit:margin,performed_by:CUP&&CUP.id
+    }).select().single();
+    // Issue 7: Post sale_items for reporting
+    if(saleRow.data)await sb.from('sale_items').insert({
+      sale_id:saleRow.data.id,transaction_id:txnId,
+      variant_id:it.variant_id,qty:it.qty_reserved,
+      purchase_price:cost,sale_price:finalPrice/it.qty_reserved
+    });
+    // Issue 7: Cash entries for Cash Book
+    if(payMode2==='cash'&&ca){
+      var cashAmt=Math.max(0,finalPrice-Number(r.advance_amount||0));
+      if(cashAmt>0)await sb.from('cash_entries').insert({
+        transaction_id:txnId,entry_date:td(),amount:cashAmt,
+        direction:'in',account_id:ca.id,
+        description:'Reservation Sale Balance: '+r.reservation_no,
+        nature:'receipt',party_category:'Customer Receipt'
+      });
+    }
+    // Ledger entries
     await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:finalPrice,description:'Sale (Reservation): '+r.reservation_no,created_by:CUP&&CUP.id});
     var remaining=Math.max(0,finalPrice-Number(r.advance_amount||0));
     if(remaining>0&&payMode2==='cash'&&ca){
@@ -1722,7 +1774,7 @@ async function completeReservationSale(){
     await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*it.qty_reserved,description:'COGS: '+r.reservation_no,created_by:CUP&&CUP.id});
     await sb.from('stock_reservations').update({status:'completed'}).eq('id',r.id);
     logActivity('reservation_completed','reservation',{reservation_no:r.reservation_no,final_price:finalPrice});
-    await loadData();cmo();toast('Sale completed: '+saleIns.no,'ok',6000);
+    await loadData();cmo();toast('Sale completed: '+saleIns.no+' | Sales report updated','ok',6000);
   }catch(ex){toast(ex.message,'err');}
 }
 
@@ -1853,17 +1905,36 @@ async function saveSwc(){
   }
 }
 async function showSwcList(){
-  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').in('status',['issued','partial']).order('created_at',{ascending:false});
+  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,purchase_price,products(name)))').in('status',['issued','partial']).order('created_at',{ascending:false});
   var h='<div class="ib">Tap any entry to process return/sale.</div>';
-  if(!(data.data&&data.data.length)){h+='<div class="em"><div class="ei">-</div><p>No active stock with customers</p></div>';}
+  var rows=data.data||[];
+  if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No active stock with customers</p></div>';}
   else{
-    for(var i=0;i<data.data.length;i++){
-      var s=data.data[i];
-      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer" onclick="processSwcReturn(\''+s.id+'\')">';
-      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+s.transaction_no+'</div>';
-      h+='<div style="font-size:.6rem;color:var(--ink3)">'+s.customer_name+' - Issued: '+s.issue_date+'</div>';
-      h+='<div style="font-size:.6rem;color:var(--ink3)">Items: '+(s.stock_with_customer_items&&s.stock_with_customer_items.length||0)+'</div></div>';
-      h+='<div class="btn bh bsm" style="font-size:.6rem">Process</div></div></div>';
+    window._activeSwcRows=rows;
+    for(var i=0;i<rows.length;i++){
+      var s=rows[i];
+      var items=s.stock_with_customer_items||[];
+      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
+      h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px">';
+      h+='<div><div style="font-size:.75rem;font-weight:700">'+s.transaction_no+'</div>';
+      h+='<div style="font-size:.6rem;color:var(--ink3)">'+s.customer_name+' | Issued: '+s.issue_date+'</div></div>';
+      h+='<button class="btn bs bsm" onclick="processSwcReturn(this.dataset.id)" data-id="'+s.id+'">Process</button></div>';
+      h+='<div style="border:1px solid var(--cream2);border-radius:6px;overflow:hidden">';
+      h+='<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;background:var(--ink);color:white;padding:4px 8px;font-size:.52rem;font-weight:700">';
+      h+='<div>Product</div><div style="text-align:right">Issued</div><div style="text-align:right">Sold</div><div style="text-align:right">Returned</div><div style="text-align:right;color:var(--gold)">Remaining</div></div>';
+      for(var j=0;j<items.length;j++){
+        var it=items[j];
+        var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||it.product_variants&&it.product_variants.sku||'';
+        var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
+        h+='<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;padding:5px 8px;font-size:.6rem;border-top:1px solid var(--cream2);background:'+(j%2?'var(--cream2)':'white')+'">';
+        h+='<div><div style="font-weight:600">'+nm+'</div><div style="font-size:.52rem;color:var(--ink3)">'+it.product_variants.sku+'</div></div>';
+        h+='<div style="text-align:right">'+it.qty_issued+'</div>';
+        h+='<div style="text-align:right;color:var(--sage)">'+(it.qty_sold||0)+'</div>';
+        h+='<div style="text-align:right;color:var(--red)">'+(it.qty_returned||0)+'</div>';
+        h+='<div style="text-align:right;font-weight:700;color:var(--gold)">'+rem+'</div>';
+        h+='</div>';
+      }
+      h+='</div></div>';
     }
   }
   omo('Stock With Customers',h);
@@ -1985,7 +2056,15 @@ async function saveReservation(){
   var qty=Number(document.getElementById('res-qty')&&document.getElementById('res-qty').value||1);
   var adv=Number(document.getElementById('res-adv')&&document.getElementById('res-adv').value||0);
   var accId=document.getElementById('res-acc')&&document.getElementById('res-acc').value;
-  if(!cust||!vid||!adv){toast('Fill customer, product and advance','err');return;}
+  if(!cust||!vid||!adv){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Reservation';}toast('Fill customer, product and advance','err');return;}
+  // Issue 6: validate available stock before reserving
+  var resP=prods.find(function(p){return p.id===vid;});
+  if(!resP||((resP.stock||0)-(resP.reserved||0))<qty){
+    if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Reservation';}
+    var avail=resP?Math.max(0,(resP.stock||0)-(resP.reserved||0)):0;
+    toast('Insufficient available stock. Available: '+avail+', Requested: '+qty,'err');
+    return;
+  }
   var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
   if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
   try{
