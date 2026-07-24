@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>SL Collection POS</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
 <style>
 :root{--ink:#1A0A00;--ink2:#3D1F08;--ink3:#6B3E1A;--cream:#FAF6F0;--cream2:#F2E9DC;--gold:#B8860B;--sage:#2D4A2D;--red:#8B1A1A;--border:#D4C4A8;--r:12px;}
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;font-family:'Segoe UI',sans-serif;}
@@ -374,6 +375,8 @@ function buildNav(){
       xb2.parentNode.insertBefore(ab,xb2);
     }
   }
+  // Bluetooth/USB barcode scanner listener (runs once)
+  if(!window._btListenerInit){window._btListenerInit=true;initBtScannerListener();}
   // Last login display
   if(CUP&&CUP.last_login_at){
     var brandEl=document.querySelector('.brand small');
@@ -399,7 +402,7 @@ function showTab(id,el){
 }
 
 
-function rDash(){return '<div id="ob" class="ib" style="display:none;border-color:var(--gold)"><div class="ct">Opening Balance</div><div style="display:flex;gap:8px"><input class="ip" id="ob-v" type="number" placeholder="Cash in drawer"><button class="btn bg bsm" onclick="setOB()">Set</button></div></div><div class="sg" id="ds"></div><div class="card" id="dr"></div><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">Today Sales</div><div id="dd"></div>';}
+function rDash(){return '<div style="display:flex;justify-content:flex-end;margin-bottom:6px">'+cctvBtn()+'</div><div id="ob" class="ib" style="display:none;border-color:var(--gold)"><div class="ct">Opening Balance</div><div style="display:flex;gap:8px"><input class="ip" id="ob-v" type="number" placeholder="Cash in drawer"><button class="btn bg bsm" onclick="setOB()">Set</button></div></div><div class="sg" id="ds"></div><div class="card" id="dr"></div><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3);margin-bottom:8px">Today Sales</div><div id="dd"></div>';}
 async function iDash(){
   var ca=accs.find(function(a){return a.name==='Cash Drawer';});
   if(ca){var ob=await sb.from('opening_balances').select('id').eq('balance_date',td()).eq('account_id',ca.id).maybeSingle();if(!ob.data){var obEl=$('ob');if(obEl)obEl.style.display='block';}}
@@ -565,7 +568,7 @@ function updSum(){
     (discShow>0?'<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px;color:var(--red)"><span>Discount</span><span>- '+fmt(discShow)+'</span></div>':'') +
     '<div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;margin-bottom:4px"><span>Total</span><span>'+fmt(finalTotal)+'</span></div>'+
     '<div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage);font-weight:600"><span>Margin</span><span>'+fmt(mg)+'</span></div></div>';
-  ba.innerHTML='<button class="btn bs" id="cb3" onclick="completeSale()" style="margin-bottom:8px">Complete Sale</button>';
+  ba.innerHTML='<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn bh" id="scan-btn" onclick="openBarcodeScanner()" style="flex:none;padding:8px 12px"><span style="font-size:.9rem">&#x1F4F7;</span> Scan</button><button class="btn bs" id="cb3" onclick="completeSale()" style="flex:1">Complete Sale</button></div>';
 }
 async function completeSale(){
   if(!cart.length){toast('Cart empty','err');return;}
@@ -1704,7 +1707,10 @@ function openReservationDetail(idx){
   var it=items[0]||{};
   var pname=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
   var cost=it.product_variants&&it.product_variants.purchase_price||0;
-  var h='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
+  var h='<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h+='<button class="btn bh bsm" onclick="printBarcode(\''+p.id+'\')">🏷️ Print Barcode</button>';
+  h+='</div>';
+  h+='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
   h+='<div style="font-size:.8rem;font-weight:700">'+r.customer_name+'</div>';
   h+='<div style="font-size:.65rem;color:var(--ink3);margin-bottom:8px">'+r.reservation_no+' - '+r.reservation_date+'</div>';
   h+='<div style="font-size:.72rem">'+pname+' x'+it.qty_reserved+'</div>';
@@ -2347,7 +2353,7 @@ async function showActivityLog(){
 
 
 // ── STORE SETTINGS (global config, no hardcoding) ──
-var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',tiktok_handle:'@slcollection713'};
+var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',cctv_url:'',tiktok_handle:'@slcollection713'};
 async function loadStoreSettings(){
   try{
     var r=await sb.from('store_settings').select('*').eq('id',1).maybeSingle();
@@ -2544,6 +2550,7 @@ function openStoreSettings(){
     '<div class="fg"><label class="lb">Contact Number</label><input class="ip" id="ss-contact" value="'+(STORE.contact_number||'')+'"></div>'+
     '<div class="fg"><label class="lb">WhatsApp Number</label><input class="ip" id="ss-wa" value="'+(STORE.whatsapp_number||'')+'"></div>'+
     '<div class="fg"><label class="lb">TikTok Handle</label><input class="ip" id="ss-tiktok" value="'+(STORE.tiktok_handle||'')+'"></div>'+
+    '<div class="fg"><label class="lb">CCTV / NVR URL</label><input class="ip" id="ss-cctv" type="url" placeholder="http://192.168.1.x:8080" value="'+(STORE.cctv_url||'')+'"></div>'+
     '<button class="btn bi" onclick="saveStoreSettings()">Save Settings</button>'
   );
 }
@@ -2554,6 +2561,7 @@ async function saveStoreSettings(){
     contact_number:document.getElementById('ss-contact')&&document.getElementById('ss-contact').value.trim(),
     whatsapp_number:document.getElementById('ss-wa')&&document.getElementById('ss-wa').value.trim(),
     tiktok_handle:document.getElementById('ss-tiktok')&&document.getElementById('ss-tiktok').value.trim(),
+    cctv_url:document.getElementById('ss-cctv')&&document.getElementById('ss-cctv').value.trim()||null,
     updated_at:new Date().toISOString()
   };
   try{
@@ -2915,6 +2923,187 @@ function rInventoryTab(){
   h+=rInventoryRegister();
   return h;
 }
+
+// ═══════════════════════════════════════════════════════════
+// BARCODE PRINTING — Code 128, 40×30mm thermal labels
+// ═══════════════════════════════════════════════════════════
+
+function printBarcode(varId){
+  var p=prods.find(function(pr){return pr.id===varId;});
+  if(!p){toast('Product not found','err');return;}
+  var bc=p.barcode||p.sku; // barcode = barcode column, fallback to SKU
+  if(!bc){toast('No barcode available for this product','err');return;}
+  var w=window.open('','_blank');
+  var html='<!DOCTYPE html><html><head><title>Barcode - '+bc+'</title><style>';
+  // 40×30mm at 96dpi = 151×113px — using mm units for print accuracy
+  html+='@page{size:40mm 30mm;margin:0}';
+  html+='body{margin:0;padding:0;font-family:Arial,sans-serif;width:40mm;height:30mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}';
+  html+='svg{max-width:38mm;height:auto}';
+  html+='.product-name{font-size:5pt;font-weight:700;text-align:center;line-height:1.1;max-width:38mm;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;margin-bottom:0}';
+  html+='.sku{font-size:4pt;color:#555;text-align:center}';
+  html+='.price{font-size:5pt;font-weight:700;text-align:center;margin-top:1mm}';
+  html+='@media print{button{display:none}.no-print{display:none}}';
+  html+='</style></head><body>';
+  html+='<div class="product-name">'+p.name+'</div>';
+  html+='<svg id="bc-svg"></svg>';
+  html+='<div class="sku">'+p.sku+'</div>';
+  if(p.price)html+='<div class="price">Rs '+p.price.toLocaleString()+'</div>';
+  html+='<div class="no-print" style="margin-top:4mm;display:flex;gap:4mm">';
+  html+='<button onclick="window.print()" style="padding:4px 10px;cursor:pointer">Print</button>';
+  html+='<button onclick="printMultiple()" style="padding:4px 10px;cursor:pointer">Print Multiple</button>';
+  html+='</div>';
+  html+='<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>';
+  html+='<script>';
+  html+='window.onload=function(){';
+  html+='JsBarcode("#bc-svg","'+bc+'",{format:"CODE128",width:1.5,height:28,displayValue:false,margin:0});';
+  html+='};';
+  html+='function printMultiple(){';
+  html+='  var n=prompt("How many labels?","1");if(!n||isNaN(n))return;';
+  html+='  var orig=document.body.innerHTML;var rep="";';
+  html+='  for(var i=0;i<Number(n);i++)rep+=orig;';
+  html+='  document.body.innerHTML=rep;';
+  html+='  var svgs=document.querySelectorAll("svg[id]");';
+  html+='  for(var j=0;j<svgs.length;j++){svgs[j].id="bc-svg-"+j;JsBarcode("#bc-svg-"+j,"'+bc+'",{format:"CODE128",width:1.5,height:28,displayValue:false,margin:0});}';
+  html+='  window.print();document.body.innerHTML=orig;window.location.reload();';
+  html+='}';
+  html+='<\/script>';
+  html+='</body></html>';
+  w.document.write(html);
+  w.document.close();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BARCODE SCANNING — Camera (ZXing) + Bluetooth wedge
+// ═══════════════════════════════════════════════════════════
+
+var _scannerActive=false;
+var _btBuffer='';var _btTimer=null;
+
+// Bluetooth/USB wedge scanner: listens for rapid keystrokes ending in Enter
+function initBtScannerListener(){
+  document.addEventListener('keydown',function(e){
+    // Only intercept when Bill tab is active
+    var activeTab=document.querySelector && document.querySelector('#nt .pl.on');
+    if(!activeTab||activeTab.textContent!=='BILL')return;
+    if(e.key==='Enter'&&_btBuffer.length>3){
+      var code=_btBuffer;_btBuffer='';clearTimeout(_btTimer);
+      handleBarcodeResult(code);
+      e.preventDefault();
+      return;
+    }
+    if(e.key.length===1){
+      _btBuffer+=e.key;
+      clearTimeout(_btTimer);
+      _btTimer=setTimeout(function(){_btBuffer='';},200);
+    }
+  });
+}
+
+// Camera scanner using ZXing
+var _zxingReader=null;
+function openBarcodeScanner(){
+  if(_scannerActive){closeBarcodeScanner();return;}
+  // Lazy-load ZXing
+  if(!window.ZXing){
+    var sc=document.createElement('script');
+    sc.src='https://cdn.jsdelivr.net/npm/@zxing/browser@latest/umd/index.min.js';
+    sc.onload=function(){startCameraScanner();};
+    sc.onerror=function(){toast('Camera scanner unavailable — use Bluetooth scanner','warn');};
+    document.head.appendChild(sc);
+  } else {
+    startCameraScanner();
+  }
+}
+function startCameraScanner(){
+  _scannerActive=true;
+  var scanBtn=document.getElementById('scan-btn');
+  if(scanBtn)scanBtn.textContent='Stop Scan';
+  // Build scanner overlay
+  var overlay=document.createElement('div');
+  overlay.id='scan-overlay';
+  overlay.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;';
+  overlay.innerHTML='<div style="color:white;font-size:.8rem;margin-bottom:12px">Point camera at barcode</div>'+
+    '<video id="scan-video" style="width:92vw;max-width:420px;border-radius:12px;border:2px solid var(--gold)"></video>'+
+    '<div id="scan-status" style="color:#aaa;font-size:.65rem;margin-top:8px">Initialising camera...</div>'+
+    '<button onclick="closeBarcodeScanner()" style="margin-top:16px;padding:10px 28px;border-radius:20px;background:var(--red);color:white;border:none;font-size:.75rem;cursor:pointer">Cancel</button>';
+  document.body.appendChild(overlay);
+  try{
+    var hints=new Map();
+    var formats=[ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.CODE_39,
+      ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.QR_CODE];
+    hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,formats);
+    _zxingReader=new ZXing.BrowserMultiFormatReader(hints);
+    _zxingReader.decodeFromVideoDevice(null,'scan-video',function(result,err){
+      if(result){
+        var code=result.getText();
+        closeBarcodeScanner();
+        handleBarcodeResult(code);
+      }
+      if(err&&!(err instanceof ZXing.NotFoundException)){
+        var st=document.getElementById('scan-status');
+        if(st)st.textContent='Scanning...';
+      }
+    });
+    var st=document.getElementById('scan-status');
+    if(st)st.textContent='Camera active — scan a barcode';
+  }catch(ex){
+    closeBarcodeScanner();
+    toast('Camera error: '+ex.message,'err');
+  }
+}
+function closeBarcodeScanner(){
+  _scannerActive=false;
+  if(_zxingReader){try{_zxingReader.reset();}catch(e){}; _zxingReader=null;}
+  var ov=document.getElementById('scan-overlay');if(ov)ov.remove();
+  var scanBtn=document.getElementById('scan-btn');
+  if(scanBtn)scanBtn.textContent='Scan';
+}
+async function handleBarcodeResult(code){
+  if(!code)return;
+  toast('Barcode: '+code,'ok',2000);
+  // Look up product by barcode first, then SKU
+  var p=prods.find(function(pr){return pr.barcode===code||pr.sku===code;});
+  if(!p){
+    // Try DB lookup (in case prods cache is stale)
+    var res=await sb.from('product_variants').select('id').or('barcode.eq.'+code+',sku.eq.'+code).single();
+    if(res.data){
+      await loadData();
+      p=prods.find(function(pr){return pr.id===res.data.id;});
+    }
+  }
+  if(!p){toast('Product not found for barcode: '+code,'err');return;}
+  if((p.stock||0)<=0){toast(p.name+' is out of stock','warn');return;}
+  // Add to cart — works on Bill tab
+  var existing=cart.find(function(c){return c.id===p.id;});
+  if(existing){existing.qty++;toast('Qty updated: '+p.name+' x'+existing.qty,'ok');}
+  else{cart.push({id:p.id,name:p.name,sku:p.sku,price:p.price||0,cost:p.cost||0,qty:1});}
+  renderCart();updSum();
+  // Switch to Bill tab if not already there
+  var activeTab=document.querySelector&&document.querySelector('#nt .pl.on');
+  if(!activeTab||activeTab.textContent!=='BILL'){
+    var billTab=document.querySelector&&document.querySelector('#nt .pl');
+    if(billTab)billTab.click();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// CCTV SHORTCUT
+// ═══════════════════════════════════════════════════════════
+
+function openCCTV(){
+  var url=STORE.cctv_url||'';
+  if(!url){
+    toast('CCTV URL not configured. Go to Settings → CCTV URL','warn',4000);
+    if(CUP&&CUP.role==='owner')setTimeout(openStoreSettings,1500);
+    return;
+  }
+  window.open(url,'_blank','noopener');
+}
+
+function cctvBtn(){
+  return '<button title="CCTV Live View" onclick="openCCTV()" style="background:var(--ink2);color:white;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.65rem;display:flex;align-items:center;gap:4px"><span style="font-size:.85rem">📹</span>CCTV</button>';
+}
+
 </script>
 </body>
 </html>
