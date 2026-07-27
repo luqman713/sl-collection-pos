@@ -159,7 +159,7 @@ async function insertWithUniqueNo(table,prefix,buildRow){
 }
 var td=function(){return new Date().toISOString().split('T')[0];};
 var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
-// ── PRODUCT MASTER DROPDOWNS (loaded from DB) ──
+// -- PRODUCT MASTER DROPDOWNS (loaded from DB) --
 var _fabrics=[];var _seasons=[];var _segments=[];var _designs=[];var _brands=[];
 // Colour master (static list per spec)
 var COLOURS=['Black','White','Off White','Cream','Beige','Brown','Maroon','Red','Pink','Peach',
@@ -227,7 +227,7 @@ async function login(){
   }
 }
 
-// ── SESSION SECURITY ──
+// -- SESSION SECURITY --
 function startSessionWatch(){
   if(sessionWatchTimer)clearInterval(sessionWatchTimer);
   sessionWatchTimer=setInterval(async function(){
@@ -235,7 +235,7 @@ function startSessionWatch(){
     var chk=await sb.rpc('check_user_session',{p_user_id:CUP.id,p_session_id:MY_SESSION_ID});
     if(chk.data&&!chk.data.valid){
       clearInterval(sessionWatchTimer);
-      alert('You have been logged out — your account was used on another device, or access was revoked.');
+      alert('You have been logged out  -  your account was used on another device, or access was revoked.');
       forceLogout();
     }
   },20000);
@@ -319,7 +319,7 @@ async function loadProductMasters(){
     ]);
     _fabrics=f.data||[];_seasons=se.data||[];_segments=sg.data||[];
     _designs=d.data||[];_brands=b.data||[];
-  }catch(e){/* master tables not yet migrated — new fields will be hidden */}
+  }catch(e){/* master tables not yet migrated  -  new fields will be hidden */}
 }
 function updateDatalists(){
   var dc=document.getElementById('dl-customers');
@@ -484,7 +484,7 @@ function setPM(m,el){
 }
 function onCI(){var n=($('bc')&&$('bc').value||'').trim();var el=$('cb');if(!el)return;var p=parties.find(function(p){return p.name===n&&p.party_type==='customer';});if(p&&p.current_balance!==0){el.style.display='block';el.textContent='Outstanding: '+fmt(Math.abs(p.current_balance))+' '+(p.current_balance>0?'(owes)':'(credit)');}else el.style.display='none';}
 
-// ── WHATSAPP PHONE HELPERS ──
+// -- WHATSAPP PHONE HELPERS --
 function normalizePhone(raw){
   var digits=(raw||'').replace(/[^0-9]/g,'');
   if(!digits)return '';
@@ -619,7 +619,7 @@ async function completeSale(){
     }
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
-    // Snapshot for post-sale actions (Print / WhatsApp) — cart gets cleared right after
+    // Snapshot for post-sale actions (Print / WhatsApp)  -  cart gets cleared right after
     window._lastSale={
       saleId:sr2.data.id,billNo:bn.data,customer:cust,phone:custPhone,
       items:cart.map(function(it){return{name:it.name,qty:it.qty,price:it.price,sku:it.sku};}),
@@ -700,7 +700,7 @@ async function processReturn(){
     if(qty>(si.data&&si.data.qty||0)){toast('Return qty ('+qty+') exceeds sold qty ('+(si.data&&si.data.qty||0)+')','err');return;}
     refTxnId=ot.data.id;
   } else {
-    // No bill number — verify item was ever sold (check sale_items)
+    // No bill number  -  verify item was ever sold (check sale_items)
     var anyS=await sb.from('sale_items').select('qty').eq('variant_id',vid).limit(1);
     if(!(anyS.data&&anyS.data.length)){toast('No sales record found for this product','err');return;}
   }var ca=accs.find(function(a){return a.name==='Cash Drawer';});var ra=qty*pr;try{var r2=await sb.rpc('process_stock_movement',{p_variant_id:vid,p_movement_type:'sales_return',p_qty:qty,p_reason:rsn,p_reference_no:bn,p_cost_impact:pr,p_user_id:CUP&&CUP.id});if(r2.data&&!r2.data.success){toast(r2.data.error,'err');return;}var txnIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),total_amount:ra,paid_amount:ra,payment_status:'paid',reference_transaction_id:refTxnId||null,performed_by:CUP&&CUP.id,notes:rsn};});var rn={data:txnIns.no};var txn={data:txnIns.data};if(ca)await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:ra,description:'Refund '+(bn||''),created_by:CUP&&CUP.id});await loadData();toast('Return done: '+rn.data,'ok');cmo();}catch(ex){toast(ex.message,'err');}}
@@ -818,7 +818,7 @@ async function savePur(){
   if(purPayMode==='cash'){pd=tot;payAccId=ca&&ca.id;if((ca&&ca.current_balance||0)<tot&&!confirm('Insufficient cash. Continue?'))return;}
   else if(purPayMode==='partial'){pd=Number($('ppd2')&&$('ppd2').value||0);payAccId=ca&&ca.id;}
   try{
-    // Check if product with same name+category already exists — reuse it
+    // Check if product with same name+category already exists  -  reuse it
     var existProd=await sb.from('products').select('id').eq('name',nm).eq('category_id',cr.data&&cr.data.id).maybeSingle();
     var prodId=null;
     if(existProd.data&&existProd.data.id){
@@ -979,7 +979,7 @@ async function rPur(f,t,c){
 async function rStock(c){var inv=await sb.rpc('get_inventory_report');var tv=(inv.data||[]).reduce(function(s,p){return s+Number(p.stock_value||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">SKUs</div><div class="sv">'+(inv.data||[]).length+'</div></div><div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div></div><div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">'+(inv.data||[]).map(function(p){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(p.product_name||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(p.sku||'')+' - '+(p.age_days||0)+'d</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(p.qty_available<=2?'var(--red)':'var(--sage)')+'">'+( p.qty_available||0)+'</div><div style="font-size:.58rem;color:var(--ink3)">'+fmt(p.stock_value||0)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total Value</span><span>'+fmt(tv)+'</span></div></div>';}
 async function rPL(f,t,c){
   var s=await sb.from('sales').select('total_amount,gross_profit').gte('sale_date',f).lte('sale_date',t);
-  // FIX: only genuine Expense/Income natures hit P&L — Receipts/Payments (now also in cash_entries) are excluded
+  // FIX: only genuine Expense/Income natures hit P&L  -  Receipts/Payments (now also in cash_entries) are excluded
   var e=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('nature','expense');
   var inc=await sb.from('cash_entries').select('amount').gte('entry_date',f).lte('entry_date',t).eq('nature','income');
   var retQ=await sb.from('transactions').select('total_amount').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t);
@@ -1134,11 +1134,11 @@ async function saveCash(){
   var partyName=partyName2||($('cpty')&&$('cpty').value||'').trim();
   var ptype=$('cptype')&&$('cptype').value||'customer';
 
-  // ── Mandatory Transaction Nature ──
+  // -- Mandatory Transaction Nature --
   if(!nature){toast('Select Transaction Nature: Expense, Income, Receipt or Payment','err');return;}
   if(!amt||!dsc){toast('Fill description and amount','err');return;}
 
-  // Receipt/Payment require a party — they are inherently tied to a counterparty's balance
+  // Receipt/Payment require a party  -  they are inherently tied to a counterparty's balance
   if((nature==='receipt'||nature==='payment')&&!partyName){
     toast('Receipt/Payment requires a Customer, Supplier or Committee selected','err');
     $('cpty')&&$('cpty').focus();return;
@@ -1173,7 +1173,7 @@ async function saveCash(){
     var tIns=await insertWithUniqueNo('transactions','CASH',function(noVal){return{transaction_no:noVal,transaction_type:nature,transaction_date:dt,party_id:partyId,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:dsc};});
     var t={data:tIns.data};
 
-    // ── P&L IMPACT: only Income/Expense post to cash_entries (the table P&L reads from) ──
+    // -- P&L IMPACT: only Income/Expense post to cash_entries (the table P&L reads from) --
     if(nature==='income'||nature==='expense'){
       if(catId)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
     } else {
@@ -1181,14 +1181,14 @@ async function saveCash(){
       await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:null,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
     }
 
-    // ── Single, direct cashflow ledger entry (no shared RPC — avoids double-posting) ──
+    // -- Single, direct cashflow ledger entry (no shared RPC  -  avoids double-posting) --
     await sb.from('ledger_entries').insert({transaction_id:t.data.id,entry_date:dt,entry_type:dir==='in'?'credit':'debit',account_category:'cashflow',cashflow_account_id:accId,amount:amt,description:dsc,created_by:CUP&&CUP.id});
 
-    // ── Party ledger entry: Receipt/Payment each have specific accounting treatment ──
+    // -- Party ledger entry: Receipt/Payment each have specific accounting treatment --
     if(partyId){
       var partyEntryType;
-      if(nature==='receipt'){partyEntryType='credit';} // money received — reduces receivable (credit)
-      else if(nature==='payment'&&ptype==='supplier'){partyEntryType='debit';} // payment to supplier — reduces payable (debit = clears the liability)
+      if(nature==='receipt'){partyEntryType='credit';} // money received  -  reduces receivable (credit)
+      else if(nature==='payment'&&ptype==='supplier'){partyEntryType='debit';} // payment to supplier  -  reduces payable (debit = clears the liability)
       else if(nature==='payment'&&ptype==='customer'){partyEntryType='debit';} // payment to customer (rare refund)
       else{partyEntryType=dir==='in'?'credit':'debit';}
       await sb.from('ledger_entries').insert({
@@ -1278,13 +1278,13 @@ async function saveStockMove(mtype){
   var cost=Number($('sm-cost')&&$('sm-cost').value||0);
   var refNo=($('sm-ref')&&$('sm-ref').value||'').trim();
 
-  // ── STEP 1: Common mandatory fields ──
+  // -- STEP 1: Common mandatory fields --
   if(!varId){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Select a product','err');$('sm-prod')&&$('sm-prod').focus();return;}
   if(!qty||qty<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter quantity greater than 0','err');$('sm-qty')&&$('sm-qty').focus();return;}
-  if(!cost||cost<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter cost price — required for valuation','err');$('sm-cost')&&$('sm-cost').focus();return;}
-  if(!rsn||rsn.length<5){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter reason (min 5 characters) — required for audit','err');$('sm-rsn')&&$('sm-rsn').focus();return;}
+  if(!cost||cost<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter cost price  -  required for valuation','err');$('sm-cost')&&$('sm-cost').focus();return;}
+  if(!rsn||rsn.length<5){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Enter reason (min 5 characters)  -  required for audit','err');$('sm-rsn')&&$('sm-rsn').focus();return;}
 
-  // ── STEP 2: Purchase Return specific mandatory fields ──
+  // -- STEP 2: Purchase Return specific mandatory fields --
   if(mtype==='purchase_return'){
     var supName=($('sm-sup')&&$('sm-sup').value||'').trim();
     // Supplier is OPTIONAL: some returns have no recovery/payable adjustment (e.g. disposed/written-off stock).
@@ -1301,13 +1301,13 @@ async function saveStockMove(mtype){
   var p=prods.find(function(p){return p.id===varId;});
   if(!p){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Product not found','err');return;}
 
-  // ── STEP 3: Stock availability check ──
+  // -- STEP 3: Stock availability check --
   if(['purchase_return','damaged','other'].indexOf(mtype)>=0){
     if((p.stock||0)<=0){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('No stock available for '+p.name,'err');return;}
     if(qty>(p.stock||0)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}toast('Cannot exceed available stock ('+p.stock+'). Enter '+p.stock+' or less.','err');$('sm-qty')&&($('sm-qty').value=p.stock);return;}
   }
 
-  // ── STEP 4: Show confirmation summary before processing ──
+  // -- STEP 4: Show confirmation summary before processing --
   var totalVal=qty*cost;
   var summary='Confirm Purchase Return:\n\n'+
     'Product: '+p.name+'\n'+
@@ -1319,7 +1319,7 @@ async function saveStockMove(mtype){
     'Stock will decrease by '+qty+'.\nLedger will be updated.\n\nProceed?';
   if(!confirm(summary)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}return;}
 
-  // ── STEP 5: Process stock movement ──
+  // -- STEP 5: Process stock movement --
   try{
   var result=await sb.rpc('process_stock_movement',{
     p_variant_id:varId,p_movement_type:mtype,p_qty:qty,
@@ -1331,7 +1331,7 @@ async function saveStockMove(mtype){
     toast('Error: '+(result.data&&result.data.error||'Stock update failed'),'err');return;
   }
 
-  // ── STEP 6: Purchase Return — create transaction + ledger entry ──
+  // -- STEP 6: Purchase Return  -  create transaction + ledger entry --
   if(mtype==='purchase_return'){
     var supName2=($('sm-sup')&&$('sm-sup').value||'').trim();
     var sp=null;
@@ -1342,13 +1342,13 @@ async function saveStockMove(mtype){
         if(nsp.data){parties.push(nsp.data);sp=nsp.data;}
       }
     }
-    // Transaction is always recorded, with or without a supplier — keeps Net Purchases reporting accurate either way
+    // Transaction is always recorded, with or without a supplier  -  keeps Net Purchases reporting accurate either way
     var pretIns=await insertWithUniqueNo('transactions','PRET',function(noVal){return{
       transaction_no:noVal,transaction_type:'purchase_return',
       transaction_date:td(),party_id:sp&&sp.id||null,
       total_amount:totalVal,paid_amount:0,
       payment_status:'paid',performed_by:CUP&&CUP.id,
-      notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn+(sp?'':' (No supplier — no payable recovery expected)')
+      notes:'Purchase Return: '+p.name+' x'+qty+' @ Rs'+cost+'. '+rsn+(sp?'':' (No supplier  -  no payable recovery expected)')
     };});
     var no2={data:pretIns.no};var txn2={data:pretIns.data};
     if(sp&&txn2.data){
@@ -1370,7 +1370,7 @@ async function saveStockMove(mtype){
     }
   }
 
-  // ── STEP 7: Sales Return — customer ledger + optional cash refund ──
+  // -- STEP 7: Sales Return  -  customer ledger + optional cash refund --
   if(mtype==='sales_return'){
     var custNameRet=($('sm-cust')&&$('sm-cust').value||'').trim();
     var ca2=accs.find(function(a){return a.name==='Cash Drawer';});
@@ -1390,17 +1390,17 @@ async function saveStockMove(mtype){
     var txn3={data:retIns.data};
     if(txn3.data){
       if(doR&&ca2)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:totalVal,description:'Cash Refund: '+p.name,created_by:CUP&&CUP.id});
-      // FIX 6: Adjust customer ledger on return — debit customer (reduces receivable / increases credit)
+      // FIX 6: Adjust customer ledger on return  -  debit customer (reduces receivable / increases credit)
       if(retCustId){
         await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:retCustId,amount:totalVal,description:'Sales Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
-        // Issue 6: update customer balance — sales return reduces receivable
+        // Issue 6: update customer balance  -  sales return reduces receivable
         var retCustObj=parties.find(function(p){return p.id===retCustId;});
         if(retCustObj)await sb.from('parties').update({current_balance:Math.max(0,(retCustObj.current_balance||0)-totalVal)}).eq('id',retCustId);
       }
     }
   }
 
-  // ── FIX 5: Damaged Stock Expense — auto-posts to P&L ──
+  // -- FIX 5: Damaged Stock Expense  -  auto-posts to P&L --
   if(mtype==='damaged'){
     try{
       var dmgCa=accs.find(function(a){return a.name==='Cash Drawer';});
@@ -1587,7 +1587,7 @@ async function saveStockTake(applyAdjustment){
     if(btnEl){btnEl.disabled=false;btnEl.textContent=applyAdjustment?'Apply Adjustment':'Save Report Only';}
   }
 }
-// ── PHYSICAL COUNT REPORT VIEWER ──
+// -- PHYSICAL COUNT REPORT VIEWER --
 async function showStockCountReports(){
   var rep=await sb.from('stock_count_reports').select('*').order('created_at',{ascending:false}).limit(30);
   var usersRes=await sb.from('users').select('id,full_name');
@@ -1708,7 +1708,7 @@ function openReservationDetail(idx){
   var pname=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
   var cost=it.product_variants&&it.product_variants.purchase_price||0;
   var h='<div style="display:flex;gap:8px;margin-bottom:10px">';
-  h+='<button class="btn bh bsm" onclick="printBarcode(\''+p.id+'\')">🏷️ Print Barcode</button>';
+  h+='<button class="btn bh bsm" data-vid="'+p.id+'" onclick="printBarcode(this.dataset.vid)">Print Barcode</button>';
   h+='</div>';
   h+='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
   h+='<div style="font-size:.8rem;font-weight:700">'+r.customer_name+'</div>';
@@ -1827,7 +1827,7 @@ async function exportStockReport(){
 
 
 
-// ── STOCK WITH CUSTOMER ──
+// -- STOCK WITH CUSTOMER --
 function oStockWithCustomer(){
   var h='<div class="ib">Issue stock to customer for home selection. Items tracked separately until sold or returned.</div>';
   h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="swc-cust" list="dl-customers" placeholder="Type or select customer"></div>';
@@ -2020,7 +2020,7 @@ async function finalizeSwc(swcId){
         var pSold=prods.find(function(p){return p.id===it.variant_id;});
         if(pSold)await sb.from('inventory').update({qty_with_customer:Math.max(0,(pSold.withCustomer||0)-sold)}).eq('variant_id',it.variant_id);
       }
-      // Issue 4: partial SWC — only mark 'sold' if ALL qty processed; 'partial' if remainder exists
+      // Issue 4: partial SWC  -  only mark 'sold' if ALL qty processed; 'partial' if remainder exists
       var newTotalSold=(it.qty_sold||0)+sold;
       var newTotalRet=(it.qty_returned||0)+ret;
       var stillRemaining=it.qty_issued-newTotalSold-newTotalRet;
@@ -2042,7 +2042,7 @@ async function finalizeSwc(swcId){
   finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}}
 }
 
-// ── STOCK RESERVATION ──
+// -- STOCK RESERVATION --
 function oReservation(){
   var h='<div class="ib">Record advance/token money. Creates customer deposit entry (liability).</div>';
   h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="res-cust" list="dl-customers" placeholder="Type or select customer"></div>';
@@ -2097,7 +2097,7 @@ async function saveReservation(){
 var lastReportData=[];
 var lastReportTitle='Report';
 
-// ── REPORTS TAB: Export & Print ──
+// -- REPORTS TAB: Export & Print --
 function exportReport(){
   if(!lastReportData||!lastReportData.length){toast('Generate a report first','warn');return;}
   var keys=Object.keys(lastReportData[0]);
@@ -2121,7 +2121,7 @@ function printReport(){
   w.document.close();
 }
 
-// ── SALES TAB ──
+// -- SALES TAB --
 function rSalesTab(){
   var h='';
   h+='<div class="sg" id="stk"></div>';
@@ -2257,7 +2257,7 @@ function printSalesTab(){
 }
 
 
-// ── TRANSACTION EDITING (Owner only) ──
+// -- TRANSACTION EDITING (Owner only) --
 function openEditTxn(txnId,txnNo){
   if(CUP&&CUP.role!=='owner'){toast('Only owner can edit','err');return;}
   window._editTxnId=txnId;window._editTxnNo=txnNo;
@@ -2305,7 +2305,7 @@ async function saveEditTxn(btn){
   }catch(ex){toast(ex.message,'err');}
 }
 
-// ── PASSWORD CHANGE ──
+// -- PASSWORD CHANGE --
 function openChangePW(){
   omo('Change Password',
     '<div class="fg"><label class="lb">Current Password</label><input class="ip" id="pw-cur" type="password" placeholder="Current password"></div>'+
@@ -2329,7 +2329,7 @@ async function saveChangePW(){
 }
 
 
-// ── ACTIVITY LOG VIEWER (Owner only) ──
+// -- ACTIVITY LOG VIEWER (Owner only) --
 async function showActivityLog(){
   if(CUP&&CUP.role!=='owner'){toast('Owner only','err');return;}
   var log=await sb.from('user_activity_log').select('*,users(full_name)').order('created_at',{ascending:false}).limit(100);
@@ -2352,16 +2352,16 @@ async function showActivityLog(){
 }
 
 
-// ── STORE SETTINGS (global config, no hardcoding) ──
+// -- STORE SETTINGS (global config, no hardcoding) --
 var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',cctv_url:'',tiktok_handle:'@slcollection713'};
 async function loadStoreSettings(){
   try{
     var r=await sb.from('store_settings').select('*').eq('id',1).maybeSingle();
     if(r.data)STORE=r.data;
-  }catch(e){/* table not yet migrated — fall back to defaults */}
+  }catch(e){/* table not yet migrated  -  fall back to defaults */}
 }
 
-// ── POST-SALE MODAL ──
+// -- POST-SALE MODAL --
 function showSaleCompleteModal(wantsWA){
   var s=window._lastSale;if(!s)return;
   var h='<div style="text-align:center;padding:10px 0 16px">';
@@ -2380,7 +2380,7 @@ function showSaleCompleteModal(wantsWA){
   omo('',h);
 }
 
-// ── INVOICE TEXT (branded, used for WhatsApp message) ──
+// -- INVOICE TEXT (branded, used for WhatsApp message) --
 function generateInvoiceText(s){
   var lines=[];
   lines.push('*'+STORE.store_name+'*');
@@ -2410,14 +2410,14 @@ function generateInvoiceText(s){
   return lines.join('\n');
 }
 
-// ── SHARE VIA WHATSAPP ──
-// ── RENDER RECEIPT AS IMAGE (canvas, in-memory only — never saved to disk/storage) ──
+// -- SHARE VIA WHATSAPP --
+// -- RENDER RECEIPT AS IMAGE (canvas, in-memory only  -  never saved to disk/storage) --
 function loadLogoImage(){
   return new Promise(function(resolve){
     var img=new Image();
     img.crossOrigin='anonymous';
     img.onload=function(){resolve(img);};
-    img.onerror=function(){resolve(null);}; // logo not uploaded yet — receipt still renders fine without it
+    img.onerror=function(){resolve(null);}; // logo not uploaded yet  -  receipt still renders fine without it
     img.src='logo.png';
   });
 }
@@ -2433,7 +2433,7 @@ async function renderReceiptCanvas(s){
   var y=34;
   var textX=padX;
   if(logo){
-    var logoW=64,logoH=42; // matches logo.png aspect ratio — no circular clip, shape is already clean
+    var logoW=64,logoH=42; // matches logo.png aspect ratio  -  no circular clip, shape is already clean
     ctx.drawImage(logo,padX,y-12-logoH/2,logoW,logoH);
     textX=padX+logoW+10;
   }
@@ -2476,7 +2476,7 @@ function canvasToBlob(cv){
   return new Promise(function(resolve){cv.toBlob(function(b){resolve(b);},'image/png');});
 }
 
-// ── SHARE VIA WHATSAPP — tries native image share first, falls back to text ──
+// -- SHARE VIA WHATSAPP  -  tries native image share first, falls back to text --
 async function shareInvoiceWhatsApp(){
   var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
   if(!s.phone||!isValidPhone(s.phone)){toast('No valid WhatsApp number for this sale','err');return;}
@@ -2511,7 +2511,7 @@ async function shareInvoiceWhatsApp(){
     toast('Could not open WhatsApp - sale is already saved','warn');
   }
 }
-// ── PRINT RECEIPT ──
+// -- PRINT RECEIPT --
 function printReceipt(){
   var s=window._lastSale;if(!s){toast('No sale data available','err');return;}
   var w=window.open('','_blank');
@@ -2541,7 +2541,7 @@ function printReceipt(){
   w.document.close();
 }
 
-// ── STORE SETTINGS MODAL (Owner only) ──
+// -- STORE SETTINGS MODAL (Owner only) --
 function openStoreSettings(){
   if(CUP&&CUP.role!=='owner'){toast('Owner only','err');return;}
   omo('Store Settings',
@@ -2572,9 +2572,9 @@ async function saveStoreSettings(){
 }
 
 
-// ═══════════════════════════════════════════════════════════════
-// INVENTORY REGISTER — professional ERP inventory management
-// ═══════════════════════════════════════════════════════════════
+// ===============================================================
+// INVENTORY REGISTER  -  professional ERP inventory management
+// ===============================================================
 
 var _IR={  // Inventory Register state
   data:[],total:0,page:0,perPage:25,loading:false,
@@ -2583,7 +2583,7 @@ var _IR={  // Inventory Register state
   filtersOpen:false
 };
 
-// ── Replace iInv with the full inventory register ──
+// -- Replace iInv with the full inventory register --
 function iInv(){
   // Keep backward-compatible quick search for operational use (Bill tab srch etc.)
   var q=($('is')&&$('is').value||'').toLowerCase();
@@ -2626,7 +2626,7 @@ function renderInvList(p,c){
   c.innerHTML=html;
 }
 
-// ── Render Inventory Register section (appended below existing list) ──
+// -- Render Inventory Register section (appended below existing list) --
 function rInventoryRegister(){
   var cats=cats||[];
   var h='<div style="margin-top:16px">';
@@ -2654,7 +2654,7 @@ function rInventoryRegister(){
   h+='<div class="fg"><label class="lb">Size</label><select class="sl" id="irf-size" onchange="applyIRFilters()"><option value="">All</option>'+SIZES.map(function(s){return'<option>'+s+'</option>';}).join('')+'</select></div>';
   h+='</div><div class="g2">';
   h+='<div class="fg"><label class="lb">Brand</label><select class="sl" id="irf-brand" onchange="applyIRFilters()"><option value="">All</option>'+_brands.map(function(b){return'<option>'+b.name+'</option>';}).join('')+'</select></div>';
-  h+='<div class="fg"><label class="lb">Ageing</label><select class="sl" id="irf-age" onchange="applyIRFilters()"><option value="">All</option><option value="0-30">0–30 Days</option><option value="31-60">31–60 Days</option><option value="61-90">61–90 Days</option><option value="91-180">91–180 Days</option><option value="181+">181+ Days</option></select></div>';
+  h+='<div class="fg"><label class="lb">Ageing</label><select class="sl" id="irf-age" onchange="applyIRFilters()"><option value="">All</option><option value="0-30">0-30 Days</option><option value="31-60">31-60 Days</option><option value="61-90">61-90 Days</option><option value="91-180">91-180 Days</option><option value="181+">181+ Days</option></select></div>';
   h+='</div>';
   h+='<button class="btn bh bsm" onclick="clearIRFilters()">Clear All Filters</button>';
   h+='</div>';
@@ -2704,15 +2704,15 @@ function applyIRFilters(){
   loadIRPage(0);
 }
 
-// ── Sort handler ──
+// -- Sort handler --
 function sortIR(col){
   if(_IR.sort.col===col)_IR.sort.dir=_IR.sort.dir==='asc'?'desc':'asc';
   else{_IR.sort.col=col;_IR.sort.dir='asc';}
   loadIRPage(_IR.page);
 }
-function irSortIcon(col){return _IR.sort.col===col?(_IR.sort.dir==='asc'?' ▲':' ▼'):' ↕';}
+function irSortIcon(col){return _IR.sort.col===col?(_IR.sort.dir==='asc'?' ^':' v'):' ~';}
 
-// ── Main data loader ──
+// -- Main data loader --
 async function loadIRPage(page){
   if(_IR.loading)return;
   var tbl=document.getElementById('ir-table');if(!tbl)return;
@@ -2823,7 +2823,7 @@ function renderIRPagination(){
   pg.innerHTML=h;
 }
 
-// ── Row Detail Modal ──
+// -- Row Detail Modal --
 async function showIRDetail(variantId){
   var r=_IR.data.find(function(x){return x.variant_id===variantId;});
   if(!r){var res=await sb.from('v_inventory_register').select('*').eq('variant_id',variantId).single();if(res.data)r=res.data;else{toast('Not found','err');return;}}
@@ -2870,7 +2870,7 @@ async function showIRDetail(variantId){
   mdiv.innerHTML=mh;
 }
 
-// ── Export functions ──
+// -- Export functions --
 async function exportIR(format){
   toast('Preparing export...','ok',2000);
   // Load all matching records (no pagination for export)
@@ -2910,23 +2910,23 @@ async function exportIR(format){
     rows.forEach(function(r,i){tbl+='<tr style="background:'+(i%2?'#f5f0eb':'white')+'">';tbl+=cols.map(function(c){return'<td style="padding:3px 6px">'+(r[c]||'')+'</td>';}).join('');tbl+='</tr>';});
     tbl+='</tbody></table>';
     w.document.write('<html><head><title>Inventory Register</title><style>body{font-family:Arial;padding:14px}@media print{button{display:none}}</style></head><body>');
-    w.document.write('<h2>SL Collection — Inventory Register</h2><p>'+STORE.store_name+' | Date: '+td()+'</p>');
+    w.document.write('<h2>SL Collection  -  Inventory Register</h2><p>'+STORE.store_name+' | Date: '+td()+'</p>');
     w.document.write(tbl+'<br><button onclick="window.print()">Print</button></body></html>');
     w.document.close();
   }
 }
 
 
-// ── INVENTORY TAB — dedicated full-screen inventory register ──
+// -- INVENTORY TAB  -  dedicated full-screen inventory register --
 function rInventoryTab(){
   var h='<div class="sg" id="ir-kpi"></div>';
   h+=rInventoryRegister();
   return h;
 }
 
-// ═══════════════════════════════════════════════════════════
-// BARCODE PRINTING — Code 128, 40×30mm thermal labels
-// ═══════════════════════════════════════════════════════════
+// ===========================================================
+// BARCODE PRINTING  -  Code 128, 40x30mm thermal labels
+// ===========================================================
 
 function printBarcode(varId){
   var p=prods.find(function(pr){return pr.id===varId;});
@@ -2935,7 +2935,7 @@ function printBarcode(varId){
   if(!bc){toast('No barcode available for this product','err');return;}
   var w=window.open('','_blank');
   var html='<!DOCTYPE html><html><head><title>Barcode - '+bc+'</title><style>';
-  // 40×30mm at 96dpi = 151×113px — using mm units for print accuracy
+  // 40x30mm at 96dpi = 151x113px  -  using mm units for print accuracy
   html+='@page{size:40mm 30mm;margin:0}';
   html+='body{margin:0;padding:0;font-family:Arial,sans-serif;width:40mm;height:30mm;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}';
   html+='svg{max-width:38mm;height:auto}';
@@ -2952,7 +2952,7 @@ function printBarcode(varId){
   html+='<button onclick="window.print()" style="padding:4px 10px;cursor:pointer">Print</button>';
   html+='<button onclick="printMultiple()" style="padding:4px 10px;cursor:pointer">Print Multiple</button>';
   html+='</div>';
-  html+='<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>';
+  html+='<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>';
   html+='<script>';
   html+='window.onload=function(){';
   html+='JsBarcode("#bc-svg","'+bc+'",{format:"CODE128",width:1.5,height:28,displayValue:false,margin:0});';
@@ -2972,9 +2972,9 @@ function printBarcode(varId){
   w.document.close();
 }
 
-// ═══════════════════════════════════════════════════════════
-// BARCODE SCANNING — Camera (ZXing) + Bluetooth wedge
-// ═══════════════════════════════════════════════════════════
+// ===========================================================
+// BARCODE SCANNING  -  Camera (ZXing) + Bluetooth wedge
+// ===========================================================
 
 var _scannerActive=false;
 var _btBuffer='';var _btTimer=null;
@@ -3008,7 +3008,7 @@ function openBarcodeScanner(){
     var sc=document.createElement('script');
     sc.src='https://cdn.jsdelivr.net/npm/@zxing/browser@latest/umd/index.min.js';
     sc.onload=function(){startCameraScanner();};
-    sc.onerror=function(){toast('Camera scanner unavailable — use Bluetooth scanner','warn');};
+    sc.onerror=function(){toast('Camera scanner unavailable  -  use Bluetooth scanner','warn');};
     document.head.appendChild(sc);
   } else {
     startCameraScanner();
@@ -3045,7 +3045,7 @@ function startCameraScanner(){
       }
     });
     var st=document.getElementById('scan-status');
-    if(st)st.textContent='Camera active — scan a barcode';
+    if(st)st.textContent='Camera active  -  scan a barcode';
   }catch(ex){
     closeBarcodeScanner();
     toast('Camera error: '+ex.message,'err');
@@ -3073,7 +3073,7 @@ async function handleBarcodeResult(code){
   }
   if(!p){toast('Product not found for barcode: '+code,'err');return;}
   if((p.stock||0)<=0){toast(p.name+' is out of stock','warn');return;}
-  // Add to cart — works on Bill tab
+  // Add to cart  -  works on Bill tab
   var existing=cart.find(function(c){return c.id===p.id;});
   if(existing){existing.qty++;toast('Qty updated: '+p.name+' x'+existing.qty,'ok');}
   else{cart.push({id:p.id,name:p.name,sku:p.sku,price:p.price||0,cost:p.cost||0,qty:1});}
@@ -3086,14 +3086,14 @@ async function handleBarcodeResult(code){
   }
 }
 
-// ═══════════════════════════════════════════════════════════
+// ===========================================================
 // CCTV SHORTCUT
-// ═══════════════════════════════════════════════════════════
+// ===========================================================
 
 function openCCTV(){
   var url=STORE.cctv_url||'';
   if(!url){
-    toast('CCTV URL not configured. Go to Settings → CCTV URL','warn',4000);
+    toast('CCTV URL not configured. Go to Settings -> CCTV URL','warn',4000);
     if(CUP&&CUP.role==='owner')setTimeout(openStoreSettings,1500);
     return;
   }
@@ -3101,7 +3101,7 @@ function openCCTV(){
 }
 
 function cctvBtn(){
-  return '<button title="CCTV Live View" onclick="openCCTV()" style="background:var(--ink2);color:white;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.65rem;display:flex;align-items:center;gap:4px"><span style="font-size:.85rem">📹</span>CCTV</button>';
+  return '<button title="CCTV Live View" onclick="openCCTV()" style="background:var(--ink2);color:white;border:none;border-radius:8px;padding:6px 10px;cursor:pointer;font-size:.65rem;display:flex;align-items:center;gap:4px"><span style="font-size:.85rem">[CAM]</span>CCTV</button>';
 }
 
 </script>
