@@ -88,6 +88,21 @@ html,body{height:100%;background:var(--cream);color:var(--ink);max-width:480px;m
 .df .ip{font-size:.73rem;padding:7px 10px;flex:1;}
 .ib{background:var(--cream2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:11px;font-size:.66rem;color:var(--ink2);}
 </style>
+<script>
+if('serviceWorker' in navigator){
+  // Auto-detect the base path (works on GitHub Pages subdirectory)
+  var swPath=location.pathname.replace(/\/[^\/]*$\//, '').replace(/\/$/, '')+'/sw.js';
+  // Fallback to same-directory
+  swPath='./sw.js';
+  var swScope=location.pathname.replace(/\/[^\/]*$/, '/')||'/';
+  navigator.serviceWorker.register(swPath,{scope:swScope}).then(function(reg){
+    console.log('SW registered, scope:',reg.scope);
+  }).catch(function(e){
+    // SW failure is non-fatal - core offline (IndexedDB) still works
+    console.warn('SW registration failed (non-fatal):',e.message);
+  });
+}
+</script>
 </head>
 <body>
 <div id="ls">
@@ -2388,6 +2403,8 @@ async function showActivityLog(){
 
 
 // -- STORE SETTINGS (global config, no hardcoding) --
+// Global data arrays (declared here so offline cache can populate them)
+var prods=[];var parties=[];var accs=[];var cart=[];
 var STORE={store_name:'SL Collection',address:'Zaheer and Sageer Plaza, Street 3, Naseerabad, Rawalpindi',contact_number:'+92 303 2777001',whatsapp_number:'+92 303 2777001',cctv_url:'',tiktok_handle:'@slcollection713'};
 async function loadStoreSettings(){
   try{
@@ -2988,7 +3005,7 @@ function printBarcode(varId){
   html+='<button onclick="printMultiple()" style="padding:4px 10px;cursor:pointer">Print Multiple</button>';
   html+='</div>';
   html+='<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>';
-  html+='<script>';
+  html+='<scr'+'ipt>';
   html+='window.onload=function(){';
   html+='JsBarcode("#bc-svg","'+bc+'",{format:"CODE128",width:1.5,height:28,displayValue:false,margin:0});';
   html+='};';
@@ -3470,8 +3487,11 @@ async function cacheMasterData(){
       cacheToLocal('parties',parties),
       cacheToLocal('accs',accs),
       cacheToLocal('CATS',CATS),
-      cacheToLocal('CCOD',CCOD)
+      cacheToLocal('CCOD',CCOD),
+      cacheToLocal('CUP',CUP),
+      cacheToLocal('store_settings',STORE)
     ]);
+    console.log('Master data cached: '+prods.length+' products, '+parties.length+' parties');
   }catch(e){console.warn('Master cache failed:',e);}
 }
 
@@ -3481,13 +3501,24 @@ async function loadFromCache(){
     var cachedProds=await readFromCache('prods');
     var cachedParties=await readFromCache('parties');
     var cachedAccs=await readFromCache('accs');
-    if(cachedProds)prods=cachedProds;
-    if(cachedParties)parties=cachedParties;
-    if(cachedAccs)accs=cachedAccs;
-    toast('Offline mode: using cached data','warn',3000);
-    return true;
+    if(cachedProds&&cachedProds.length){prods=cachedProds;}
+    if(cachedParties&&cachedParties.length){parties=cachedParties;}
+    if(cachedAccs&&cachedAccs.length){accs=cachedAccs;}
+    var cachedCUP=await readFromCache('CUP');
+    if(cachedCUP&&!CUP)CUP=cachedCUP;
+    var cachedStore=await readFromCache('store_settings');
+    if(cachedStore)STORE=Object.assign({},STORE,cachedStore);
+    var count=prods.length+parties.length+accs.length;
+    if(count>0){
+      toast('Offline mode - '+prods.length+' products loaded from cache','warn',4000);
+      return true;
+    } else {
+      toast('No offline data cached yet. You must go online first to cache data.','err',6000);
+      return false;
+    }
   }catch(e){
-    toast('No cached data available. Connect to internet.','err',5000);
+    console.error('loadFromCache error:',e);
+    toast('Cache error: '+e.message,'err',5000);
     return false;
   }
 }
