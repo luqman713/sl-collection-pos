@@ -89,17 +89,14 @@ html,body{height:100%;background:var(--cream);color:var(--ink);max-width:480px;m
 .ib{background:var(--cream2);border:1px solid var(--border);border-radius:9px;padding:9px 12px;margin-bottom:11px;font-size:.66rem;color:var(--ink2);}
 </style>
 <script>
-if('serviceWorker' in navigator){
-  // Auto-detect the base path (works on GitHub Pages subdirectory)
-  var swPath=location.pathname.replace(/\/[^\/]*$\//, '').replace(/\/$/, '')+'/sw.js';
-  // Fallback to same-directory
-  swPath='./sw.js';
-  var swScope=location.pathname.replace(/\/[^\/]*$/, '/')||'/';
-  navigator.serviceWorker.register(swPath,{scope:swScope}).then(function(reg){
-    console.log('SW registered, scope:',reg.scope);
+// Register service worker only on the real deployment (not preview/localhost)
+if('serviceWorker' in navigator &&
+   location.hostname.includes('github.io')){
+  navigator.serviceWorker.register('./sw.js').then(function(reg){
+    console.log('SW registered');
   }).catch(function(e){
-    // SW failure is non-fatal - core offline (IndexedDB) still works
-    console.warn('SW registration failed (non-fatal):',e.message);
+    // Non-fatal: IndexedDB offline queue still works without SW
+    console.warn('SW failed (non-fatal):',e.message);
   });
 }
 </script>
@@ -495,7 +492,10 @@ function rBill(){
   h+='<div id="pd"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Discount Rs</label><input class="ip" id="disc" type="number" placeholder="0" min="0" oninput="updSum()"></div><div class="fg"><label class="lb">Discount %</label><input class="ip" id="disc-pct" type="number" placeholder="0" min="0" max="100" oninput="calcDiscPct()"></div></div>';
   h+='<div class="fg" style="margin-bottom:0"><label class="lb"><input type="checkbox" id="ia" style="accent-color:var(--gold);margin-right:4px">Acquaintance sale</label></div></div>';
-  h+='<input class="ip" id="bs" placeholder="Search products..." oninput="srch()" style="margin-bottom:8px">';
+  h+='<div style="display:flex;gap:6px;margin-bottom:6px">';
+  h+='<input class="ip" id="bs" placeholder="Search products..." oninput="srch()" style="flex:1;margin-bottom:0">';
+  h+='<button class="btn bh bsm" onclick="openBarcodeScanner()" title="Optional: scan barcode">Scan</button>';
+  h+='</div>';
   h+='<div class="pr" id="cp" style="margin-bottom:10px"><div class="pl on" onclick="setBC(\'\',this)">All</div>';
   for(var i=0;i<CATS.length;i++)h+='<div class="pl" onclick="setBC(\''+CATS[i]+'\',this)">'+CATS[i]+'</div>';
   h+='</div><div id="br"></div>';
@@ -602,7 +602,7 @@ function updSum(){
     (discShow>0?'<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px;color:var(--red)"><span>Discount</span><span>- '+fmt(discShow)+'</span></div>':'') +
     '<div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;margin-bottom:4px"><span>Total</span><span>'+fmt(finalTotal)+'</span></div>'+
     '<div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage);font-weight:600"><span>Margin</span><span>'+fmt(mg)+'</span></div></div>';
-  ba.innerHTML='<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn bh" id="scan-btn" onclick="openBarcodeScanner()" style="flex:none;padding:8px 12px"><span style="font-size:.9rem">&#x1F4F7;</span> Scan</button><button class="btn bs" id="cb3" onclick="completeSale()" style="flex:1">Complete Sale</button></div>';
+  ba.innerHTML='<button class="btn bs" id="cb3" onclick="completeSale()">Complete Sale</button>';
 }
 async function completeSale(){
   if(!cart.length){toast('Cart empty','err');return;}
@@ -3034,7 +3034,10 @@ var _btBuffer='';var _btTimer=null;
 // Bluetooth/USB wedge scanner: listens for rapid keystrokes ending in Enter
 function initBtScannerListener(){
   document.addEventListener('keydown',function(e){
-    // Only intercept when Bill tab is active
+    // Only intercept when Bill tab is active AND user is NOT typing in an input/textarea
+    var activeEl=document.activeElement;
+    var inInput=activeEl&&(activeEl.tagName==='INPUT'||activeEl.tagName==='TEXTAREA'||activeEl.tagName==='SELECT');
+    if(inInput)return; // let normal product search work uninterrupted
     var activeTab=document.querySelector && document.querySelector('#nt .pl.on');
     if(!activeTab||activeTab.textContent!=='BILL')return;
     if(e.key==='Enter'&&_btBuffer.length>3){
@@ -3298,11 +3301,14 @@ async function updateSyncStatus(){
   else{bg='var(--sage)';txt='Online';}
   bar.style.background=bg;
   bar.innerHTML='<span style="font-size:.6rem;font-weight:700;color:white">'+txt+'</span>';
-  if(pending>0&&!bar._blinking){
-    bar._blinking=true;
+  // Always allow tap-to-sync when online with pending items
+  if(pending>0&&_isOnline){
     bar.style.cursor='pointer';
-    bar.onclick=function(){if(!_isSyncing&&_isOnline)runSyncQueue();};
-    bar.title='Tap to sync now';
+    bar.onclick=function(){if(!_isSyncing)runSyncQueue();};
+    bar.title='Tap to sync '+pending+' pending transaction'+(pending>1?'s':'');
+  } else {
+    bar.onclick=null;
+    bar.style.cursor='default';
   }
 }
 
@@ -3370,34 +3376,65 @@ async function runSyncQueue(){
   if(_syncLock||!_isOnline)return;
   _syncLock=true;_isSyncing=true;updateSyncStatus();
   try{
-    var queue=await getPendingQueue();
+    // Re-authenticate if session expired during offline period
+    var sess=await sb.auth.getSession();
+    if(!sess.data.session){
+      _isSyncing=false;_syncLock=false;updateSyncStatus();
+      toast('Session expired - please log in again to sync','err',5000);
+      return;
+    }
+    // Include failed items with retry_count < 5
+    var queue=await idbGetAll('queue','status','pending');
+    var retryQueue=await idbGetAll('queue','status','failed');
+    retryQueue=retryQueue.filter(function(i){return(i.retry_count||0)<5;});
+    queue=queue.concat(retryQueue);
     if(!queue.length){_isSyncing=false;_syncLock=false;updateSyncStatus();return;}
-    toast('Syncing '+queue.length+' offline transactions...','ok',3000);
+    toast('Syncing '+queue.length+' offline transaction'+(queue.length>1?'s':'')+'...','ok',3000);
     var success=0,failed=0;
     for(var i=0;i<queue.length;i++){
       var item=queue[i];
       try{
-        // Check if already synced (prevent duplicate on retry)
-        var check=await sb.from('sync_log').select('id').eq('local_id',item.local_id).maybeSingle();
-        if(check.data){await markSynced(item.local_id);success++;continue;}
+        // Idempotency check - try sync_log first, fall back gracefully if table missing
+        var alreadySynced=false;
+        try{
+          var check=await sb.from('sync_log').select('id').eq('local_id',item.local_id).maybeSingle();
+          if(check.data)alreadySynced=true;
+        }catch(e){/* sync_log table may not exist yet - continue with sync */}
+        if(alreadySynced){await markSynced(item.local_id);success++;continue;}
         // Sync based on type
         if(item.type==='sale') await syncSale(item);
         else if(item.type==='purchase') await syncPurchase(item);
         else if(item.type==='cash') await syncCash(item);
-        // Record in sync_log (idempotency key)
-        await sb.from('sync_log').insert({local_id:item.local_id,entity_type:item.type,bill_no:item.offline_bill_no,device_info:navigator.userAgent.slice(0,100)});
+        // Record in sync_log for duplicate prevention
+        try{
+          await sb.from('sync_log').insert({
+            local_id:item.local_id,entity_type:item.type,
+            bill_no:item.offline_bill_no,
+            device_info:navigator.userAgent.slice(0,80)
+          });
+        }catch(e){/* non-fatal if sync_log missing */}
         await markSynced(item.local_id);
         success++;
+        updateSyncStatus();
       }catch(ex){
+        console.error('Sync failed for '+item.local_id+':',ex.message);
         await markFailed(item.local_id,ex.message);
         failed++;
-        console.error('Sync failed for',item.local_id,ex);
       }
     }
-    await loadData(); // refresh all data after sync
-    toast('Sync complete: '+success+' OK'+(failed?' | '+failed+' failed':''),'ok',5000);
-  }catch(ex){toast('Sync error: '+ex.message,'err');}
+    await loadData();
+    var msg='Sync complete: '+success+' uploaded';
+    if(failed)msg+=' | '+failed+' failed (will retry)';
+    toast(msg,'ok',5000);
+  }catch(ex){
+    console.error('Sync queue error:',ex);
+    toast('Sync error: '+ex.message,'err');
+  }
   _isSyncing=false;_syncLock=false;updateSyncStatus();
+  // Schedule retry for failed items
+  if(await idbGetAll('queue','status','failed').then(function(f){return f.filter(function(i){return(i.retry_count||0)<5;}).length;}).catch(function(){return 0;})){
+    setTimeout(runSyncQueue,30000); // retry failed after 30s
+  }
 }
 
 // ── Sync a sale to Supabase ──
