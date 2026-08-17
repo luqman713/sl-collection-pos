@@ -658,6 +658,45 @@ async function completeSale(){
     }
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
+    // ── Post-sale cleanup: update SWC/Reservation records ──
+    for(var ci2=0;ci2<cart.length;ci2++){
+      var cit=cart[ci2];
+      // SWC item: mark qty as sold
+      if(cit.swc_item_id){
+        try{
+          var swcIt=await sb.from('stock_with_customer_items').select('*').eq('id',cit.swc_item_id).single();
+          if(swcIt.data){
+            var newSold=(swcIt.data.qty_sold||0)+cit.qty;
+            var newRem=swcIt.data.qty_issued-newSold-(swcIt.data.qty_returned||0);
+            await sb.from('stock_with_customer_items').update({
+              qty_sold:newSold,
+              status:newRem>0?'partial':newSold>0?'sold':'returned'
+            }).eq('id',cit.swc_item_id);
+            // Reduce qty_with_customer in inventory
+            var swcProd=prods.find(function(p){return p.id===cit.id;});
+            if(swcProd)await sb.from('inventory').update({
+              qty_with_customer:Math.max(0,(swcProd.withCustomer||0)-cit.qty)
+            }).eq('variant_id',cit.id);
+            // Update parent SWC status
+            var allSold=await sb.from('stock_with_customer_items').select('*').eq('swc_id',cit.swc_id);
+            var swcAllDone=(allSold.data||[]).every(function(x){return(x.qty_sold||0)+(x.qty_returned||0)>=x.qty_issued;});
+            await sb.from('stock_with_customer').update({status:swcAllDone?'completed':'partial'}).eq('id',cit.swc_id);
+          }
+        }catch(swcErr){console.warn('SWC cleanup error:',swcErr);}
+      }
+      // Reservation item: mark as completed
+      if(cit.reservation_id){
+        try{
+          await sb.from('stock_reservations').update({status:'completed'}).eq('id',cit.reservation_id);
+          // Release reserved qty from inventory
+          var resProd=prods.find(function(p){return p.id===cit.id;});
+          if(resProd)await sb.from('inventory').update({
+            qty_reserved:Math.max(0,(resProd.reserved||0)-cit.qty)
+          }).eq('variant_id',cit.id);
+        }catch(resErr){console.warn('Reservation cleanup error:',resErr);}
+      }
+    }
+
     // Snapshot for post-sale actions (Print / WhatsApp)  -  cart gets cleared right after
     window._lastSale={
       saleId:sr2.data.id,billNo:bn.data,customer:cust,phone:custPhone,
@@ -1725,7 +1764,7 @@ function exportCountReportExcel(){
 
 async function showReservedList(){
   var res=await sb.from('stock_reservations').select('*,parties(name,current_balance),stock_reservation_items(*,product_variants(sku,purchase_price,products(name)))').eq('status','active').order('created_at',{ascending:false});
-  var h='<div class="ib">Tap a reservation to Complete Sale or Cancel & Release.</div>';
+  var h='<div class="ib">Tap a reservation to Bill Items (go to Bill tab) or Cancel & Release stock.</div>';
   var rows=res.data||[];
   if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No active reservations</p></div>';}
   else{
@@ -1769,7 +1808,9 @@ function openReservationDetail(idx){
   h+='<div class="ct">Complete Sale</div>';
   h+='<div class="fg"><label class="lb">Final Sale Price (total)</label><input class="ip" id="rsv-finalprice" type="number" value="'+(it.sale_price*it.qty_reserved||'')+'" placeholder="0"></div>';
   h+='<div class="fg"><label class="lb">Remaining Balance Payment</label><select class="sl" id="rsv-paymode"><option value="cash">Cash Now</option><option value="credit">Credit (AR)</option></select></div>';
-  h+='<button class="btn bs" style="margin-bottom:14px" onclick="completeReservationSale()">Complete Sale</button>';
+  window._activeResId=r.id;window._activeReservation=r;
+  h+='<div class="ib" style="border-color:var(--gold);font-size:.6rem">To complete the sale, tap Bill Items to open the Bill tab with these items pre-loaded.</div>';
+  h+='<button class="btn bs" style="margin-bottom:14px" onclick="completeReservationSale()">Bill Items - Go to Bill</button>';
   h+='<div class="ct">Cancel Reservation</div>';
   h+='<div class="fg"><label class="lb">Advance Money</label><select class="sl" id="rsv-cancelmode"><option value="refund">Refund to Customer (cash out)</option><option value="forfeit">Forfeit (keep as shop income)</option></select></div>';
   h+='<button class="btn br" onclick="cancelReservation()">Cancel & Release Stock</button>';
@@ -1777,62 +1818,16 @@ function openReservationDetail(idx){
 }
 
 async function completeReservationSale(){
-  var r=window._curReservation;if(!r)return;
-  var finalPrice=Number(document.getElementById('rsv-finalprice')&&document.getElementById('rsv-finalprice').value||0);
-  var payMode2=document.getElementById('rsv-paymode')&&document.getElementById('rsv-paymode').value;
-  if(!finalPrice||finalPrice<=0){toast('Enter final sale price','err');return;}
-  var items=r.stock_reservation_items||[];
-  var it=items[0];if(!it){toast('No item found','err');return;}
-  var cost=(it.product_variants&&it.product_variants.purchase_price)||0;
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  try{
-    // Deduct stock + release the reserved hold
-    await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sale',p_qty:it.qty_reserved,p_reason:'Reservation completed: '+r.reservation_no,p_cost_impact:cost,p_user_id:CUP&&CUP.id});
-    var p3=prods.find(function(p){return p.id===it.variant_id;});
-    if(p3)await sb.from('inventory').update({qty_reserved:Math.max(0,(p3.reserved||0)-it.qty_reserved)}).eq('variant_id',it.variant_id);
-
-    var saleIns=await insertWithUniqueNo('transactions','BILL',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:r.customer_party_id,total_amount:finalPrice,paid_amount:finalPrice,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Reservation completed: '+r.reservation_no};});
-    var txnId=saleIns.data.id;
-    var margin=(finalPrice-cost*it.qty_reserved);
-    // Issue 7: Post to sales table so it appears in Sales reports
-    var saleRow=await sb.from('sales').insert({
-      transaction_id:txnId,customer_party_id:r.customer_party_id,
-      customer_name:r.customer_name||'Walk-in',sale_date:td(),
-      subtotal:finalPrice,total_amount:finalPrice,paid_amount:finalPrice,
-      payment_mode:payMode2==='cash'?'cash':'credit',
-      gross_profit:margin,performed_by:CUP&&CUP.id
-    }).select().single();
-    // Issue 7: Post sale_items for reporting
-    if(saleRow.data)await sb.from('sale_items').insert({
-      sale_id:saleRow.data.id,transaction_id:txnId,
-      variant_id:it.variant_id,qty:it.qty_reserved,
-      purchase_price:cost,sale_price:finalPrice/it.qty_reserved
-    });
-    // Issue 7: Cash entries for Cash Book
-    if(payMode2==='cash'&&ca){
-      var cashAmt=Math.max(0,finalPrice-Number(r.advance_amount||0));
-      if(cashAmt>0)await sb.from('cash_entries').insert({
-        transaction_id:txnId,entry_date:td(),amount:cashAmt,
-        direction:'in',account_id:ca.id,
-        description:'Reservation Sale Balance: '+r.reservation_no,
-        nature:'receipt',party_category:'Customer Receipt'
-      });
-    }
-    // Ledger entries
-    await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:finalPrice,description:'Sale (Reservation): '+r.reservation_no,created_by:CUP&&CUP.id});
-    var remaining=Math.max(0,finalPrice-Number(r.advance_amount||0));
-    if(remaining>0&&payMode2==='cash'&&ca){
-      await sb.from('ledger_entries').insert([
-        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:remaining,description:'Balance received: '+r.reservation_no,created_by:CUP&&CUP.id},
-        {transaction_id:txnId,entry_date:td(),entry_type:'credit',account_category:'party',party_id:r.customer_party_id,amount:remaining,description:'Balance settled: '+r.reservation_no,created_by:CUP&&CUP.id}
-      ]);
-    }
-    await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*it.qty_reserved,description:'COGS: '+r.reservation_no,created_by:CUP&&CUP.id});
-    await sb.from('stock_reservations').update({status:'completed'}).eq('id',r.id);
-    logActivity('reservation_completed','reservation',{reservation_no:r.reservation_no,final_price:finalPrice});
-    await loadData();cmo();toast('Sale completed: '+saleIns.no+' | Sales report updated','ok',6000);
-  }catch(ex){toast(ex.message,'err');}
+  // Redirect to Bill tab — sale must be created through Bill tab
+  var resId=window._activeResId;
+  var resRow=window._activeReservation;
+  if(!resRow){toast('Reservation not found','err');return;}
+  await billReservationItems(resId);
 }
+
+// ── Old direct-sale path removed: sales now go through Bill tab ──
+// completeReservationSale now delegates to billReservationItems()
+
 
 async function cancelReservation(){
   var r=window._curReservation;if(!r)return;
@@ -2007,89 +2002,73 @@ async function processSwcReturn(swcId){
     h+='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px">';
     h+='<div style="font-size:.72rem;font-weight:600;margin-bottom:6px">'+nm+' (Issued: '+it.qty_issued+')</div>';
     var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
-    h+='<div style="font-size:.6rem;color:var(--ink3);margin-bottom:4px">Remaining: '+rem+' (Issued: '+it.qty_issued+', Sold: '+(it.qty_sold||0)+', Returned: '+(it.qty_returned||0)+')</div>';
-    h+='<div class="g2"><div class="fg"><label class="lb">Qty Sold Now</label><input class="ip" id="swcr-sold-'+it.id+'" type="number" placeholder="0" min="0" max="'+rem+'"></div>';
-    h+='<div class="fg"><label class="lb">Sale Price Rs</label><input class="ip" id="swcr-price-'+it.id+'" type="number" placeholder="0"></div></div>';
-    h+='<div class="fg"><label class="lb">Qty Returned Now</label><input class="ip" id="swcr-ret-'+it.id+'" type="number" placeholder="0" value="0" max="'+rem+'"></div>';
+    var statusBadge=rem<=0?'<span style="color:var(--ink3);font-size:.52rem">(completed)</span>':'<span style="color:var(--gold);font-size:.52rem">('+rem+' remaining)</span>';
+    h+='<div style="font-size:.6rem;color:var(--ink3);margin-bottom:4px">Issued: '+it.qty_issued+' | Sold: '+(it.qty_sold||0)+' | Returned: '+(it.qty_returned||0)+' | Remaining: <b>'+rem+'</b> '+statusBadge+'</div>';
+    if(rem>0){
+      h+='<div class="fg"><label class="lb">Return to Stock Now</label><input class="ip" id="swcr-ret-'+it.id+'" type="number" placeholder="0" value="0" min="0" max="'+rem+'"></div>';
+    } else {
+      h+='<input type="hidden" id="swcr-ret-'+it.id+'" value="0">';
+    }
     h+='</div>';
   }
-  h+='<button class="btn bs" onclick="finalizeSwc(\''+swcId+'\')">Finalize</button>';
+  h+='<div style="display:flex;gap:8px;margin-top:8px">';
+  h+='<button class="btn bh" data-id="'+swcId+'" onclick="finalizeSwc(this.dataset.id)">Process Returns</button>';
+  h+='<button class="btn bs" data-id="'+swcId+'" onclick="billSwcItems(this.dataset.id)">Bill to Customer</button>';
+  h+='</div>';
   window._swcItems=items;
   window._activeSwc=s;
-  omo('Process Return: '+s.transaction_no,h);
-}
-async function finalizeSwc(swcId){
+  omo('Stock With Customer: '+s.transaction_no,h);
   var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Finalizing...';}
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
   var items=window._swcItems||[];
   var swcData=window._activeSwc||{customer_name:'Walk-in',customer_party_id:null};
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
   try{
+    var anyReturns=false;
     for(var i=0;i<items.length;i++){
       var it=items[i];
-      var sold=Number(document.getElementById('swcr-sold-'+it.id)&&document.getElementById('swcr-sold-'+it.id).value||0);
       var ret=Number(document.getElementById('swcr-ret-'+it.id)&&document.getElementById('swcr-ret-'+it.id).value||0);
-      var price=Number(document.getElementById('swcr-price-'+it.id)&&document.getElementById('swcr-price-'+it.id).value||0);
       var alreadyProcessed=(it.qty_sold||0)+(it.qty_returned||0);
       var remaining2=it.qty_issued-alreadyProcessed;
-      if(sold+ret>remaining2){
-        if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}
-        toast('Cannot exceed remaining qty ('+remaining2+'). Already processed: '+alreadyProcessed,'err');return;
+      if(ret>remaining2){
+        if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Return';}
+        toast('Cannot return more than remaining qty ('+remaining2+')','err');return;
       }
-      // Issue 4: correct inventory movements
       if(ret>0){
-        await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sales_return',p_qty:ret,p_reason:'SWC return finalize',p_cost_impact:price||0,p_user_id:CUP&&CUP.id});
-        // Also update qty_with_customer back
-        var pRet=prods.find(function(p){return p.id===it.variant_id;});
-        if(pRet)await sb.from('inventory').update({qty_with_customer:Math.max(0,(pRet.withCustomer||0)-ret)}).eq('variant_id',it.variant_id);
-      }
-      // Issue 5: full proper sale posting when SWC converted to sale
-      if(sold>0&&price>0){
-        var cost=it.product_variants&&it.product_variants.purchase_price||0;
-        var margin=(price-cost)*sold;
-        var saleIns=await insertWithUniqueNo('transactions','BILL',function(noVal){return{
-          transaction_no:noVal,transaction_type:'sale',transaction_date:td(),
-          party_id:swcData.customer_party_id||null,
-          total_amount:sold*price,paid_amount:sold*price,payment_status:'paid',
-          performed_by:CUP&&CUP.id,notes:'SWC Sale: '+swcId
-        };});
-        var saleRow=await sb.from('sales').insert({
-          transaction_id:saleIns.data.id,customer_party_id:swcData.customer_party_id||null,
-          customer_name:swcData.customer_name||'Walk-in',sale_date:td(),
-          subtotal:sold*price,total_amount:sold*price,paid_amount:sold*price,
-          payment_mode:'cash',gross_profit:margin,performed_by:CUP&&CUP.id
-        }).select().single();
-        if(saleRow.data)await sb.from('sale_items').insert({
-          sale_id:saleRow.data.id,transaction_id:saleIns.data.id,
-          variant_id:it.variant_id,qty:sold,purchase_price:cost,sale_price:price
+        // Return stock to available inventory
+        await sb.rpc('process_stock_movement',{
+          p_variant_id:it.variant_id,p_movement_type:'sales_return',
+          p_qty:ret,p_reason:'SWC return from customer: '+swcData.customer_name,
+          p_cost_impact:it.product_variants&&it.product_variants.purchase_price||0,
+          p_user_id:CUP&&CUP.id
         });
-        if(ca)await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:sold*price,description:'SWC Sale: '+swcData.customer_name,created_by:CUP&&CUP.id});
-        await sb.from('ledger_entries').insert({transaction_id:saleIns.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cost*sold,description:'COGS SWC: '+swcData.customer_name,created_by:CUP&&CUP.id});
-        await sb.rpc('process_stock_movement',{p_variant_id:it.variant_id,p_movement_type:'sale',p_qty:sold,p_reason:'SWC finalize sale',p_cost_impact:cost,p_user_id:CUP&&CUP.id});
-        // Issue 4+5: decrement qty_with_customer by sold qty (not zero it out)
-        var pSold=prods.find(function(p){return p.id===it.variant_id;});
-        if(pSold)await sb.from('inventory').update({qty_with_customer:Math.max(0,(pSold.withCustomer||0)-sold)}).eq('variant_id',it.variant_id);
+        // Reduce qty_with_customer
+        var pRet=prods.find(function(p){return p.id===it.variant_id;});
+        if(pRet)await sb.from('inventory').update({
+          qty_with_customer:Math.max(0,(pRet.withCustomer||0)-ret),
+          qty_available:(pRet.stock||0)+ret
+        }).eq('variant_id',it.variant_id);
+        // Update SWC item record
+        var newTotalRet=(it.qty_returned||0)+ret;
+        var newTotalSold=it.qty_sold||0;
+        var stillRem=it.qty_issued-newTotalSold-newTotalRet;
+        await sb.from('stock_with_customer_items').update({
+          qty_returned:newTotalRet,
+          status:stillRem>0?'partial':newTotalSold>0?'sold':'returned'
+        }).eq('id',it.id);
+        anyReturns=true;
       }
-      // Issue 4: partial SWC  -  only mark 'sold' if ALL qty processed; 'partial' if remainder exists
-      var newTotalSold=(it.qty_sold||0)+sold;
-      var newTotalRet=(it.qty_returned||0)+ret;
-      var stillRemaining=it.qty_issued-newTotalSold-newTotalRet;
-      var itemStatus=stillRemaining>0?'partial':newTotalSold>0?'sold':'returned';
-      await sb.from('stock_with_customer_items').update({
-        qty_sold:newTotalSold,qty_returned:newTotalRet,status:itemStatus
-      }).eq('id',it.id);
     }
-    // Issue 4: only mark completed if no partial items remain
-    // Reload items to get updated cumulative totals
+    // Update parent SWC status
     var updItems=await sb.from('stock_with_customer_items').select('*').eq('swc_id',swcId);
     var allDone=(updItems.data||[]).every(function(it2){
       return (it2.qty_sold||0)+(it2.qty_returned||0)>=it2.qty_issued;
     });
     await sb.from('stock_with_customer').update({status:allDone?'completed':'partial'}).eq('id',swcId);
     await loadData();cmo();
-    toast(allDone?'SWC fully finalized! Sale posted.':'Partial sale saved. Remaining stock still With Customer.','ok',5000);
+    if(anyReturns)toast('Returns processed. Stock returned to inventory.','ok',4000);
+    else toast('No returns to process.','warn');
   }catch(ex){toast(ex.message,'err');}
-  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Finalize';}}
+  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Return';}}
 }
 
 // -- STOCK RESERVATION --
@@ -3565,6 +3544,84 @@ function manualSync(){
   if(!_isOnline){toast('No internet connection','err');return;}
   if(_isSyncing){toast('Sync already in progress','warn');return;}
   runSyncQueue();
+}
+
+
+// ── BILL SWC ITEMS: load remaining SWC items into cart and go to Bill tab ──
+async function billSwcItems(swcId){
+  var items=window._swcItems||[];
+  var swcData=window._activeSwc||{customer_name:'Walk-in',customer_party_id:null};
+  // Only include items with remaining qty
+  var billable=items.filter(function(it){
+    return it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0)>0;
+  });
+  if(!billable.length){toast('No remaining items to bill','warn');return;}
+  // Add to cart with SWC source tag
+  cart=[];
+  for(var i=0;i<billable.length;i++){
+    var it=billable[i];
+    var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
+    var p=prods.find(function(pr){return pr.id===it.variant_id;});
+    if(p){
+      cart.push({
+        id:p.id,name:p.name,sku:p.sku,
+        price:p.price||it.sale_price||0,
+        cost:p.cost||0,qty:rem,
+        swc_item_id:it.id,    // tag for post-sale cleanup
+        swc_id:swcId,
+        swc_customer:swcData.customer_name
+      });
+    }
+  }
+  cmo(); // close SWC modal
+  // Switch to Bill tab and pre-fill customer
+  var nav=document.querySelectorAll('#nt .pl');
+  for(var j=0;j<nav.length;j++){
+    if(nav[j].textContent==='BILL'){nav[j].click();break;}
+  }
+  // Pre-fill customer name after Bill tab renders
+  setTimeout(function(){
+    var bc=document.getElementById('bc');
+    if(bc)bc.value=swcData.customer_name||'';
+    renderCart();updSum();
+    toast('SWC items loaded. Review and complete the sale.','ok',4000);
+  },200);
+}
+
+// ── BILL RESERVED ITEMS: load reserved items into cart and go to Bill tab ──
+async function billReservationItems(resId){
+  var resRow=window._activeReservation;
+  if(!resRow){toast('Reservation data not found','err');return;}
+  var items=resRow.stock_reservation_items||[];
+  if(!items.length){toast('No items in this reservation','warn');return;}
+  cart=[];
+  for(var i=0;i<items.length;i++){
+    var it=items[i];
+    var p=prods.find(function(pr){return pr.id===it.variant_id;});
+    if(p){
+      cart.push({
+        id:p.id,name:p.name,sku:p.sku,
+        price:it.sale_price||p.price||0,
+        cost:p.cost||0,
+        qty:it.qty_reserved,
+        reservation_id:resId,    // tag for post-sale cleanup
+        res_item_id:it.id,
+        advance_paid:resRow.advance_amount||0
+      });
+    }
+  }
+  cmo();
+  var nav=document.querySelectorAll('#nt .pl');
+  for(var j=0;j<nav.length;j++){
+    if(nav[j].textContent==='BILL'){nav[j].click();break;}
+  }
+  setTimeout(function(){
+    var bc=document.getElementById('bc');
+    if(bc)bc.value=resRow.customer_name||'';
+    renderCart();updSum();
+    var adv=resRow.advance_amount||0;
+    toast('Reserved items loaded.'+(adv?' Advance paid: '+fmt(adv)+' - collect balance only.':''),'ok',5000);
+  },200);
 }
 
 </script>
