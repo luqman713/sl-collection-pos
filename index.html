@@ -237,7 +237,10 @@ async function login(){
     // Init offline engine
     openOfflineDB().then(function(){
       initConnectivityWatcher();
-      if(_isOnline){runSyncQueue();}
+      // Always try to sync on login if online
+      if(_isOnline){
+        setTimeout(runSyncQueue, 2000); // wait for loadData to complete first
+      }
     }).catch(function(e){console.warn('Offline DB init failed:',e);});
   }catch(ex){
     if(errEl){errEl.style.display='block';errEl.textContent=''+ex.message;}
@@ -320,8 +323,8 @@ async function loadData(){
   (inv.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.stock=Number(i.qty_available)||0;p2.age=i.age_days||0;}});
   // Try to load extra columns (only available after schema migration)
   try{
-    var inv2=await sb.from('inventory').select('variant_id,qty_damaged,qty_sales_return,qty_purchase_return,qty_other,qty_with_customer,qty_reserved');
-    (inv2.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.damaged=i.qty_damaged||0;p2.salesRet=i.qty_sales_return||0;p2.purRet=i.qty_purchase_return||0;p2.other=i.qty_other||0;p2.withCustomer=i.qty_with_customer||0;p2.reserved=i.qty_reserved||0;}});
+    var inv2=await sb.from('inventory').select('variant_id,qty_damaged,qty_sales_return,qty_purchase_return,qty_other');
+    (inv2.data||[]).forEach(function(i){var p2=prods.find(function(p3){return p3.id===i.variant_id;});if(p2){p2.damaged=i.qty_damaged||0;}});
   }catch(e){/* columns not yet migrated */}
   updateDatalists();
   await loadStoreSettings();
@@ -479,7 +482,7 @@ function rBill(){
   h+='<div class="g3" style="margin-bottom:10px">';
   h+='<button class="btn bh bsm" onclick="oRet()">Return</button>';
   h+='<button class="btn bh bsm" onclick="oExchange()">Exchange</button>';
-  h+='<button class="btn bh bsm" onclick="oReservation()">Reserve</button>';
+  h+='';
   h+='</div>';
   // FIX 2: Cart at TOP
   h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px"><div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--ink3)">Cart <span id="cb2" style="background:var(--ink);color:white;border-radius:10px;padding:1px 6px;font-size:.55rem">0</span></div></div>';
@@ -658,45 +661,6 @@ async function completeSale(){
     }
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
-    // ── Post-sale cleanup: update SWC/Reservation records ──
-    for(var ci2=0;ci2<cart.length;ci2++){
-      var cit=cart[ci2];
-      // SWC item: mark qty as sold
-      if(cit.swc_item_id){
-        try{
-          var swcIt=await sb.from('stock_with_customer_items').select('*').eq('id',cit.swc_item_id).single();
-          if(swcIt.data){
-            var newSold=(swcIt.data.qty_sold||0)+cit.qty;
-            var newRem=swcIt.data.qty_issued-newSold-(swcIt.data.qty_returned||0);
-            await sb.from('stock_with_customer_items').update({
-              qty_sold:newSold,
-              status:newRem>0?'partial':newSold>0?'sold':'returned'
-            }).eq('id',cit.swc_item_id);
-            // Reduce qty_with_customer in inventory
-            var swcProd=prods.find(function(p){return p.id===cit.id;});
-            if(swcProd)await sb.from('inventory').update({
-              qty_with_customer:Math.max(0,(swcProd.withCustomer||0)-cit.qty)
-            }).eq('variant_id',cit.id);
-            // Update parent SWC status
-            var allSold=await sb.from('stock_with_customer_items').select('*').eq('swc_id',cit.swc_id);
-            var swcAllDone=(allSold.data||[]).every(function(x){return(x.qty_sold||0)+(x.qty_returned||0)>=x.qty_issued;});
-            await sb.from('stock_with_customer').update({status:swcAllDone?'completed':'partial'}).eq('id',cit.swc_id);
-          }
-        }catch(swcErr){console.warn('SWC cleanup error:',swcErr);}
-      }
-      // Reservation item: mark as completed
-      if(cit.reservation_id){
-        try{
-          await sb.from('stock_reservations').update({status:'completed'}).eq('id',cit.reservation_id);
-          // Release reserved qty from inventory
-          var resProd=prods.find(function(p){return p.id===cit.id;});
-          if(resProd)await sb.from('inventory').update({
-            qty_reserved:Math.max(0,(resProd.reserved||0)-cit.qty)
-          }).eq('variant_id',cit.id);
-        }catch(resErr){console.warn('Reservation cleanup error:',resErr);}
-      }
-    }
-
     // Snapshot for post-sale actions (Print / WhatsApp)  -  cart gets cleared right after
     window._lastSale={
       saleId:sr2.data.id,billNo:bn.data,customer:cust,phone:custPhone,
@@ -790,16 +754,12 @@ function rInv(){
   var ac=prods.filter(function(p){return(p.stock||0)>0;});
   var tv=ac.reduce(function(s,p){return s+p.cost*(p.stock||0);},0);
   var h='';
-  var totReserved=prods.reduce(function(s,p){return s+(p.reserved||0);},0);
-  var totWithCust=prods.reduce(function(s,p){return s+(p.withCustomer||0);},0);
   var totDamaged=prods.reduce(function(s,p){return s+(p.damaged||0);},0);
   h+='<div class="sg"><div class="sc"><div class="sl2">Active SKUs</div><div class="sv">'+ac.length+'</div></div>';
   h+='<div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div>';
   h+='<div class="sc rd"><div class="sl2">Low Stock</div><div class="sv">'+ac.filter(function(p){return p.stock<=2;}).length+'</div></div>';
   h+='<div class="sc" style="border-left-color:var(--red)"><div class="sl2">Dead Stock</div><div class="sv">'+ac.filter(function(p){return p.age>=90;}).length+'</div></div></div>';
   h+='<div class="sg"><div class="sc sg2"><div class="sl2">Available</div><div class="sv">'+ac.reduce(function(s,p){return s+(p.stock||0);},0)+'</div></div>';
-  h+='<div class="sc" style="border-left-color:var(--gold)"><div class="sl2">Reserved</div><div class="sv">'+totReserved+'</div></div>';
-  h+='<div class="sc" style="border-left-color:#6B3E1A"><div class="sl2">With Customer</div><div class="sv">'+totWithCust+'</div></div>';
   h+='<div class="sc rd"><div class="sl2">Damaged</div><div class="sv">'+totDamaged+'</div></div></div>';
   h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="oStockMove(\'purchase_return\')">Return Out</button>';
   h+='<div class="g2" style="margin-bottom:12px">';
@@ -812,8 +772,6 @@ function rInv(){
     h+='<button class="btn bh" onclick="showStockCountReports()">View Count Reports</button>';
     h+='</div>';
   }
-  h+='<div class="g2" style="margin-bottom:8px"><button class="btn bh" onclick="oStockWithCustomer()">Issue to Customer</button><button class="btn bh" onclick="showSwcList()">View With Customer</button></div>';
-  h+='<button class="btn bh" style="width:100%;margin-bottom:8px" onclick="showReservedList()">View Reserved Stock</button>';
   h+='<input class="ip" id="is" placeholder="Quick search..." oninput="iInv()" style="margin-bottom:10px">';
   h+='<div id="il"></div>';
   return h;
@@ -1321,7 +1279,7 @@ async function loadCash(){
 }
 
 
-var SMOVE_LABELS={'sales_return':'Sales Return','purchase_return':'Purchase Return','damaged':'Damaged','other':'Other','stock_with_customer':'Stock With Customer','sale':'Sale','purchase':'Purchase'};
+var SMOVE_LABELS={'sales_return':'Sales Return','purchase_return':'Purchase Return','damaged':'Damaged','other':'Other','sale':'Sale','purchase':'Purchase'};
 var SMOVE_DESC={'sales_return':'Item returned by customer. Stock restored.','purchase_return':'Item returned to supplier. Stock deducted.','damaged':'Item damaged or unsellable. Stock deducted.','other':'Other stock adjustment. Describe reason.'};
 
 function oStockMove(mtype){
@@ -1762,100 +1720,6 @@ function exportCountReportExcel(){
   toast('Excel file exported','ok');
 }
 
-async function showReservedList(){
-  var res=await sb.from('stock_reservations').select('*,parties(name,current_balance),stock_reservation_items(*,product_variants(sku,purchase_price,products(name)))').eq('status','active').order('created_at',{ascending:false});
-  var h='<div class="ib">Tap a reservation to Bill Items (go to Bill tab) or Cancel & Release stock.</div>';
-  var rows=res.data||[];
-  if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No active reservations</p></div>';}
-  else{
-    window._activeReservations=rows;
-    for(var i=0;i<rows.length;i++){
-      var r=rows[i];
-      var items=r.stock_reservation_items||[];
-      var itemTxt=items.map(function(it){return(it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'')+' x'+it.qty_reserved;}).join(', ');
-      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px;cursor:pointer" onclick="openReservationDetail('+i+')">';
-      h+='<div style="display:flex;justify-content:space-between"><div><div style="font-size:.75rem;font-weight:700">'+r.customer_name+'</div>';
-      h+='<div style="font-size:.6rem;color:var(--ink3)">'+itemTxt+'</div>';
-      h+='<div style="font-size:.56rem;color:var(--ink3)">'+r.reservation_no+' - '+r.reservation_date+'</div></div>';
-      h+='<div style="text-align:right"><div style="font-size:.8rem;font-weight:700;color:var(--gold)">Adv: '+fmt(r.advance_amount)+'</div></div></div></div>';
-    }
-  }
-  h+='<div class="ct" style="margin-top:10px">Recently Closed</div>';
-  var past=await sb.from('stock_reservations').select('reservation_no,customer_name,status,advance_amount,reservation_date').neq('status','active').order('created_at',{ascending:false}).limit(10);
-  var prows=past.data||[];
-  if(!prows.length)h+='<div class="em" style="padding:14px"><p style="font-size:.65rem">No history yet</p></div>';
-  else{for(var j=0;j<prows.length;j++){var pr=prows[j];h+='<div class="rr"><span>'+pr.customer_name+' - '+pr.reservation_no+'</span><span style="font-weight:700;color:'+(pr.status==='completed'?'var(--sage)':'var(--red)')+'">'+pr.status+'</span></div>';}}
-  omo('Reserved Stock',h);
-}
-
-function openReservationDetail(idx){
-  var r=window._activeReservations[idx];
-  if(!r)return;
-  window._curReservation=r;
-  var items=r.stock_reservation_items||[];
-  var it=items[0]||{};
-  var pname=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||'';
-  var cost=it.product_variants&&it.product_variants.purchase_price||0;
-  var h='<div style="display:flex;gap:8px;margin-bottom:10px">';
-  h+='<button class="btn bh bsm" data-vid="'+p.id+'" onclick="printBarcode(this.dataset.vid)">Print Barcode</button>';
-  h+='</div>';
-  h+='<div style="background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:12px">';
-  h+='<div style="font-size:.8rem;font-weight:700">'+r.customer_name+'</div>';
-  h+='<div style="font-size:.65rem;color:var(--ink3);margin-bottom:8px">'+r.reservation_no+' - '+r.reservation_date+'</div>';
-  h+='<div style="font-size:.72rem">'+pname+' x'+it.qty_reserved+'</div>';
-  h+='<div style="display:flex;justify-content:space-between;margin-top:8px"><span style="font-size:.65rem;color:var(--ink3)">Advance Paid</span><span style="font-weight:700;color:var(--gold)">'+fmt(r.advance_amount)+'</span></div>';
-  h+='</div>';
-  h+='<div class="ct">Complete Sale</div>';
-  h+='<div class="fg"><label class="lb">Final Sale Price (total)</label><input class="ip" id="rsv-finalprice" type="number" value="'+(it.sale_price*it.qty_reserved||'')+'" placeholder="0"></div>';
-  h+='<div class="fg"><label class="lb">Remaining Balance Payment</label><select class="sl" id="rsv-paymode"><option value="cash">Cash Now</option><option value="credit">Credit (AR)</option></select></div>';
-  window._activeResId=r.id;window._activeReservation=r;
-  h+='<div class="ib" style="border-color:var(--gold);font-size:.6rem">To complete the sale, tap Bill Items to open the Bill tab with these items pre-loaded.</div>';
-  h+='<button class="btn bs" style="margin-bottom:14px" onclick="completeReservationSale()">Bill Items - Go to Bill</button>';
-  h+='<div class="ct">Cancel Reservation</div>';
-  h+='<div class="fg"><label class="lb">Advance Money</label><select class="sl" id="rsv-cancelmode"><option value="refund">Refund to Customer (cash out)</option><option value="forfeit">Forfeit (keep as shop income)</option></select></div>';
-  h+='<button class="btn br" onclick="cancelReservation()">Cancel & Release Stock</button>';
-  omo('Reservation: '+r.reservation_no,h);
-}
-
-async function completeReservationSale(){
-  // Redirect to Bill tab — sale must be created through Bill tab
-  var resId=window._activeResId;
-  var resRow=window._activeReservation;
-  if(!resRow){toast('Reservation not found','err');return;}
-  await billReservationItems(resId);
-}
-
-// ── Old direct-sale path removed: sales now go through Bill tab ──
-// completeReservationSale now delegates to billReservationItems()
-
-
-async function cancelReservation(){
-  var r=window._curReservation;if(!r)return;
-  var mode=document.getElementById('rsv-cancelmode')&&document.getElementById('rsv-cancelmode').value;
-  if(!confirm('Cancel reservation '+r.reservation_no+'? This releases the stock hold.'))return;
-  var items=r.stock_reservation_items||[];
-  var it=items[0];
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  try{
-    if(it){
-      var p3=prods.find(function(p){return p.id===it.variant_id;});
-      if(p3)await sb.from('inventory').update({qty_reserved:Math.max(0,(p3.reserved||0)-it.qty_reserved)}).eq('variant_id',it.variant_id);
-    }
-    var cancelIns=await insertWithUniqueNo('transactions','RESCX',function(noVal){return{transaction_no:noVal,transaction_type:'payment_made',transaction_date:td(),party_id:r.customer_party_id,total_amount:r.advance_amount,paid_amount:mode==='refund'?r.advance_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:(mode==='refund'?'Refund':'Forfeit')+' reservation: '+r.reservation_no};});
-    var txnId=cancelIns.data.id;
-    if(mode==='refund'&&ca){
-      await sb.from('ledger_entries').insert([
-        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:r.advance_amount,description:'Refund deposit: '+r.reservation_no,created_by:CUP&&CUP.id},
-        {transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:r.advance_amount,description:'Refund cash out: '+r.reservation_no,created_by:CUP&&CUP.id}
-      ]);
-    } else {
-      await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:td(),entry_type:'debit',account_category:'party',party_id:r.customer_party_id,amount:r.advance_amount,description:'Forfeited deposit (kept as income): '+r.reservation_no,created_by:CUP&&CUP.id});
-    }
-    await sb.from('stock_reservations').update({status:'cancelled'}).eq('id',r.id);
-    logActivity('reservation_cancelled','reservation',{reservation_no:r.reservation_no,mode:mode});
-    await loadData();cmo();toast('Reservation cancelled, stock released','ok',5000);
-  }catch(ex){toast(ex.message,'err');}
-}
 async function exportStockReport(){
   var s=await sb.rpc('get_inventory_report');
   var data=s.data||[];
@@ -1872,261 +1736,6 @@ async function exportStockReport(){
 
 
 
-// -- STOCK WITH CUSTOMER --
-function oStockWithCustomer(){
-  var h='<div class="ib">Issue stock to customer for home selection. Items tracked separately until sold or returned.</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="swc-cust" list="dl-customers" placeholder="Type or select customer"></div>';
-  h+='<div class="fg"><label class="lb">Expected Return Date</label><input class="ip" id="swc-date" type="date"></div>';
-  h+='<div class="ct" style="margin-top:8px">Items to Issue</div>';
-  h+='<div id="swc-items"></div>';
-  h+='<button class="btn bh bsm" style="margin-bottom:8px;width:100%" onclick="addSwcItem()">+ Add Item</button>';
-  h+='<div class="fg"><label class="lb">Notes</label><input class="ip" id="swc-notes" placeholder="Optional"></div>';
-  h+='<button class="btn bs" onclick="saveSwc()">Issue to Customer</button>';
-  window._swcCount=0;
-  omo('Stock With Customer',h);
-  addSwcItem();
-}
-function addSwcItem(){
-  var n=window._swcCount||0;
-  var div=document.getElementById('swc-items');if(!div)return;
-  var el=document.createElement('div');
-  el.style.cssText='background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px';
-  var opts=prods.filter(function(p){return(p.stock||0)>0;}).map(function(p){return'<option value="'+p.id+'">'+p.name+' ('+p.sku+') Qty:'+p.stock+'</option>';}).join('');
-  el.innerHTML='<div class="fg"><label class="lb">Product '+(n+1)+'</label><select class="sl" id="swc-p'+n+'"><option value="">Select...</option>'+opts+'</select></div><div class="fg"><label class="lb">Qty</label><input class="ip" id="swc-q'+n+'" type="number" placeholder="0"></div>';
-  div.appendChild(el);
-  window._swcCount=n+1;
-}
-async function saveSwc(){
-  var btnEl=event&&event.target;
-  if(btnEl&&btnEl.disabled)return;
-  var cust=(document.getElementById('swc-cust')&&document.getElementById('swc-cust').value||'').trim();
-  if(!cust){toast('Enter customer name','err');return;}
-  var items=[];
-  for(var i=0;i<(window._swcCount||0);i++){
-    var vid=document.getElementById('swc-p'+i)&&document.getElementById('swc-p'+i).value;
-    var qty=Number(document.getElementById('swc-q'+i)&&document.getElementById('swc-q'+i).value||0);
-    if(vid&&qty>0){
-      var p=prods.find(function(p){return p.id===vid;});
-      if(p&&(p.stock||0)<qty){toast('Insufficient stock for '+p.name,'err');return;}
-      items.push({variant_id:vid,qty_issued:qty});
-    }
-  }
-  if(!items.length){toast('Add at least one item','err');return;}
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Issuing...';}
-  var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
-  if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
-  try{
-    // Bulletproof retry: bypass broken counter after first failure with timestamp-based unique number
-    var swcNo,swc;
-    for(var attempt=0;attempt<3;attempt++){
-      var swcVal=await genUniqueNo('SWC',attempt);
-      swc=await sb.from('stock_with_customer').insert({transaction_no:swcVal,customer_party_id:cp&&cp.id,customer_name:cust,issue_date:td(),expected_return:document.getElementById('swc-date')&&document.getElementById('swc-date').value||null,notes:document.getElementById('swc-notes')&&document.getElementById('swc-notes').value||'',performed_by:CUP&&CUP.id}).select().single();
-      if(!swc.error){swcNo={data:swcVal};break;}
-      if(swc.error&&swc.error.message&&swc.error.message.indexOf('duplicate')>=0){
-        await new Promise(function(r){setTimeout(r,150*(attempt+1));});
-        continue;
-      }
-      throw swc.error;
-    }
-    if(swc.error)throw swc.error;
-    await sb.from('stock_with_customer_items').insert(items.map(function(it){return{swc_id:swc.data.id,variant_id:it.variant_id,qty_issued:it.qty_issued};}));
-    for(var k=0;k<items.length;k++){
-      var p2=prods.find(function(p){return p.id===items[k].variant_id;});
-      if(p2){
-        // Fix 2: call process_stock_movement so stock movement report is updated
-        await sb.rpc('process_stock_movement',{
-          p_variant_id:items[k].variant_id,
-          p_movement_type:'stock_with_customer',
-          p_qty:items[k].qty_issued,
-          p_reason:'Stock issued to customer: '+cust+' | '+swcVal,
-          p_cost_impact:p2.cost||0,
-          p_user_id:CUP&&CUP.id
-        });
-        // Update inventory: reduce available, increase with_customer
-        await sb.from('inventory').update({
-          qty_available:Math.max(0,(p2.stock||0)-items[k].qty_issued),
-          qty_with_customer:((p2.withCustomer||0)+items[k].qty_issued)
-        }).eq('variant_id',items[k].variant_id);
-      }
-    }
-    await loadData();cmo();toast('Issued: '+swcVal,'ok',5000);
-  }catch(ex){
-    toast(ex.message,'err');
-    if(btnEl){btnEl.disabled=false;btnEl.textContent='Issue to Customer';}
-  }
-}
-async function showSwcList(){
-  var data=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,purchase_price,products(name)))').in('status',['issued','partial']).order('created_at',{ascending:false});
-  var h='<div class="ib">Tap any entry to process return/sale.</div>';
-  var rows=data.data||[];
-  if(!rows.length){h+='<div class="em"><div class="ei">-</div><p>No active stock with customers</p></div>';}
-  else{
-    window._activeSwcRows=rows;
-    for(var i=0;i<rows.length;i++){
-      var s=rows[i];
-      var items=s.stock_with_customer_items||[];
-      h+='<div class="card" style="padding:11px 13px;margin-bottom:8px">';
-      h+='<div style="display:flex;justify-content:space-between;margin-bottom:6px">';
-      h+='<div><div style="font-size:.75rem;font-weight:700">'+s.transaction_no+'</div>';
-      h+='<div style="font-size:.6rem;color:var(--ink3)">'+s.customer_name+' | Issued: '+s.issue_date+'</div></div>';
-      h+='<button class="btn bs bsm" onclick="processSwcReturn(this.dataset.id)" data-id="'+s.id+'">Process</button></div>';
-      h+='<div style="border:1px solid var(--cream2);border-radius:6px;overflow:hidden">';
-      h+='<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;background:var(--ink);color:white;padding:4px 8px;font-size:.52rem;font-weight:700">';
-      h+='<div>Product</div><div style="text-align:right">Issued</div><div style="text-align:right">Sold</div><div style="text-align:right">Returned</div><div style="text-align:right;color:var(--gold)">Remaining</div></div>';
-      for(var j=0;j<items.length;j++){
-        var it=items[j];
-        var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||it.product_variants&&it.product_variants.sku||'';
-        var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
-        h+='<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr 1fr;padding:5px 8px;font-size:.6rem;border-top:1px solid var(--cream2);background:'+(j%2?'var(--cream2)':'white')+'">';
-        h+='<div><div style="font-weight:600">'+nm+'</div><div style="font-size:.52rem;color:var(--ink3)">'+it.product_variants.sku+'</div></div>';
-        h+='<div style="text-align:right">'+it.qty_issued+'</div>';
-        h+='<div style="text-align:right;color:var(--sage)">'+(it.qty_sold||0)+'</div>';
-        h+='<div style="text-align:right;color:var(--red)">'+(it.qty_returned||0)+'</div>';
-        h+='<div style="text-align:right;font-weight:700;color:var(--gold)">'+rem+'</div>';
-        h+='</div>';
-      }
-      h+='</div></div>';
-    }
-  }
-  omo('Stock With Customers',h);
-}
-async function processSwcReturn(swcId){
-  var swc=await sb.from('stock_with_customer').select('*,stock_with_customer_items(*,product_variants(sku,products(name)))').eq('id',swcId).single();
-  if(swc.error||!swc.data){toast('Not found','err');return;}
-  var s=swc.data;var items=s.stock_with_customer_items||[];
-  var h='<div class="ib">Enter qty sold and qty returned for each item.</div>';
-  h+='<div style="font-size:.75rem;font-weight:700;margin-bottom:8px">'+s.customer_name+' - '+s.transaction_no+'</div>';
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var nm=it.product_variants&&it.product_variants.products&&it.product_variants.products.name||it.product_variants&&it.product_variants.sku||'';
-    h+='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px">';
-    h+='<div style="font-size:.72rem;font-weight:600;margin-bottom:6px">'+nm+' (Issued: '+it.qty_issued+')</div>';
-    var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
-    var statusBadge=rem<=0?'<span style="color:var(--ink3);font-size:.52rem">(completed)</span>':'<span style="color:var(--gold);font-size:.52rem">('+rem+' remaining)</span>';
-    h+='<div style="font-size:.6rem;color:var(--ink3);margin-bottom:4px">Issued: '+it.qty_issued+' | Sold: '+(it.qty_sold||0)+' | Returned: '+(it.qty_returned||0)+' | Remaining: <b>'+rem+'</b> '+statusBadge+'</div>';
-    if(rem>0){
-      h+='<div class="fg"><label class="lb">Return to Stock Now</label><input class="ip" id="swcr-ret-'+it.id+'" type="number" placeholder="0" value="0" min="0" max="'+rem+'"></div>';
-    } else {
-      h+='<input type="hidden" id="swcr-ret-'+it.id+'" value="0">';
-    }
-    h+='</div>';
-  }
-  h+='<div style="display:flex;gap:8px;margin-top:8px">';
-  h+='<button class="btn bh" data-id="'+swcId+'" onclick="finalizeSwc(this.dataset.id)">Process Returns</button>';
-  h+='<button class="btn bs" data-id="'+swcId+'" onclick="billSwcItems(this.dataset.id)">Bill to Customer</button>';
-  h+='</div>';
-  window._swcItems=items;
-  window._activeSwc=s;
-  omo('Stock With Customer: '+s.transaction_no,h);
-  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
-  var items=window._swcItems||[];
-  var swcData=window._activeSwc||{customer_name:'Walk-in',customer_party_id:null};
-  try{
-    var anyReturns=false;
-    for(var i=0;i<items.length;i++){
-      var it=items[i];
-      var ret=Number(document.getElementById('swcr-ret-'+it.id)&&document.getElementById('swcr-ret-'+it.id).value||0);
-      var alreadyProcessed=(it.qty_sold||0)+(it.qty_returned||0);
-      var remaining2=it.qty_issued-alreadyProcessed;
-      if(ret>remaining2){
-        if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Return';}
-        toast('Cannot return more than remaining qty ('+remaining2+')','err');return;
-      }
-      if(ret>0){
-        // Return stock to available inventory
-        await sb.rpc('process_stock_movement',{
-          p_variant_id:it.variant_id,p_movement_type:'sales_return',
-          p_qty:ret,p_reason:'SWC return from customer: '+swcData.customer_name,
-          p_cost_impact:it.product_variants&&it.product_variants.purchase_price||0,
-          p_user_id:CUP&&CUP.id
-        });
-        // Reduce qty_with_customer
-        var pRet=prods.find(function(p){return p.id===it.variant_id;});
-        if(pRet)await sb.from('inventory').update({
-          qty_with_customer:Math.max(0,(pRet.withCustomer||0)-ret),
-          qty_available:(pRet.stock||0)+ret
-        }).eq('variant_id',it.variant_id);
-        // Update SWC item record
-        var newTotalRet=(it.qty_returned||0)+ret;
-        var newTotalSold=it.qty_sold||0;
-        var stillRem=it.qty_issued-newTotalSold-newTotalRet;
-        await sb.from('stock_with_customer_items').update({
-          qty_returned:newTotalRet,
-          status:stillRem>0?'partial':newTotalSold>0?'sold':'returned'
-        }).eq('id',it.id);
-        anyReturns=true;
-      }
-    }
-    // Update parent SWC status
-    var updItems=await sb.from('stock_with_customer_items').select('*').eq('swc_id',swcId);
-    var allDone=(updItems.data||[]).every(function(it2){
-      return (it2.qty_sold||0)+(it2.qty_returned||0)>=it2.qty_issued;
-    });
-    await sb.from('stock_with_customer').update({status:allDone?'completed':'partial'}).eq('id',swcId);
-    await loadData();cmo();
-    if(anyReturns)toast('Returns processed. Stock returned to inventory.','ok',4000);
-    else toast('No returns to process.','warn');
-  }catch(ex){toast(ex.message,'err');}
-  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Return';}}
-}
-
-// -- STOCK RESERVATION --
-function oReservation(){
-  var h='<div class="ib">Record advance/token money. Creates customer deposit entry (liability).</div>';
-  h+='<div class="fg"><label class="lb">Customer *</label><input class="ip" id="res-cust" list="dl-customers" placeholder="Type or select customer"></div>';
-  h+='<div class="fg"><label class="lb">Product *</label><select class="sl" id="res-prod"><option value="">Select...</option>';
-  for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
-  h+='</select></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Qty Reserved</label><input class="ip" id="res-qty" type="number" value="1"></div><div class="fg"><label class="lb">Sale Price Rs</label><input class="ip" id="res-price" type="number" placeholder="0"></div></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Advance Rs *</label><input class="ip" id="res-adv" type="number" placeholder="Token money"></div><div class="fg"><label class="lb">Received Via</label><select class="sl" id="res-acc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+'</option>';}).join('')+'</select></div></div>';
-  h+='<button class="btn bg" onclick="saveReservation()">Save Reservation</button>';
-  omo('Stock Reservation',h);
-}
-async function saveReservation(){
-  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
-  var cust=(document.getElementById('res-cust')&&document.getElementById('res-cust').value||'').trim();
-  var vid=document.getElementById('res-prod')&&document.getElementById('res-prod').value;
-  var qty=Number(document.getElementById('res-qty')&&document.getElementById('res-qty').value||1);
-  var adv=Number(document.getElementById('res-adv')&&document.getElementById('res-adv').value||0);
-  var accId=document.getElementById('res-acc')&&document.getElementById('res-acc').value;
-  if(!cust||!vid||!adv){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Reservation';}toast('Fill customer, product and advance','err');return;}
-  // Issue 6: validate available stock before reserving
-  var resP=prods.find(function(p){return p.id===vid;});
-  if(!resP||((resP.stock||0)-(resP.reserved||0))<qty){
-    if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Reservation';}
-    var avail=resP?Math.max(0,(resP.stock||0)-(resP.reserved||0)):0;
-    toast('Insufficient available stock. Available: '+avail+', Requested: '+qty,'err');
-    return;
-  }
-  var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
-  if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
-  try{
-    var resIns=await insertWithUniqueNo('stock_reservations','RES',function(noVal){return{reservation_no:noVal,customer_party_id:cp&&cp.id,customer_name:cust,advance_amount:adv,payment_account_id:accId,performed_by:CUP&&CUP.id};});
-    var resNo={data:resIns.no};var res={data:resIns.data};
-    await sb.from('stock_reservation_items').insert({reservation_id:res.data.id,variant_id:vid,qty_reserved:qty,sale_price:Number(document.getElementById('res-price')&&document.getElementById('res-price').value||0)});
-    var p3=prods.find(function(p){return p.id===vid;});
-    // Issue 7: reservation reduces available stock AND marks as reserved
-    if(p3)await sb.from('inventory').update({
-      qty_available:Math.max(0,(p3.stock||0)-qty),
-      qty_reserved:((p3.reserved||0)+qty)
-    }).eq('variant_id',vid);
-    var txn=await sb.from('transactions').insert({transaction_no:resNo.data,transaction_type:'receipt',transaction_date:td(),party_id:cp&&cp.id,total_amount:adv,paid_amount:adv,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Advance/Token: '+cust}).select().single();
-    if(txn.data&&accId){
-      await sb.from('ledger_entries').insert([
-        {transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:accId,amount:adv,description:'Advance from '+cust,created_by:CUP&&CUP.id},
-        {transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:cp&&cp.id,amount:adv,description:'Customer Deposit: '+resNo.data,created_by:CUP&&CUP.id}
-      ]);
-    }
-    await loadData();cmo();toast('Reservation '+resNo.data+' - Advance: Rs'+adv.toLocaleString(),'ok',5000);
-  }catch(ex){toast(ex.message,'err');}
-}
-
-var lastReportData=[];
-var lastReportTitle='Report';
-
-// -- REPORTS TAB: Export & Print --
 function exportReport(){
   if(!lastReportData||!lastReportData.length){toast('Generate a report first','warn');return;}
   var keys=Object.keys(lastReportData[0]);
@@ -2676,7 +2285,7 @@ function rInventoryRegister(){
   h+='<div id="ir-filters" style="display:none;background:var(--cream2);border-radius:9px;padding:12px;margin-bottom:8px">';
   h+='<div class="g2">';
   h+='<div class="fg"><label class="lb">Category</label><select class="sl" id="irf-cat" onchange="applyIRFilters()"><option value="">All</option>'+CATS.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div>';
-  h+='<div class="fg"><label class="lb">Status</label><select class="sl" id="irf-status" onchange="applyIRFilters()"><option value="">All</option><option>Available</option><option>Low Stock</option><option>Dead Stock</option><option>Reserved</option><option>With Customer</option><option>Out of Stock</option></select></div>';
+  h+='<div class="fg"><label class="lb">Status</label><select class="sl" id="irf-status" onchange="applyIRFilters()"><option value="">All</option><option>Available</option><option>Low Stock</option><option>Dead Stock</option><option>Out of Stock</option></select></div>';
   h+='</div><div class="g2">';
   h+='<div class="fg"><label class="lb">Fabric</label><select class="sl" id="irf-fabric" onchange="applyIRFilters()"><option value="">All</option>'+_fabrics.map(function(f){return'<option>'+f.name+'</option>';}).join('')+'</select></div>';
   h+='<div class="fg"><label class="lb">Season</label><select class="sl" id="irf-season" onchange="applyIRFilters()"><option value="">All</option>'+_seasons.map(function(s){return'<option>'+s.name+'</option>';}).join('')+'</select></div>';
@@ -2789,8 +2398,7 @@ function renderIRTable(){
     {k:'sku',l:'SKU'},{k:'product_name',l:'Product'},{k:'category',l:'Category'},
     {k:'fabric',l:'Fabric'},{k:'season',l:'Season'},{k:'size',l:'Size'},
     {k:'colour',l:'Colour'},{k:'brand',l:'Brand'},
-    {k:'qty_available',l:'Avail'},{k:'qty_reserved',l:'Rsrv'},
-    {k:'qty_with_customer',l:'W/Cust'},{k:'qty_damaged',l:'Dmgd'},
+    {k:'qty_available',l:'Available'},{k:'qty_damaged',l:'Damaged'},
     {k:'qty_total',l:'Total'},{k:'purchase_price',l:'Cost'},
     {k:'inventory_value',l:'Value'},{k:'age_days',l:'Age'},
     {k:'stock_status',l:'Status'}
@@ -2813,8 +2421,6 @@ function renderIRTable(){
     h+='<td style="padding:6px 8px">'+r.colour+'</td>';
     h+='<td style="padding:6px 8px">'+r.brand+'</td>';
     h+='<td style="padding:6px 8px;text-align:right;font-weight:700;color:'+(r.qty_available<=2&&r.qty_available>0?'var(--red)':'var(--sage)')+'">'+r.qty_available+'</td>';
-    h+='<td style="padding:6px 8px;text-align:right;color:var(--gold)">'+r.qty_reserved+'</td>';
-    h+='<td style="padding:6px 8px;text-align:right;color:#6B3E1A">'+r.qty_with_customer+'</td>';
     h+='<td style="padding:6px 8px;text-align:right;color:var(--red)">'+r.qty_damaged+'</td>';
     h+='<td style="padding:6px 8px;text-align:right;font-weight:700">'+r.qty_total+'</td>';
     h+='<td style="padding:6px 8px;text-align:right">'+fmt(r.purchase_price)+'</td>';
@@ -2864,10 +2470,8 @@ async function showIRDetail(variantId){
     ['Colour',r.colour],['Brand',r.brand]];
   fields.forEach(function(f){if(f[1])h+='<div><div style="font-size:.54rem;color:var(--ink3)">'+f[0]+'</div><div style="font-size:.7rem;font-weight:600">'+f[1]+'</div></div>';});
   h+='</div>';
-  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px">';
+  h+='<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-bottom:12px">';
   h+='<div class="sc sg2"><div class="sl2">Available</div><div class="sv">'+r.qty_available+'</div></div>';
-  h+='<div class="sc" style="border-left-color:var(--gold)"><div class="sl2">Reserved</div><div class="sv">'+r.qty_reserved+'</div></div>';
-  h+='<div class="sc" style="border-left-color:#6B3E1A"><div class="sl2">W/Cust</div><div class="sv">'+r.qty_with_customer+'</div></div>';
   h+='<div class="sc rd"><div class="sl2">Damaged</div><div class="sv">'+r.qty_damaged+'</div></div>';
   h+='</div>';
   h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--cream2);border-radius:8px;margin-bottom:10px">';
@@ -2919,8 +2523,8 @@ async function exportIR(format){
   var res=await q;var rows=res.data||[];
   if(!rows.length){toast('No data to export','warn');return;}
 
-  var cols=['sku','product_name','category','fabric','season','customer_segment','size','design','colour','brand','qty_available','qty_reserved','qty_with_customer','qty_damaged','qty_total','purchase_price','inventory_value','age_days','stock_status'];
-  var labels=['SKU','Product Name','Category','Fabric','Season','Segment','Size','Design','Colour','Brand','Available','Reserved','With Customer','Damaged','Total','Unit Cost','Inventory Value','Age Days','Status'];
+  var cols=['sku','product_name','category','fabric','season','customer_segment','size','design','colour','brand','qty_available','qty_damaged','qty_total','purchase_price','inventory_value','age_days','stock_status'];
+  var labels=['SKU','Product Name','Category','Fabric','Season','Segment','Size','Design','Colour','Brand','Available','Damaged','Total','Unit Cost','Inventory Value','Age Days','Status'];
 
   if(format==='csv'){
     var csvRows=[labels.join(',')];
@@ -2983,7 +2587,7 @@ function printBarcode(varId){
   html+='<button onclick="window.print()" style="padding:4px 10px;cursor:pointer">Print</button>';
   html+='<button onclick="printMultiple()" style="padding:4px 10px;cursor:pointer">Print Multiple</button>';
   html+='</div>';
-  html+='<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>';
+  html+='<scr'+'ipt src='+'"https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"><\/script>';
   html+='<scr'+'ipt>';
   html+='window.onload=function(){';
   html+='JsBarcode("#bc-svg","'+bc+'",{format:"CODE128",width:1.5,height:28,displayValue:false,margin:0});';
@@ -3147,7 +2751,7 @@ function cctvBtn(){
 // ── IndexedDB setup ──
 var _odb=null;
 var ODB_NAME='slc_pos_v1';
-var ODB_VER=1;
+var ODB_VER=2;
 
 function openOfflineDB(){
   return new Promise(function(resolve,reject){
@@ -3193,13 +2797,17 @@ function idbGet(store,key){
 function idbGetAll(store,indexName,value){
   return openOfflineDB().then(function(db){
     return new Promise(function(res,rej){
-      var tx=db.transaction(store,'readonly');
-      var os=tx.objectStore(store);
-      var req=indexName?os.index(indexName).getAll(value):os.getAll();
-      req.onsuccess=function(){res(req.result||[]);};
-      req.onerror=function(){rej(req.error);};
+      try{
+        var tx=db.transaction(store,'readonly');
+        var os=tx.objectStore(store);
+        var req=(indexName&&os.indexNames.contains(indexName))
+          ?os.index(indexName).getAll(value)
+          :os.getAll();
+        req.onsuccess=function(){res(req.result||[]);};
+        req.onerror=function(){rej(req.error);};
+      }catch(e){res([]);}
     });
-  });
+  }).catch(function(){return [];});
 }
 
 // ── Cache master data to IndexedDB ──
@@ -3238,7 +2846,9 @@ async function queueOffline(type,payload){
 
 // ── Get pending queue ──
 async function getPendingQueue(){
-  return idbGetAll('queue','status','pending');
+  // Scan all queue items and filter - more reliable than index lookup
+  var all = await idbGetAll('queue',null,null);
+  return all.filter(function(i){return i.status==='pending';});
 }
 
 // ── Mark synced ──
@@ -3272,7 +2882,10 @@ async function updateSyncStatus(){
   var bar=document.getElementById('sync-status-bar');
   if(!bar)return;
   var pending=0;
-  try{var q=await getPendingQueue();pending=q.length;}catch(e){}
+  try{
+    var allQ=await idbGetAll('queue',null,null);
+    pending=allQ.filter(function(i){return i.status==='pending'||i.status==='failed';}).length;
+  }catch(e){}
   var bg,txt;
   if(_isSyncing){bg='#7A6000';txt='Syncing... ('+pending+' pending)';}
   else if(!_isOnline){bg='var(--red)';txt='Offline'+(pending?' - '+pending+' pending':' - data saved locally');}
@@ -3363,9 +2976,9 @@ async function runSyncQueue(){
       return;
     }
     // Include failed items with retry_count < 5
-    var queue=await idbGetAll('queue','status','pending');
-    var retryQueue=await idbGetAll('queue','status','failed');
-    retryQueue=retryQueue.filter(function(i){return(i.retry_count||0)<5;});
+    var allItems=await idbGetAll('queue',null,null);
+    var queue=allItems.filter(function(i){return i.status==='pending';});
+    var retryQueue=allItems.filter(function(i){return i.status==='failed'&&(i.retry_count||0)<5;});
     queue=queue.concat(retryQueue);
     if(!queue.length){_isSyncing=false;_syncLock=false;updateSyncStatus();return;}
     toast('Syncing '+queue.length+' offline transaction'+(queue.length>1?'s':'')+'...','ok',3000);
@@ -3410,10 +3023,12 @@ async function runSyncQueue(){
     toast('Sync error: '+ex.message,'err');
   }
   _isSyncing=false;_syncLock=false;updateSyncStatus();
-  // Schedule retry for failed items
-  if(await idbGetAll('queue','status','failed').then(function(f){return f.filter(function(i){return(i.retry_count||0)<5;}).length;}).catch(function(){return 0;})){
-    setTimeout(runSyncQueue,30000); // retry failed after 30s
-  }
+  // Schedule retry for any remaining failed items
+  try{
+    var remaining=await idbGetAll('queue',null,null);
+    var hasRetryable=remaining.some(function(i){return i.status==='failed'&&(i.retry_count||0)<5;});
+    if(hasRetryable)setTimeout(runSyncQueue,30000);
+  }catch(e){}
 }
 
 // ── Sync a sale to Supabase ──
@@ -3548,82 +3163,6 @@ function manualSync(){
 
 
 // ── BILL SWC ITEMS: load remaining SWC items into cart and go to Bill tab ──
-async function billSwcItems(swcId){
-  var items=window._swcItems||[];
-  var swcData=window._activeSwc||{customer_name:'Walk-in',customer_party_id:null};
-  // Only include items with remaining qty
-  var billable=items.filter(function(it){
-    return it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0)>0;
-  });
-  if(!billable.length){toast('No remaining items to bill','warn');return;}
-  // Add to cart with SWC source tag
-  cart=[];
-  for(var i=0;i<billable.length;i++){
-    var it=billable[i];
-    var rem=it.qty_issued-(it.qty_sold||0)-(it.qty_returned||0);
-    var p=prods.find(function(pr){return pr.id===it.variant_id;});
-    if(p){
-      cart.push({
-        id:p.id,name:p.name,sku:p.sku,
-        price:p.price||it.sale_price||0,
-        cost:p.cost||0,qty:rem,
-        swc_item_id:it.id,    // tag for post-sale cleanup
-        swc_id:swcId,
-        swc_customer:swcData.customer_name
-      });
-    }
-  }
-  cmo(); // close SWC modal
-  // Switch to Bill tab and pre-fill customer
-  var nav=document.querySelectorAll('#nt .pl');
-  for(var j=0;j<nav.length;j++){
-    if(nav[j].textContent==='BILL'){nav[j].click();break;}
-  }
-  // Pre-fill customer name after Bill tab renders
-  setTimeout(function(){
-    var bc=document.getElementById('bc');
-    if(bc)bc.value=swcData.customer_name||'';
-    renderCart();updSum();
-    toast('SWC items loaded. Review and complete the sale.','ok',4000);
-  },200);
-}
-
-// ── BILL RESERVED ITEMS: load reserved items into cart and go to Bill tab ──
-async function billReservationItems(resId){
-  var resRow=window._activeReservation;
-  if(!resRow){toast('Reservation data not found','err');return;}
-  var items=resRow.stock_reservation_items||[];
-  if(!items.length){toast('No items in this reservation','warn');return;}
-  cart=[];
-  for(var i=0;i<items.length;i++){
-    var it=items[i];
-    var p=prods.find(function(pr){return pr.id===it.variant_id;});
-    if(p){
-      cart.push({
-        id:p.id,name:p.name,sku:p.sku,
-        price:it.sale_price||p.price||0,
-        cost:p.cost||0,
-        qty:it.qty_reserved,
-        reservation_id:resId,    // tag for post-sale cleanup
-        res_item_id:it.id,
-        advance_paid:resRow.advance_amount||0
-      });
-    }
-  }
-  cmo();
-  var nav=document.querySelectorAll('#nt .pl');
-  for(var j=0;j<nav.length;j++){
-    if(nav[j].textContent==='BILL'){nav[j].click();break;}
-  }
-  setTimeout(function(){
-    var bc=document.getElementById('bc');
-    if(bc)bc.value=resRow.customer_name||'';
-    renderCart();updSum();
-    var adv=resRow.advance_amount||0;
-    toast('Reserved items loaded.'+(adv?' Advance paid: '+fmt(adv)+' - collect balance only.':''),'ok',5000);
-  },200);
-}
-
 </script>
 </body>
 </html>
