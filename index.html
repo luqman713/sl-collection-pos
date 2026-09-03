@@ -650,15 +650,42 @@ async function completeSale(){
     await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     await sb.rpc('post_transaction_ledger',{p_txn_id:tr.data.id,p_txn_type:'sale',p_payment_mode:payMode,p_total:tot,p_paid:payMode==='credit'?0:tot,p_party_id:custId,p_account_id:accId2,p_split_cash:splitCash,p_user_id:CUP&&CUP.id});
     await sb.from('ledger_entries').insert({transaction_id:tr.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cst2,description:'COGS '+bn.data,created_by:CUP&&CUP.id});
-    // Issue 9: post to cash_entries so Cash Book shows all sales receipts
-    if(accId2&&payMode!=='credit'){
-      await sb.from('cash_entries').insert({
-        transaction_id:tr.data.id,entry_date:td(),amount:payMode==='split'?splitCash:tot,
-        direction:'in',account_id:accId2,
-        description:'Sale Receipt: '+bn.data+(cust&&cust!=='Walk-in'?' - '+cust:''),
-        nature:'receipt',party_category:'Customer Receipt'
-      });
+    // Cash Book: post actual cash received only (not credit sales)
+    if(payMode!=='credit'){
+      var cashAmt=payMode==='split'?splitCash:tot;
+      var bankAmt=payMode==='split'?(tot-splitCash):0;
+      // Primary account (Cash Drawer)
+      if(accId2&&cashAmt>0){
+        await sb.from('cash_entries').insert({
+          transaction_id:tr.data.id,entry_date:td(),amount:cashAmt,
+          direction:'in',account_id:accId2,
+          description:'Sale Receipt: '+bn.data+(cust&&cust!=='Walk-in'?' - '+cust:''),
+          nature:'receipt',party_category:'Customer Receipt'
+        });
+        await sb.from('ledger_entries').insert({
+          transaction_id:tr.data.id,entry_date:td(),
+          entry_type:'credit',account_category:'cashflow',
+          cashflow_account_id:accId2,amount:cashAmt,
+          description:'Cash Sale: '+bn.data,created_by:CUP&&CUP.id
+        });
+      }
+      // Split: bank portion
+      if(bankId&&bankAmt>0){
+        await sb.from('cash_entries').insert({
+          transaction_id:tr.data.id,entry_date:td(),amount:bankAmt,
+          direction:'in',account_id:bankId,
+          description:'Bank Transfer (Split Sale): '+bn.data,
+          nature:'receipt',party_category:'Customer Receipt'
+        });
+        await sb.from('ledger_entries').insert({
+          transaction_id:tr.data.id,entry_date:td(),
+          entry_type:'credit',account_category:'cashflow',
+          cashflow_account_id:bankId,amount:bankAmt,
+          description:'Bank Split Sale: '+bn.data,created_by:CUP&&CUP.id
+        });
+      }
     }
+    // Credit sale: debit customer AR (already done via post_transaction_ledger) - no cash movement
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
     // Snapshot for post-sale actions (Print / WhatsApp)  -  cart gets cleared right after
@@ -913,14 +940,22 @@ async function savePur(){
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
     // Issue 9: post to cash_entries so Cash Book shows all purchase payments
-    if(payAccId&&purPayMode!=='credit'){
+    if(payAccId&&purPayMode!=='credit'&&pd>0){
+      // Cash paid for purchase — REDUCES cash balance
       await sb.from('cash_entries').insert({
         transaction_id:txn.data.id,entry_date:td(),amount:pd,
         direction:'out',account_id:payAccId,
         description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:''),
         nature:'payment',party_category:'Supplier Payment'
       });
+      await sb.from('ledger_entries').insert({
+        transaction_id:txn.data.id,entry_date:td(),
+        entry_type:'debit',account_category:'cashflow',
+        cashflow_account_id:payAccId,amount:pd,
+        description:'Cash Purchase: '+skuN.data,created_by:CUP&&CUP.id
+      });
     }
+    // Credit purchase: no cash movement — supplier ledger updated by post_transaction_ledger
     logActivity('purchase_completed','buy',{sku:skuN.data,qty:qty,cost:cst,supplier:sup});
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
@@ -1399,7 +1434,25 @@ async function saveStockMove(mtype){
     };});
     var no2={data:pretIns.no};var txn2={data:pretIns.data};
     if(sp&&txn2.data){
-      // DR Supplier Payable (reduces what we owe)
+      // Ask if supplier is paying cash back or adjusting balance
+      var casPret=accs.find(function(a){return a.name==='Cash Drawer';});
+      var cashBack=casPret&&confirm('Did supplier pay cash back?\nRs'+totalVal.toLocaleString()+'\n\nYes = Cash received from supplier\nNo = Adjusted against supplier balance only');
+      if(cashBack&&casPret){
+        // Supplier paid cash back — INCREASES our cash
+        await sb.from('cash_entries').insert({
+          transaction_id:txn2.data.id,entry_date:td(),amount:totalVal,
+          direction:'in',account_id:casPret.id,
+          description:'Purchase Return Receipt: '+p.name+(sp?' - '+sp.name:''),
+          nature:'receipt',party_category:'Supplier Refund'
+        });
+        await sb.from('ledger_entries').insert({
+          transaction_id:txn2.data.id,entry_date:td(),
+          entry_type:'credit',account_category:'cashflow',
+          cashflow_account_id:casPret.id,amount:totalVal,
+          description:'Cash from Purchase Return: '+no2.data,created_by:CUP&&CUP.id
+        });
+      }
+      // DR Supplier Payable (reduces what we owe — whether cash or balance adjustment)
       await sb.from('ledger_entries').insert({
         transaction_id:txn2.data.id,entry_date:td(),
         entry_type:'debit',account_category:'party',
@@ -1407,11 +1460,11 @@ async function saveStockMove(mtype){
         description:'Purchase Return: '+p.name+' x'+qty,
         created_by:CUP&&CUP.id
       });
-      // Issue 6: ensure supplier current_balance decreases (debit = reduces payable)
+      // Reduce supplier balance
       await sb.from('parties').update({
         current_balance:Math.max(0,(sp.current_balance||0)-totalVal)
       }).eq('id',sp.id);
-      toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | Supplier: '+sp.name,'ok',7000);
+      toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+(cashBack?' | Cash received':'| Balance adjusted')+' | Supplier: '+sp.name,'ok',7000);
     } else {
       toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+' | No supplier (stock written off, no recovery)','ok',7000);
     }
@@ -1436,7 +1489,10 @@ async function saveStockMove(mtype){
     };});
     var txn3={data:retIns.data};
     if(txn3.data){
-      if(doR&&ca2)await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:totalVal,description:'Cash Refund: '+p.name,created_by:CUP&&CUP.id});
+      if(doR&&ca2){
+        await sb.from('cash_entries').insert({transaction_id:txn3.data.id,entry_date:td(),amount:totalVal,direction:'out',account_id:ca2.id,description:'Sales Return Refund: '+p.name+(custNameRet?' - '+custNameRet:''),nature:'payment',party_category:'Customer Refund'});
+        await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca2.id,amount:totalVal,description:'Cash Refund: '+p.name,created_by:CUP&&CUP.id});
+      }
       // FIX 6: Adjust customer ledger on return  -  debit customer (reduces receivable / increases credit)
       if(retCustId){
         await sb.from('ledger_entries').insert({transaction_id:txn3.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:retCustId,amount:totalVal,description:'Sales Return: '+p.name+' x'+qty,created_by:CUP&&CUP.id});
