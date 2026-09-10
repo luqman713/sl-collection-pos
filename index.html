@@ -2449,7 +2449,7 @@ function renderIRTable(){
   var tbl=document.getElementById('ir-table');if(!tbl)return;
   var rows=_IR.data;
   if(!rows.length){tbl.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No inventory matching filters</p></div>';return;}
-  var statusColor={'Available':'var(--sage)','Low Stock':'var(--red)','Dead Stock':'var(--red)','Reserved':'var(--gold)','With Customer':'#6B3E1A','Out of Stock':'var(--ink3)'};
+  var statusColor={'Available':'var(--sage)','Low Stock':'var(--red)','Dead Stock':'var(--red)','Out of Stock':'var(--ink3)'};
   var cols=[
     {k:'sku',l:'SKU'},{k:'product_name',l:'Product'},{k:'category',l:'Category'},
     {k:'fabric',l:'Fabric'},{k:'season',l:'Season'},{k:'size',l:'Size'},
