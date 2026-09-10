@@ -654,6 +654,8 @@ async function completeSale(){
     if(payMode!=='credit'){
       var cashAmt=payMode==='split'?splitCash:tot;
       var bankAmt=payMode==='split'?(tot-splitCash):0;
+      // Fallback to Cash Drawer if no account explicitly selected
+      if(!accId2){var caFallback=accs.find(function(a){return a.name==='Cash Drawer';});if(caFallback)accId2=caFallback.id;}
       // Primary account (Cash Drawer)
       if(accId2&&cashAmt>0){
         await sb.from('cash_entries').insert({
@@ -940,6 +942,8 @@ async function savePur(){
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
     // Issue 9: post to cash_entries so Cash Book shows all purchase payments
+    // Fallback to Cash Drawer if payment account not selected
+    if(!payAccId&&purPayMode==='cash'){var caFb2=accs.find(function(a){return a.name==='Cash Drawer';});if(caFb2)payAccId=caFb2.id;}
     if(payAccId&&purPayMode!=='credit'&&pd>0){
       // Cash paid for purchase — REDUCES cash balance
       await sb.from('cash_entries').insert({
@@ -1256,10 +1260,10 @@ async function saveCash(){
     var t={data:tIns.data};
 
     // -- P&L IMPACT: only Income/Expense post to cash_entries (the table P&L reads from) --
-    if(nature==='income'||nature==='expense'){
-      if(catId)await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
+    // ALL natures post to cash_entries — the Cash tab reads cash_entries
+    if(catId){
+      await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
     } else {
-      // Receipt/Payment: still logged for the Cash Tab list, but flagged so reports can exclude it from P&L
       await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:null,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
     }
 
@@ -3153,6 +3157,14 @@ async function syncPurchase(item){
   await sb.from('inventory').insert({variant_id:variant.data.id,qty_available:p.qty,cost_price:p.cost,age_days:0}).catch(function(){return sb.from('inventory').update({qty_available:p.qty}).eq('variant_id',variant.data.id);});
   // Transaction
   var txn=await insertWithUniqueNo('transactions','PUR',function(no){return{transaction_no:no,transaction_type:'purchase',transaction_date:p.date,party_id:sp&&sp.id||null,total_amount:tot,paid_amount:pd,payment_status:p.payMode==='credit'?'credit':'paid',performed_by:CUP&&CUP.id,notes:'Synced offline: '+p.offline_bill_no};});
+  // Cash entries for offline purchase sync
+  if(ca&&p.payMode!=='credit'&&pd>0){
+    await sb.from('cash_entries').insert({transaction_id:txn.data.id,entry_date:p.date,amount:pd,direction:'out',account_id:ca.id,description:'Purchase Payment: '+skuVal+(p.supplier?' - '+p.supplier:''),nature:'payment',party_category:'Supplier Payment'});
+    await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:p.date,entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:pd,description:'Cash Purchase: '+skuVal,created_by:CUP&&CUP.id});
+  }
+  if(sp&&sp.id){
+    await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:p.date,entry_type:'credit',account_category:'party',party_id:sp.id,amount:tot,description:'Purchase: '+skuVal,created_by:CUP&&CUP.id});
+  }
   logActivity('purchase_synced','offline',{offline_no:p.offline_bill_no,sku:skuVal});
 }
 
