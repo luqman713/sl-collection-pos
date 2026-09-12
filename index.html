@@ -829,6 +829,8 @@ function rBuy(){
   h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
   h+='<div class="ib">Sale price set at billing time.</div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">Owner</div></div></div>';
+  // Payment account — from existing accs (not hardcoded)
+  h+='<div class="fg" id="pur-acc-wrap"><label class="lb">Payment Account</label><select class="sl" id="pur-acc">'+accs.map(function(a){return'<option value="'+a.id+'" data-name="'+a.name+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
   h+='<div id="ppd"></div><div id="pprev" style="display:none;background:#FDF5E4;border:1.5px solid var(--gold);border-radius:9px;padding:10px 12px;margin-bottom:12px"></div>';
   h+='<button class="btn bg" onclick="savePur()">Save Purchase</button></div>';
   return h;
@@ -854,7 +856,29 @@ async function saveNewBrand(){
   }
   cmo();toast('Brand added and selected: '+nm,'ok');
 }
-function setPurPM(m,el){purPayMode=m;var ps=document.querySelectorAll('#ppm .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');var d=$('ppd');if(!d)return;var ca=accs.find(function(a){return a.name==='Cash Drawer';});if(m==='cash')d.innerHTML='<div class="ib">Cash: '+fmt(ca&&ca.current_balance||0)+'</div>';else if(m==='credit')d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Supplier Payable</div>';else if(m==='partial')d.innerHTML='<div class="fg"><label class="lb">Paid Now Rs</label><input class="ip" id="ppd2" type="number" placeholder="0" oninput="updPP()"></div>';else if(m==='owner')d.innerHTML='<div class="ib">Posted to Owner Payable</div>';updPP();}
+function setPurPM(m,el){
+  purPayMode=m;
+  var ps=document.querySelectorAll('#ppm .pl');
+  for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');
+  el.classList.add('on');
+  var d=$('ppd');if(!d)return;
+  var accWrap=document.getElementById('pur-acc-wrap');
+  // Show account selector only when cash/partial payment is involved
+  if(accWrap)accWrap.style.display=(m==='cash'||m==='partial')?'block':'none';
+  if(m==='cash'){
+    var selAcc=document.getElementById('pur-acc');
+    var selBal=selAcc&&selAcc.options[selAcc.selectedIndex]?parseFloat(selAcc.options[selAcc.selectedIndex].text.replace(/[^0-9.-]/g,'')):0;
+    d.innerHTML='<div class="ib">Paying from selected account</div>';
+  } else if(m==='credit'){
+    d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Supplier Payable</div>';
+  } else if(m==='partial'){
+    d.innerHTML='<div class="fg"><label class="lb">Paid Now Rs</label><input class="ip" id="ppd2" type="number" placeholder="0" oninput="updPP()"></div>';
+  } else if(m==='owner'){
+    if(accWrap)accWrap.style.display='none';
+    d.innerHTML='<div class="ib">Posted to Owner Payable</div>';
+  }
+  updPP();
+}
 function updPP(){var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
 async function savePur(){
   var btnEl=event&&event.target;
@@ -884,9 +908,13 @@ async function savePur(){
   if(purPayMode==='owner'&&!parties.find(function(p){return p.party_type==='owner';})){var op=await sb.from('parties').insert({party_type:'owner',name:'Owner Account',opening_balance:0,current_balance:0,created_by:CUP&&CUP.id}).select().single();if(op.data)parties.push(op.data);}
   var cr=await sb.from('categories').select('id').eq('name',cat).single();
   var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  // Use selected payment account from #pur-acc, fallback to Cash Drawer
+  var purAccSel=document.getElementById('pur-acc');
+  var selectedAccId=purAccSel&&purAccSel.value||null;
+  var selectedAcc=selectedAccId?accs.find(function(a){return a.id===selectedAccId;}):ca;
   var pd=0,payAccId=null;
-  if(purPayMode==='cash'){pd=tot;payAccId=ca&&ca.id;if((ca&&ca.current_balance||0)<tot&&!confirm('Insufficient cash. Continue?'))return;}
-  else if(purPayMode==='partial'){pd=Number($('ppd2')&&$('ppd2').value||0);payAccId=ca&&ca.id;}
+  if(purPayMode==='cash'){pd=tot;payAccId=selectedAcc&&selectedAcc.id||ca&&ca.id;if((selectedAcc&&selectedAcc.current_balance||0)<tot&&!confirm('Insufficient balance in '+((selectedAcc&&selectedAcc.name)||'selected account')+'. Continue?'))return;}
+  else if(purPayMode==='partial'){pd=Number($('ppd2')&&$('ppd2').value||0);payAccId=selectedAcc&&selectedAcc.id||ca&&ca.id;}
   try{
     // Check if product with same name+category already exists  -  reuse it
     var existProd=await sb.from('products').select('id').eq('name',nm).eq('category_id',cr.data&&cr.data.id).maybeSingle();
@@ -1102,11 +1130,11 @@ function rCash(){
   for(var i=0;i<accs.length;i++)h+='<div><div style="font-size:.55rem;opacity:.5">'+accs[i].name+'</div><div style="font-size:.72rem;font-weight:600;color:'+(accs[i].current_balance>=0?'#90EE90':'#FFB3B3')+'">'+fmt(accs[i].current_balance)+'</div></div>';
   h+='</div></div>';
   h+='<div class="card"><div class="ct">New Entry</div>';
-  h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option><option value="expense">Expense</option><option value="income">Income</option><option value="receipt">Receipt</option><option value="payment">Payment</option></select></div>';
+  h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option><option value="income">Income (P&amp;L)</option><option value="expense">Expense (P&amp;L)</option><option value="receipt">Receipt - Money In</option><option value="payment">Payment - Money Out</option></select></div>';
   h+='<div class="ib" id="cnature-hint" style="display:none"></div>';
   h+='<div class="fg"><label class="lb">Date</label><input class="ip" id="cd" type="date" value="'+td()+'"></div>';
   h+='<div class="g2" id="cpty-wrap" style="display:none">';
-  h+='<div class="fg"><label class="lb">Party Type</label><select class="sl" id="cptype" onchange="onPartyChange();refreshCashPartyList()"><option value="customer">Customer</option><option value="supplier">Supplier</option><option value="committee">Committee</option></select></div>';
+  h+='<div class="fg"><label class="lb">Party Type</label><select class="sl" id="cptype" onchange="onPartyChange();refreshCashPartyList()"><option value="customer">Customer</option><option value="supplier">Supplier</option><option value="committee">Committee</option><option value="owner">Owner</option><option value="loan">Loan</option></select></div>';
   h+='<div class="fg"><label class="lb" id="cpty-label">Party (outstanding balance)</label><select class="sl" id="cpty" onchange="onPartyChange()"><option value="">Select...</option></select></div>';
   h+='</div>';
   h+='<div class="fg" id="cc-wrap"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
@@ -1134,8 +1162,9 @@ function refreshCashPartyList(){
   var filtered=parties.filter(function(p){
     return p.party_type===ptype && (p.current_balance||0)!==0;
   });
-  // If none with balance, show all of that type
-  if(!filtered.length)filtered=parties.filter(function(p){return p.party_type===ptype;});
+  // If none with balance, show all of that type (owner/loan always show all)
+  if(!filtered.length||ptype==='owner'||ptype==='loan')
+    filtered=parties.filter(function(p){return p.party_type===ptype;});
   sel.innerHTML='<option value="">Select...</option>'+filtered.map(function(p){
     var bal=p.current_balance||0;
     return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
@@ -1151,12 +1180,13 @@ function onNatureChange(){
   if(nature==='receipt'||nature==='payment'){
     if(ptyWrap)ptyWrap.style.display='grid';
     if(ccWrap)ccWrap.style.display='none';
-    setTimeout(refreshCashPartyList,0); // populate balance-filtered list
-    if(hint){hint.style.display='block';hint.textContent=(nature==='receipt'?'Receipt: money received from a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.':'Payment: money paid to a customer/supplier/committee. Reduces their balance. Does NOT affect Profit & Loss.');}
+    setTimeout(refreshCashPartyList,0);
+    if(hint){hint.style.display='block';hint.textContent=(nature==='receipt'?'Receipt: money received. Reduces party balance. No P&L impact.':'Payment: money paid out. Reduces party balance. No P&L impact.');}
   } else {
+    // Income/Expense — party selector optional for linking
     if(ptyWrap)ptyWrap.style.display='none';
     if(ccWrap)ccWrap.style.display='block';
-    if(hint){hint.style.display='block';hint.textContent=(nature==='income'?'Income: genuine other income. Appears in Profit & Loss.':'Expense: genuine business expense. Appears in Profit & Loss.');}
+    if(hint){hint.style.display='block';hint.textContent=(nature==='income'?'Income: appears in P&L as revenue.':'Expense: appears in P&L as cost.');}
   }
   updateClassPreview();
 }
@@ -1259,12 +1289,36 @@ async function saveCash(){
     var tIns=await insertWithUniqueNo('transactions','CASH',function(noVal){return{transaction_no:noVal,transaction_type:nature,transaction_date:dt,party_id:partyId,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:dsc};});
     var t={data:tIns.data};
 
-    // -- P&L IMPACT: only Income/Expense post to cash_entries (the table P&L reads from) --
-    // ALL natures post to cash_entries — the Cash tab reads cash_entries
-    if(catId){
-      await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:catId,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
-    } else {
-      await sb.from('cash_entries').insert({transaction_id:t.data.id,category_id:null,entry_date:dt,amount:amt,direction:dir,account_id:accId,description:dsc,nature:nature,party_category:category});
+    // Post to cash_entries — what the Cash tab displays (all natures)
+    await sb.from('cash_entries').insert({
+      transaction_id:t.data.id,category_id:catId||null,
+      entry_date:dt,amount:amt,direction:dir,
+      account_id:accId,description:dsc,
+      nature:nature,party_category:category
+    });
+    // Cashflow ledger — which account moved
+    if(accId)await sb.from('ledger_entries').insert({
+      transaction_id:t.data.id,entry_date:dt,
+      entry_type:dir==='in'?'credit':'debit',
+      account_category:'cashflow',cashflow_account_id:accId,
+      amount:amt,description:dsc,created_by:CUP&&CUP.id
+    });
+    // Receipt/Payment: post party ledger + update party balance
+    if((nature==='receipt'||nature==='payment')&&partyId){
+      var partyEntryType=nature==='receipt'?'credit':'debit';
+      await sb.from('ledger_entries').insert({
+        transaction_id:t.data.id,entry_date:dt,
+        entry_type:partyEntryType,account_category:'party',
+        party_id:partyId,amount:amt,
+        description:dsc,created_by:CUP&&CUP.id
+      });
+      var pObj=parties.find(function(p){return p.id===partyId;});
+      if(pObj){
+        var balChange=nature==='receipt'?-amt:amt;
+        await sb.from('parties').update({
+          current_balance:(pObj.current_balance||0)+balChange
+        }).eq('id',partyId);
+      }
     }
 
     // -- Single, direct cashflow ledger entry (no shared RPC  -  avoids double-posting) --
@@ -3172,10 +3226,39 @@ async function syncPurchase(item){
 async function syncCash(item){
   var p=item.payload;
   var tIns=await insertWithUniqueNo('transactions','CASH',function(noVal){return{transaction_no:noVal,transaction_type:p.nature,transaction_date:p.date,party_id:p.party_id||null,total_amount:p.amount,paid_amount:p.amount,payment_status:'paid',performed_by:CUP&&CUP.id,notes:p.description};});
-  if(p.nature==='income'||p.nature==='expense'){
-    await sb.from('cash_entries').insert({transaction_id:tIns.data.id,entry_date:p.date,amount:p.amount,direction:p.direction,account_id:p.account_id||null,description:p.description,nature:p.nature,party_category:p.category});
+  // All natures post to cash_entries (this is what the Cash tab reads)
+  await sb.from('cash_entries').insert({
+    transaction_id:tIns.data.id,entry_date:p.date,amount:p.amount,
+    direction:p.direction,account_id:p.account_id||null,
+    description:p.description,nature:p.nature,
+    party_category:p.category||p.nature
+  });
+  // Cashflow ledger entry
+  await sb.from('ledger_entries').insert({
+    transaction_id:tIns.data.id,entry_date:p.date,
+    entry_type:p.direction==='in'?'credit':'debit',
+    account_category:'cashflow',
+    cashflow_account_id:p.account_id||null,
+    amount:p.amount,description:p.description,created_by:CUP&&CUP.id
+  });
+  // Party ledger entry for receipt/payment (same as online saveCash)
+  if((p.nature==='receipt'||p.nature==='payment')&&p.party_id){
+    var partyEntryType=p.direction==='in'?'credit':'debit';
+    await sb.from('ledger_entries').insert({
+      transaction_id:tIns.data.id,entry_date:p.date,
+      entry_type:partyEntryType,account_category:'party',
+      party_id:p.party_id,amount:p.amount,
+      description:p.description,created_by:CUP&&CUP.id
+    });
+    // Update party balance
+    await sb.from('parties').select('current_balance').eq('id',p.party_id).single()
+      .then(function(pr){
+        if(pr.data){
+          var newBal=(pr.data.current_balance||0)+(p.direction==='in'?-p.amount:p.amount);
+          return sb.from('parties').update({current_balance:newBal}).eq('id',p.party_id);
+        }
+      }).catch(function(){});
   }
-  await sb.from('ledger_entries').insert({transaction_id:tIns.data.id,entry_date:p.date,entry_type:p.direction==='in'?'credit':'debit',account_category:'cashflow',cashflow_account_id:p.account_id||null,amount:p.amount,description:p.description,created_by:CUP&&CUP.id});
 }
 
 // ── Cache master data after every successful loadData ──
