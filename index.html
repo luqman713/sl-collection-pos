@@ -1194,6 +1194,25 @@ function refreshCashPartyList(){
     var bal=p.current_balance||0;
     return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
   }).join('');
+  // If no parties found for owner/loan, show add-new button hint
+  if(!filtered.length&&(ptype==='owner'||ptype==='loan')){
+    var hint=document.getElementById('cpty-empty-hint');
+    if(!hint){hint=document.createElement('div');hint.id='cpty-empty-hint';hint.className='ib';hint.style.fontSize='.6rem';sel.parentNode.appendChild(hint);}
+    hint.style.display='block';
+    hint.innerHTML='No '+ptype+' record found. <button class="btn bh bsm" onclick="createPartyQuick(\''+ptype+'\')">Add '+ptype+'</button>';
+  } else {
+    var hint2=document.getElementById('cpty-empty-hint');
+    if(hint2)hint2.style.display='none';
+  }
+}
+
+function createPartyQuick(ptype){
+  var nm=prompt('Enter '+(ptype==='owner'?'Owner':'Loan')+' name:','');
+  if(!nm||!nm.trim())return;
+  sb.from('parties').insert({party_type:ptype,name:nm.trim(),opening_balance:0,current_balance:0,created_by:CUP&&CUP.id}).select().single().then(function(r){
+    if(r.data){parties.push(r.data);toast(ptype+' added: '+nm,'ok');refreshCashPartyList();}
+    else toast('Could not add '+ptype+': '+(r.error&&r.error.message||''),'err');
+  });
 }
 // Map new compound nature values to party_type + base_nature + direction
 var _NATURE_MAP={
