@@ -1130,7 +1130,32 @@ function rCash(){
   for(var i=0;i<accs.length;i++)h+='<div><div style="font-size:.55rem;opacity:.5">'+accs[i].name+'</div><div style="font-size:.72rem;font-weight:600;color:'+(accs[i].current_balance>=0?'#90EE90':'#FFB3B3')+'">'+fmt(accs[i].current_balance)+'</div></div>';
   h+='</div></div>';
   h+='<div class="card"><div class="ct">New Entry</div>';
-  h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option><option value="income">Income (P&amp;L)</option><option value="expense">Expense (P&amp;L)</option><option value="receipt">Receipt - Money In</option><option value="payment">Payment - Money Out</option></select></div>';
+  h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option>'+
+    '<optgroup label="P&amp;L Transactions">'+
+    '<option value="income">Income  -  Other Revenue (P&amp;L)</option>'+
+    '<option value="expense">Expense  -  Business Cost (P&amp;L)</option>'+
+    '</optgroup>'+
+    '<optgroup label="Customer Ledger">'+
+    '<option value="cust_receipt">Customer Receipt  -  Payment Received from Customer</option>'+
+    '<option value="cust_payment">Customer Refund  -  Cash Returned to Customer</option>'+
+    '</optgroup>'+
+    '<optgroup label="Supplier Ledger">'+
+    '<option value="sup_payment">Supplier Payment  -  Cash Paid to Supplier</option>'+
+    '<option value="sup_receipt">Supplier Refund  -  Cash Received from Supplier</option>'+
+    '</optgroup>'+
+    '<optgroup label="Committee Ledger">'+
+    '<option value="comm_payment">Committee Contribution  -  Money Paid In</option>'+
+    '<option value="comm_receipt">Committee Receipt  -  Money Received Back</option>'+
+    '</optgroup>'+
+    '<optgroup label="Owner Ledger">'+
+    '<option value="owner_deposit">Owner Deposit  -  Capital Injected</option>'+
+    '<option value="owner_withdrawal">Owner Withdrawal  -  Capital Withdrawn</option>'+
+    '</optgroup>'+
+    '<optgroup label="Loan Ledger">'+
+    '<option value="loan_receipt">Loan Received  -  Money Borrowed</option>'+
+    '<option value="loan_payment">Loan Repayment  -  Money Repaid</option>'+
+    '</optgroup>'+
+    '</select></div>';
   h+='<div class="ib" id="cnature-hint" style="display:none"></div>';
   h+='<div class="fg"><label class="lb">Date</label><input class="ip" id="cd" type="date" value="'+td()+'"></div>';
   h+='<div class="g2" id="cpty-wrap" style="display:none">';
@@ -1170,6 +1195,21 @@ function refreshCashPartyList(){
     return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
   }).join('');
 }
+// Map new compound nature values to party_type + base_nature + direction
+var _NATURE_MAP={
+  'income':     {base:'income',  dir:'in',  ptype:null,         hint:'Revenue that appears in P&L.'},
+  'expense':    {base:'expense', dir:'out', ptype:null,         hint:'Business cost that appears in P&L.'},
+  'cust_receipt': {base:'receipt', dir:'in',  ptype:'customer', hint:'Money received from customer. Updates Customer Ledger.'},
+  'cust_payment': {base:'payment', dir:'out', ptype:'customer', hint:'Refund paid to customer. Updates Customer Ledger.'},
+  'sup_payment':  {base:'payment', dir:'out', ptype:'supplier', hint:'Cash paid to supplier. Updates Supplier Ledger.'},
+  'sup_receipt':  {base:'receipt', dir:'in',  ptype:'supplier', hint:'Refund received from supplier. Updates Supplier Ledger.'},
+  'comm_payment': {base:'payment', dir:'out', ptype:'committee',hint:'Contribution paid into committee. Updates Committee Ledger.'},
+  'comm_receipt': {base:'receipt', dir:'in',  ptype:'committee',hint:'Money received from committee. Updates Committee Ledger.'},
+  'owner_deposit':    {base:'receipt', dir:'in',  ptype:'owner', hint:'Capital injected by owner. Updates Owner Ledger.'},
+  'owner_withdrawal': {base:'payment', dir:'out', ptype:'owner', hint:'Capital withdrawn by owner. Updates Owner Ledger.'},
+  'loan_receipt':  {base:'receipt', dir:'in',  ptype:'loan', hint:'Loan money received. Updates Loan Ledger.'},
+  'loan_payment':  {base:'payment', dir:'out', ptype:'loan', hint:'Loan repayment made. Updates Loan Ledger.'}
+};
 function onNatureChange(){
   var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
   var ptyWrap=document.getElementById('cpty-wrap');
@@ -1177,32 +1217,32 @@ function onNatureChange(){
   var hint=document.getElementById('cnature-hint');
   refreshCategoryOptions();
   if(!nature){if(ptyWrap)ptyWrap.style.display='none';if(hint)hint.style.display='none';return;}
-  if(nature==='receipt'||nature==='payment'){
+  var nm=_NATURE_MAP[nature];
+  if(nm&&nm.ptype){
+    // Ledger-linked: show party selector, auto-set party type
     if(ptyWrap)ptyWrap.style.display='grid';
     if(ccWrap)ccWrap.style.display='none';
+    var ptSel=document.getElementById('cptype');
+    if(ptSel)ptSel.value=nm.ptype;
     setTimeout(refreshCashPartyList,0);
-    if(hint){hint.style.display='block';hint.textContent=(nature==='receipt'?'Receipt: money received. Reduces party balance. No P&L impact.':'Payment: money paid out. Reduces party balance. No P&L impact.');}
+    if(hint){hint.style.display='block';hint.textContent=nm.hint;}
   } else {
-    // Income/Expense — party selector optional for linking
+    // Income/Expense: category selector
     if(ptyWrap)ptyWrap.style.display='none';
     if(ccWrap)ccWrap.style.display='block';
-    if(hint){hint.style.display='block';hint.textContent=(nature==='income'?'Income: appears in P&L as revenue.':'Expense: appears in P&L as cost.');}
+    if(hint){hint.style.display='block';hint.textContent=nm?nm.hint:(nature==='income'?'Income: appears in P&L.':'Expense: appears in P&L.');}
   }
   updateClassPreview();
 }
 function onPartyChange(){updateClassPreview();}
 function updateClassPreview(){
   var nature=document.getElementById('cnature')&&document.getElementById('cnature').value;
-  var ptype=document.getElementById('cptype')&&document.getElementById('cptype').value;
   var pv=document.getElementById('cclass-preview');
   if(!pv||!nature)return;
-  var label='';
-  if(nature==='income')label='Income';
-  else if(nature==='expense')label='Expense';
-  else if(nature==='receipt')label=(ptype==='customer'?'Customer Receipt':ptype==='supplier'?'Supplier Receipt':'Committee Receipt');
-  else if(nature==='payment')label=(ptype==='customer'?'Customer Payment':ptype==='supplier'?'Supplier Payment':'Committee Payment');
+  var sel=document.getElementById('cnature');
+  var label=sel&&sel.options[sel.selectedIndex]&&sel.options[sel.selectedIndex].text||nature;
   pv.style.display='block';
-  pv.textContent='Will be recorded as: '+label;
+  pv.textContent='Will post to: '+label;
 }
 var _cashFilter='all';
 function setCashFilter(f,el){
@@ -1233,7 +1273,12 @@ async function saveCash(){
   var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
   if(btnEl){btnEl.disabled=true;btnEl.textContent='Saving...';}
   var dt=$('cd')&&$('cd').value||td();
-  var nature=$('cnature')&&$('cnature').value;
+  var natureRaw=$('cnature')&&$('cnature').value;
+  if(!natureRaw){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save';}toast('Select transaction nature','err');return;}
+  // Resolve compound nature (e.g. 'cust_receipt') to base values via NATURE_MAP
+  var _nm=typeof _NATURE_MAP!=='undefined'?_NATURE_MAP:{};
+  var _nmEntry=_nm[natureRaw]||null;
+  var nature=_nmEntry?_nmEntry.base:natureRaw;
   var catId=$('cc')&&$('cc').value;
   var dsc=$('cdsc')&&$('cdsc').value.trim();
   var amt=Number($('camt')&&$('camt').value||0);
@@ -3069,9 +3114,13 @@ async function savePurOffline(nm,cat,qty,cst,cl,sz,sup,purPayMode,pd,tot){
 }
 
 // ── OFFLINE CASH ENTRY ──
-async function saveCashOffline(nature,dt,amt,dsc,ptype,partyName,partyId,accId,category){
+async function saveCashOffline(natureRaw,dt,amt,dsc,ptype,partyName,partyId,accId,category){
   var bn=offlineBillNo().replace('OFFLINE','OCASH');
-  var payload={offline_bill_no:bn,nature:nature,date:dt,amount:amt,description:dsc,party_type:ptype,party_name:partyName,party_id:partyId,account_id:accId,category:category,direction:(nature==='income'||nature==='receipt')?'in':'out'};
+  var _nm2=typeof _NATURE_MAP!=='undefined'?_NATURE_MAP:{};
+  var _nmE=_nm2[natureRaw]||null;
+  var baseNature=_nmE?_nmE.base:natureRaw;
+  var baseDir=_nmE?_nmE.dir:(natureRaw==='income'||natureRaw==='receipt'?'in':'out');
+  var payload={offline_bill_no:bn,nature:baseNature,nature_raw:natureRaw,date:dt,amount:amt,description:dsc,party_type:ptype,party_name:partyName,party_id:partyId,account_id:accId,category:category,direction:baseDir};
   await queueOffline('cash',payload);
   toast('Cash entry saved offline: '+bn,'ok',4000);
 }
