@@ -491,7 +491,8 @@ function rBill(){
   h+='<div class="fg"><label class="lb">Customer</label><div style="display:flex;gap:6px"><input class="ip" id="bc" list="dl-customers" placeholder="Walk-in" style="flex:1" oninput="onCI()"><button class="btn bh bsm" onclick="newPM(\'customer\')">New</button></div><div id="cb" style="display:none;font-size:.6rem;margin-top:3px"></div></div>';
   h+='<div class="fg"><label class="lb">Customer WhatsApp (optional)</label><input class="ip" id="bphone" type="tel" placeholder="03XX-XXXXXXX" oninput="onPhoneInput()"></div>';
   h+='<div class="fg" id="bwa-wrap" style="display:none;margin-bottom:0"><label class="lb"><input type="checkbox" id="bwa" style="accent-color:var(--gold);margin-right:4px">Send Invoice via WhatsApp after sale</label></div>';
-  h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPM(\'bank\',this)">Bank</div><div class="pl" onclick="setPM(\'emoney\',this)">EMoney</div><div class="pl" onclick="setPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPM(\'split\',this)">Split</div></div></div>';
+  h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setBillPM(\'cash\',this)">Cash</div><div class="pl" onclick="setBillPM(\'credit\',this)">Credit</div><div class="pl" onclick="setBillPM(\'split\',this)">Split</div></div></div>';
+  h+='<div class="fg" id="bill-acc-wrap"><label class="lb">Receipt Account</label><select class="sl" id="bill-acc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
   h+='<div id="pd"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Discount Rs</label><input class="ip" id="disc" type="number" placeholder="0" min="0" oninput="updSum()"></div><div class="fg"><label class="lb">Discount %</label><input class="ip" id="disc-pct" type="number" placeholder="0" min="0" max="100" oninput="calcDiscPct()"></div></div>';
   h+='<div class="fg" style="margin-bottom:0"><label class="lb"><input type="checkbox" id="ia" style="accent-color:var(--gold);margin-right:4px">Acquaintance sale</label></div></div>';
@@ -508,16 +509,23 @@ function rBill(){
 }
 function iBill(){srch();renderCart();}
 
-function setPM(m,el){
+function setPM(m,el){setBillPM(m,el);}  // legacy alias
+function setBillPM(m,el){
   payMode=m;
-  var ps=document.querySelectorAll('#pp .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');
-  var d=$('pd');if(!d)return;
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  if(m==='cash')d.innerHTML='<div class="ib">Cash: <strong>'+fmt(ca&&ca.current_balance||0)+'</strong></div>';
-  else if(m==='bank'){var bk=accs.filter(function(a){return a.account_type==='bank';});d.innerHTML='<div class="fg"><label class="lb">Bank</label><select class="sl" id="bnk">'+bk.map(function(b){return'<option value="'+b.id+'">'+b.name+'</option>';}).join('')+'</select></div>';}
-  else if(m==='emoney'){var em=accs.filter(function(a){return a.account_type==='emoney';});d.innerHTML='<div class="fg"><label class="lb">EMoney</label><select class="sl" id="em2">'+em.map(function(e){return'<option value="'+e.id+'">'+e.name+'</option>';}).join('')+'</select></div>';}
-  else if(m==='credit')d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Customer Ledger</div>';
-  else if(m==='split')d.innerHTML='<div class="g2"><div class="fg"><label class="lb">Cash Rs</label><input class="ip" id="sc2" type="number" placeholder="0"></div><div class="fg"><label class="lb">Rest via</label><select class="sl" id="ss"><option value="credit">Credit</option></select></div></div>';
+  var ps=document.querySelectorAll('#pp .pl');
+  for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');
+  if(el)el.classList.add('on');
+  var d=$('pd');
+  var accWrap=document.getElementById('bill-acc-wrap');
+  if(accWrap)accWrap.style.display=(m==='credit')?'none':'block';
+  if(!d)return;
+  if(m==='cash'){
+    d.innerHTML='';  // account selector shows balance already
+  } else if(m==='credit'){
+    d.innerHTML='<div class="ib" style="border-color:var(--gold)">Posted to Customer Ledger. No cash movement.</div>';
+  } else if(m==='split'){
+    d.innerHTML='<div class="fg"><label class="lb">Cash Amount Rs (rest goes to Credit)</label><input class="ip" id="sc2" type="number" placeholder="0"></div>';
+  }
 }
 function onCI(){var n=($('bc')&&$('bc').value||'').trim();var el=$('cb');if(!el)return;var p=parties.find(function(p){return p.name===n&&p.party_type==='customer';});if(p&&p.current_balance!==0){el.style.display='block';el.textContent='Outstanding: '+fmt(Math.abs(p.current_balance))+' '+(p.current_balance>0?'(owes)':'(credit)');}else el.style.display='none';}
 
@@ -624,8 +632,6 @@ async function completeSale(){
   if(payMode==='cash'){
     // For sales we RECEIVE cash, no balance check needed
   }
-  var bankId=$('bnk')&&$('bnk').value||null;
-  var emId=$('em2')&&$('em2').value||null;
   var splitCash=Number($('sc2')&&$('sc2').value||0);
   var ca=accs.find(function(a){return a.name==='Cash Drawer';});
   var custId=null;
@@ -642,7 +648,9 @@ async function completeSale(){
   try{
     var trIns=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:td(),party_id:custId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP&&CUP.id};});
     var bn={data:trIns.no};var tr={data:trIns.data};
-    var accId2=payMode==='cash'?ca&&ca.id:payMode==='bank'?bankId:payMode==='emoney'?emId:ca&&ca.id;
+    // Single source: read selected account from unified bill-acc selector
+    var billAccSel=document.getElementById('bill-acc');
+    var accId2=billAccSel&&billAccSel.value||ca&&ca.id;
     var custPhone=($('bphone')&&$('bphone').value||'').trim();
     var wantsWA=$('bwa')&&$('bwa').checked&&isValidPhone(custPhone);
     var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,customer_phone:custPhone||null,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:accId2,gross_profit:mg}).select().single();
