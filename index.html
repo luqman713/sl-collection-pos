@@ -492,7 +492,7 @@ function rBill(){
   h+='<div class="fg"><label class="lb">Customer WhatsApp (optional)</label><input class="ip" id="bphone" type="tel" placeholder="03XX-XXXXXXX" oninput="onPhoneInput()"></div>';
   h+='<div class="fg" id="bwa-wrap" style="display:none;margin-bottom:0"><label class="lb"><input type="checkbox" id="bwa" style="accent-color:var(--gold);margin-right:4px">Send Invoice via WhatsApp after sale</label></div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="pp"><div class="pl on" onclick="setBillPM(\'cash\',this)">Cash</div><div class="pl" onclick="setBillPM(\'credit\',this)">Credit</div><div class="pl" onclick="setBillPM(\'split\',this)">Split</div></div></div>';
-  h+='<div class="fg" id="bill-acc-wrap"><label class="lb">Receipt Account</label><select class="sl" id="bill-acc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
+  h+='<div id="bill-payments"></div>';
   h+='<div id="pd"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Discount Rs</label><input class="ip" id="disc" type="number" placeholder="0" min="0" oninput="updSum()"></div><div class="fg"><label class="lb">Discount %</label><input class="ip" id="disc-pct" type="number" placeholder="0" min="0" max="100" oninput="calcDiscPct()"></div></div>';
   h+='<div class="fg" style="margin-bottom:0"><label class="lb"><input type="checkbox" id="ia" style="accent-color:var(--gold);margin-right:4px">Acquaintance sale</label></div></div>';
@@ -614,6 +614,12 @@ function updSum(){
     '<div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;margin-bottom:4px"><span>Total</span><span>'+fmt(finalTotal)+'</span></div>'+
     '<div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage);font-weight:600"><span>Margin</span><span>'+fmt(mg)+'</span></div></div>';
   ba.innerHTML='<button class="btn bs" id="cb3" onclick="completeSale()">Complete Sale</button>';
+  // Init payment rows if empty
+  if(!_billPayments.length){
+    var caInit=accs.find(function(a){return a.name==='Cash Drawer';});
+    _billPayments=[{accId:caInit&&caInit.id||'',accName:caInit&&caInit.name||'Cash',amount:0}];
+  }
+  renderBillPayments(tot);
 }
 async function completeSale(){
   if(!cart.length){toast('Cart empty','err');return;}
@@ -648,9 +654,10 @@ async function completeSale(){
   try{
     var trIns=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:td(),party_id:custId,total_amount:tot,paid_amount:payMode==='credit'?0:tot,payment_status:payMode==='credit'?'credit':payMode==='split'?'partial':'paid',performed_by:CUP&&CUP.id};});
     var bn={data:trIns.no};var tr={data:trIns.data};
-    // Single source: read selected account from unified bill-acc selector
-    var billAccSel=document.getElementById('bill-acc');
-    var accId2=billAccSel&&billAccSel.value||ca&&ca.id;
+    // Multi-payment: validate allocations
+    var _bv=validatePayments(_billPayments,tot,true);
+    if(!_bv.ok){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}toast(_bv.msg,'err');return;}
+    var accId2=(_bv.cashRows&&_bv.cashRows[0]&&_bv.cashRows[0].accId)||ca&&ca.id; // primary for legacy compat
     var custPhone=($('bphone')&&$('bphone').value||'').trim();
     var wantsWA=$('bwa')&&$('bwa').checked&&isValidPhone(custPhone);
     var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,customer_phone:custPhone||null,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:payMode==='credit'?0:payMode==='split'?splitCash:tot,payment_mode:payMode,primary_account_id:accId2,gross_profit:mg}).select().single();
@@ -658,44 +665,29 @@ async function completeSale(){
     await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     await sb.rpc('post_transaction_ledger',{p_txn_id:tr.data.id,p_txn_type:'sale',p_payment_mode:payMode,p_total:tot,p_paid:payMode==='credit'?0:tot,p_party_id:custId,p_account_id:accId2,p_split_cash:splitCash,p_user_id:CUP&&CUP.id});
     await sb.from('ledger_entries').insert({transaction_id:tr.data.id,entry_date:td(),entry_type:'debit',account_category:'expense',amount:cst2,description:'COGS '+bn.data,created_by:CUP&&CUP.id});
-    // Cash Book: post actual cash received only (not credit sales)
-    if(payMode!=='credit'){
-      var cashAmt=payMode==='split'?splitCash:tot;
-      var bankAmt=payMode==='split'?(tot-splitCash):0;
-      // Fallback to Cash Drawer if no account explicitly selected
-      if(!accId2){var caFallback=accs.find(function(a){return a.name==='Cash Drawer';});if(caFallback)accId2=caFallback.id;}
-      // Primary account (Cash Drawer)
-      if(accId2&&cashAmt>0){
-        await sb.from('cash_entries').insert({
-          transaction_id:tr.data.id,entry_date:td(),amount:cashAmt,
-          direction:'in',account_id:accId2,
-          description:'Sale Receipt: '+bn.data+(cust&&cust!=='Walk-in'?' - '+cust:''),
-          nature:'receipt',party_category:'Customer Receipt'
-        });
-        await sb.from('ledger_entries').insert({
-          transaction_id:tr.data.id,entry_date:td(),
-          entry_type:'credit',account_category:'cashflow',
-          cashflow_account_id:accId2,amount:cashAmt,
-          description:'Cash Sale: '+bn.data,created_by:CUP&&CUP.id
-        });
-      }
-      // Split: bank portion
-      if(bankId&&bankAmt>0){
-        await sb.from('cash_entries').insert({
-          transaction_id:tr.data.id,entry_date:td(),amount:bankAmt,
-          direction:'in',account_id:bankId,
-          description:'Bank Transfer (Split Sale): '+bn.data,
-          nature:'receipt',party_category:'Customer Receipt'
-        });
-        await sb.from('ledger_entries').insert({
-          transaction_id:tr.data.id,entry_date:td(),
-          entry_type:'credit',account_category:'cashflow',
-          cashflow_account_id:bankId,amount:bankAmt,
-          description:'Bank Split Sale: '+bn.data,created_by:CUP&&CUP.id
-        });
-      }
+    // Multi-payment: post each cash allocation to its account
+    var creditOutstanding=_bv.outstanding;
+    for(var pi=0;pi<_bv.cashRows.length;pi++){
+      var prow=_bv.cashRows[pi];
+      if(!prow.accId||!prow.amount)continue;
+      await sb.from('cash_entries').insert({
+        transaction_id:tr.data.id,entry_date:td(),amount:prow.amount,
+        direction:'in',account_id:prow.accId,
+        description:'Sale Receipt: '+bn.data+(cust&&cust!=='Walk-in'?' - '+cust:'')+' ('+prow.accName+')',
+        nature:'receipt',party_category:'Customer Receipt'
+      });
+      await sb.from('ledger_entries').insert({
+        transaction_id:tr.data.id,entry_date:td(),
+        entry_type:'credit',account_category:'cashflow',
+        cashflow_account_id:prow.accId,amount:prow.amount,
+        description:'Sale: '+bn.data+' ('+prow.accName+')',created_by:CUP&&CUP.id
+      });
     }
-    // Credit sale: debit customer AR (already done via post_transaction_ledger) - no cash movement
+    // Credit row or outstanding balance → customer AR
+    if(_bv.creditRows.length&&_bv.creditRows[0].amount>0){
+      creditOutstanding+=_bv.creditRows[0].amount;
+    }
+    // Note: customer ledger debit already handled by post_transaction_ledger below
     logActivity('sale_completed','bill',{bill_no:bn.data,amount:tot,customer:cust});
 
     // Snapshot for post-sale actions (Print / WhatsApp)  -  cart gets cleared right after
@@ -707,7 +699,7 @@ async function completeSale(){
     };
 
     await loadData();
-    cart=[];if($('bc'))$('bc').value='';if($('bphone'))$('bphone').value='';if($('bwa'))$('bwa').checked=false;
+    cart=[];_billPayments=[];if($('bc'))$('bc').value='';if($('bphone'))$('bphone').value='';if($('bwa'))$('bwa').checked=false;
     renderCart();srch();
     showSaleCompleteModal(wantsWA);
   }catch(ex){toast('Error: '+ex.message,'err');}
@@ -837,8 +829,8 @@ function rBuy(){
   h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
   h+='<div class="ib">Sale price set at billing time.</div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">Owner</div></div></div>';
-  // Payment account — from existing accs (not hardcoded)
-  h+='<div class="fg" id="pur-acc-wrap"><label class="lb">Payment Account</label><select class="sl" id="pur-acc">'+accs.map(function(a){return'<option value="'+a.id+'" data-name="'+a.name+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
+  // Multi-payment allocation
+  h+='<div id="pur-payments"></div>';
   h+='<div id="ppd"></div><div id="pprev" style="display:none;background:#FDF5E4;border:1.5px solid var(--gold);border-radius:9px;padding:10px 12px;margin-bottom:12px"></div>';
   h+='<button class="btn bg" onclick="savePur()">Save Purchase</button></div>';
   return h;
@@ -887,7 +879,13 @@ function setPurPM(m,el){
   }
   updPP();
 }
-function updPP(){var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
+function updPP(){
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  if(!_purPayments.length&&tot>0){
+    var caP=accs.find(function(a){return a.name==='Cash Drawer';});
+    _purPayments=[{accId:caP&&caP.id||'',accName:caP&&caP.name||'Cash',amount:tot}];
+  }
+  if(tot>0)renderPurPayments(tot);var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
 async function savePur(){
   var btnEl=event&&event.target;
   if(btnEl&&btnEl.disabled)return; // block double-tap
@@ -978,24 +976,34 @@ async function savePur(){
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
     // Issue 9: post to cash_entries so Cash Book shows all purchase payments
-    // Fallback to Cash Drawer if payment account not selected
-    if(!payAccId&&purPayMode==='cash'){var caFb2=accs.find(function(a){return a.name==='Cash Drawer';});if(caFb2)payAccId=caFb2.id;}
-    if(payAccId&&purPayMode!=='credit'&&pd>0){
-      // Cash paid for purchase — REDUCES cash balance
-      await sb.from('cash_entries').insert({
-        transaction_id:txn.data.id,entry_date:td(),amount:pd,
-        direction:'out',account_id:payAccId,
-        description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:''),
-        nature:'payment',party_category:'Supplier Payment'
-      });
-      await sb.from('ledger_entries').insert({
-        transaction_id:txn.data.id,entry_date:td(),
-        entry_type:'debit',account_category:'cashflow',
-        cashflow_account_id:payAccId,amount:pd,
-        description:'Cash Purchase: '+skuN.data,created_by:CUP&&CUP.id
-      });
+    // Multi-payment: validate and post each allocation
+    var purTot=qty*cst;
+    if(_purPayments.length){
+      var _pv=validatePayments(_purPayments,purTot,true);
+      if(!_pv.ok){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}toast(_pv.msg,'err');return;}
+      for(var ppi=0;ppi<_pv.cashRows.length;ppi++){
+        var pprow=_pv.cashRows[ppi];
+        if(!pprow.accId||!pprow.amount)continue;
+        await sb.from('cash_entries').insert({
+          transaction_id:txn.data.id,entry_date:td(),amount:pprow.amount,
+          direction:'out',account_id:pprow.accId,
+          description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:'')+' ('+pprow.accName+')',
+          nature:'payment',party_category:'Supplier Payment'
+        });
+        await sb.from('ledger_entries').insert({
+          transaction_id:txn.data.id,entry_date:td(),
+          entry_type:'debit',account_category:'cashflow',
+          cashflow_account_id:pprow.accId,amount:pprow.amount,
+          description:'Purchase: '+skuN.data+' ('+pprow.accName+')',created_by:CUP&&CUP.id
+        });
+      }
+      pd=_pv.cashRows.reduce(function(s,r){return s+r.amount;},0);
+    } else if(payAccId&&purPayMode!=='credit'&&pd>0){
+      // Fallback single-account (legacy)
+      await sb.from('cash_entries').insert({transaction_id:txn.data.id,entry_date:td(),amount:pd,direction:'out',account_id:payAccId,description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:''),nature:'payment',party_category:'Supplier Payment'});
+      await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:payAccId,amount:pd,description:'Purchase: '+skuN.data,created_by:CUP&&CUP.id});
     }
-    // Credit purchase: no cash movement — supplier ledger updated by post_transaction_ledger
+    _purPayments=[];
     logActivity('purchase_completed','buy',{sku:skuN.data,qty:qty,cost:cst,supplier:sup});
     await loadData();
     toast('SKU: '+skuN.data+' | Stock: '+qty,'ok',6000);
@@ -3104,6 +3112,7 @@ async function completeSaleOffline(cart2,tot,cst2,mg,disc,subtotal,cust,custId,p
     total:tot,cost:cst2,margin:mg,discount:disc,subtotal:subtotal,
     customer:cust,customer_id:custId,
     payMode:payMode,splitCash:splitCash,accId:accId2,
+    payments:_billPayments.slice(), // preserve multi-payment allocations for sync
     date:td()
   };
   await queueOffline('sale',payload);
@@ -3249,7 +3258,14 @@ async function syncSale(item){
   // Ledger + cash entries
   if(ca&&p.payMode!=='credit'){
     await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:p.total,description:'Sale: '+bn,created_by:CUP&&CUP.id});
-    await sb.from('cash_entries').insert({transaction_id:txnId,entry_date:p.date,amount:p.total,direction:'in',account_id:ca.id,description:'Sale Receipt: '+bn,nature:'receipt',party_category:'Customer Receipt'});
+    // Multi-payment: post each allocation
+    var syncPays=p.payments&&p.payments.length?p.payments:[{accId:p.accId||ca&&ca.id,accName:'Cash',amount:p.total}];
+    for(var spi=0;spi<syncPays.length;spi++){
+      var sp2=syncPays[spi];
+      if(!sp2.accId||sp2.accId==='__credit__'||!sp2.amount)continue;
+      await sb.from('cash_entries').insert({transaction_id:txnId,entry_date:p.date,amount:sp2.amount,direction:'in',account_id:sp2.accId,description:'Sale Receipt: '+bn+' ('+sp2.accName+')',nature:'receipt',party_category:'Customer Receipt'});
+      await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'credit',account_category:'cashflow',cashflow_account_id:sp2.accId,amount:sp2.amount,description:'Sale: '+bn+' ('+sp2.accName+')',created_by:CUP&&CUP.id});
+    }
   }
   if(custId){
     await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'debit',account_category:'party',party_id:custId,amount:p.total,description:'Sale: '+bn,created_by:CUP&&CUP.id});
@@ -3388,6 +3404,145 @@ function manualSync(){
   runSyncQueue();
 }
 
+
+
+// ═══════════════════════════════════════════════════════
+// MULTI-PAYMENT ALLOCATION ENGINE
+// Single source: accs[] for all payment/receipt accounts
+// ═══════════════════════════════════════════════════════
+
+var _billPayments = [];  // [{accId, accName, amount}]
+var _purPayments  = [];  // [{accId, accName, amount}]
+
+// ── Render payment rows for Bill tab ──
+function renderBillPayments(total){
+  var el=document.getElementById('bill-payments');if(!el)return;
+  var allocated=_billPayments.reduce(function(s,r){return s+(r.amount||0);},0);
+  var remaining=Math.max(0,total-allocated);
+  var overAlloc=allocated>total;
+  var h='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);margin-bottom:4px">Payment / Receipt Allocation</div>';
+  h+='<div style="border:1px solid var(--cream2);border-radius:8px;overflow:hidden;margin-bottom:6px">';
+  // Header
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;background:var(--ink);color:white;padding:5px 8px;font-size:.54rem;font-weight:700"><div>Account</div><div style="text-align:right">Amount</div><div></div></div>';
+  // Rows
+  _billPayments.forEach(function(row,i){
+    h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;border-top:1px solid var(--cream2);background:white">';
+    h+='<select class="sl" data-idx="'+i+'" onchange="billPayAcc(this)" style="font-size:.6rem;height:28px;padding:2px 4px">';
+    accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
+    h+='<option value="__credit__"'+( row.accId==='__credit__'?' selected':'')+'>Customer Credit</option>';
+    h+='</select>';
+    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="billPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
+    h+='<button onclick="removeBillPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0">×</button>';
+    h+='</div>';
+  });
+  // Footer totals
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:6px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.65rem;font-weight:700">';
+  h+='<div>Allocated</div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.65rem;font-weight:700;color:'+(overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)')+'">';
+  h+='<div>'+(overAlloc?'OVER-ALLOCATED':remaining>0?'Outstanding (Credit)':'FULLY PAID')+'</div>';
+  h+='<div style="text-align:right">'+(overAlloc?'- '+fmt(allocated-total):fmt(remaining))+'</div><div></div></div>';
+  h+='</div>';
+  h+='<button class="btn bh bsm" onclick="addBillPay()" style="margin-bottom:8px">+ Add Payment Row</button>';
+  el.innerHTML=h;
+}
+
+function addBillPay(){
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  _billPayments.push({accId:ca&&ca.id||accs[0]&&accs[0].id,accName:ca&&ca.name||'Cash',amount:0});
+  var tot=getBillTotal();renderBillPayments(tot);
+}
+function removeBillPay(i){
+  _billPayments.splice(i,1);
+  var tot=getBillTotal();renderBillPayments(tot);
+}
+function billPayAcc(sel){
+  var i=Number(sel.dataset.idx);
+  var accId=sel.value;
+  var accName=accId==='__credit__'?'Customer Credit':(accs.find(function(a){return a.id===accId;})||{name:accId}).name;
+  _billPayments[i].accId=accId;_billPayments[i].accName=accName;
+  var tot=getBillTotal();renderBillPayments(tot);
+}
+function billPayAmt(inp){
+  var i=Number(inp.dataset.idx);
+  _billPayments[i].amount=Number(inp.value||0);
+  var tot=getBillTotal();renderBillPayments(tot);
+}
+function getBillTotal(){
+  // Read from current cart total
+  var totEl=document.getElementById('ctot');
+  return totEl?Number(totEl.textContent.replace(/[^0-9.]/g,''))||0:0;
+}
+
+// ── Render payment rows for Buy tab ──
+function renderPurPayments(total){
+  var el=document.getElementById('pur-payments');if(!el)return;
+  var allocated=_purPayments.reduce(function(s,r){return s+(r.amount||0);},0);
+  var remaining=Math.max(0,total-allocated);
+  var overAlloc=allocated>total;
+  var h='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);margin-bottom:4px">Payment Allocation</div>';
+  h+='<div style="border:1px solid var(--cream2);border-radius:8px;overflow:hidden;margin-bottom:6px">';
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;background:var(--ink);color:white;padding:5px 8px;font-size:.54rem;font-weight:700"><div>Account</div><div style="text-align:right">Amount</div><div></div></div>';
+  _purPayments.forEach(function(row,i){
+    h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;border-top:1px solid var(--cream2);background:white">';
+    h+='<select class="sl" data-idx="'+i+'" onchange="purPayAcc(this)" style="font-size:.6rem;height:28px;padding:2px 4px">';
+    accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
+    h+='<option value="__credit__"'+(row.accId==='__credit__'?' selected':'')+'>Supplier Credit</option>';
+    h+='</select>';
+    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
+    h+='<button onclick="removePurPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0">×</button>';
+    h+='</div>';
+  });
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:6px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.65rem;font-weight:700">';
+  h+='<div>Allocated</div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.65rem;font-weight:700;color:'+(overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)')+'">';
+  h+='<div>'+(overAlloc?'OVER-ALLOCATED':remaining>0?'Outstanding (Supplier Credit)':'FULLY PAID')+'</div>';
+  h+='<div style="text-align:right">'+(overAlloc?'- '+fmt(allocated-total):fmt(remaining))+'</div><div></div></div>';
+  h+='</div>';
+  h+='<button class="btn bh bsm" onclick="addPurPay()" style="margin-bottom:8px">+ Add Payment Row</button>';
+  el.innerHTML=h;
+}
+
+function addPurPay(){
+  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  _purPayments.push({accId:ca&&ca.id||accs[0]&&accs[0].id,accName:ca&&ca.name||'Cash',amount:0});
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  renderPurPayments(tot);
+}
+function removePurPay(i){
+  _purPayments.splice(i,1);
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  renderPurPayments(tot);
+}
+function purPayAcc(sel){
+  var i=Number(sel.dataset.idx);
+  var accId=sel.value;
+  var accName=accId==='__credit__'?'Supplier Credit':(accs.find(function(a){return a.id===accId;})||{name:accId}).name;
+  _purPayments[i].accId=accId;_purPayments[i].accName=accName;
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  renderPurPayments(tot);
+}
+function purPayAmt(inp){
+  var i=Number(inp.dataset.idx);
+  _purPayments[i].amount=Number(inp.value||0);
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  renderPurPayments(tot);
+}
+
+// ── Validate payment allocations before saving ──
+function validatePayments(payments, total, allowCredit){
+  if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
+  for(var i=0;i<payments.length;i++){
+    if(!payments[i].accId)return {ok:false,msg:'Select account for row '+(i+1)};
+    if(!payments[i].amount||payments[i].amount<=0)return {ok:false,msg:'Enter amount for row '+(i+1)};
+  }
+  var allocated=payments.reduce(function(s,r){return s+r.amount;},0);
+  if(allocated>total)return {ok:false,msg:'Over-allocated: '+fmt(allocated)+' exceeds total '+fmt(total)};
+  var creditRows=payments.filter(function(r){return r.accId==='__credit__';});
+  var cashRows=payments.filter(function(r){return r.accId!=='__credit__';});
+  if(creditRows.length>1)return {ok:false,msg:'Only one credit row allowed'};
+  if(!allowCredit&&creditRows.length)return {ok:false,msg:'Credit not allowed here'};
+  return {ok:true,cashRows:cashRows,creditRows:creditRows,allocated:allocated,outstanding:total-allocated};
+}
 
 </script>
 </body>
