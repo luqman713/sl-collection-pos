@@ -883,7 +883,10 @@ function updPP(){
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   if(!_purPayments.length&&tot>0){
     var caP=accs.find(function(a){return a.name==='Cash Drawer';});
-    _purPayments=[{accId:caP&&caP.id||'',accName:caP&&caP.name||'Cash',amount:tot}];
+    _purPayments=[{type:'account',subId:caP&&caP.id||'',subName:caP&&caP.name||'Cash',amount:tot}];
+  } else if(_purPayments.length&&tot>0){
+    // Auto-fill first row amount if only one row and amount is 0
+    if(_purPayments.length===1&&!_purPayments[0].amount)_purPayments[0].amount=tot;
   }
   if(tot>0)renderPurPayments(tot);var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
 async function savePur(){
@@ -976,30 +979,44 @@ async function savePur(){
     var smResult=await sb.rpc('process_stock_movement',{p_variant_id:variant.data.id,p_movement_type:'purchase',p_qty:qty,p_reason:'Purchase: '+skuN.data,p_cost_impact:cst,p_user_id:CUP&&CUP.id,p_txn_id:txn.data.id});
     if(smResult.data&&!smResult.data.success)toast('Stock update issue: '+(smResult.data.error||''),'warn');
     // Issue 9: post to cash_entries so Cash Book shows all purchase payments
-    // Multi-payment: validate and post each allocation
+    // Multi-payment: post each row by type
     var purTot=qty*cst;
+    // Validate totals
     if(_purPayments.length){
-      var _pv=validatePayments(_purPayments,purTot,true);
-      if(!_pv.ok){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}toast(_pv.msg,'err');return;}
-      for(var ppi=0;ppi<_pv.cashRows.length;ppi++){
-        var pprow=_pv.cashRows[ppi];
-        if(!pprow.accId||!pprow.amount)continue;
-        await sb.from('cash_entries').insert({
-          transaction_id:txn.data.id,entry_date:td(),amount:pprow.amount,
-          direction:'out',account_id:pprow.accId,
-          description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:'')+' ('+pprow.accName+')',
-          nature:'payment',party_category:'Supplier Payment'
-        });
-        await sb.from('ledger_entries').insert({
-          transaction_id:txn.data.id,entry_date:td(),
-          entry_type:'debit',account_category:'cashflow',
-          cashflow_account_id:pprow.accId,amount:pprow.amount,
-          description:'Purchase: '+skuN.data+' ('+pprow.accName+')',created_by:CUP&&CUP.id
-        });
+      var purAlloc=_purPayments.reduce(function(s,r){return s+(r.amount||0);},0);
+      if(purAlloc>purTot){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}toast('Over-allocated: '+fmt(purAlloc)+' exceeds total '+fmt(purTot),'err');return;}
+      pd=0;
+      for(var ppi=0;ppi<_purPayments.length;ppi++){
+        var pprow=_purPayments[ppi];
+        if(!pprow.amount||pprow.amount<=0)continue;
+        var ppDesc='Purchase: '+skuN.data+(sup?' - '+sup:'');
+        if(pprow.type==='account'){
+          // Cash/Bank/EMoney: reduces physical account balance
+          if(!pprow.subId)continue;
+          await sb.from('cash_entries').insert({transaction_id:txn.data.id,entry_date:td(),amount:pprow.amount,direction:'out',account_id:pprow.subId,description:ppDesc+' ('+pprow.subName+')',nature:'payment',party_category:'Supplier Payment'});
+          await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:pprow.subId,amount:pprow.amount,description:ppDesc+' ('+pprow.subName+')',created_by:CUP&&CUP.id});
+          pd+=pprow.amount;
+        } else if(pprow.type==='owner'){
+          // Owner funds purchase: creates liability to owner
+          if(!pprow.subId)continue;
+          await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:pprow.subId,amount:pprow.amount,description:ppDesc+' (Owner: '+pprow.subName+')',created_by:CUP&&CUP.id});
+          // Update owner balance (increases liability)
+          var ownerObj=parties.find(function(p){return p.id===pprow.subId;});
+          if(ownerObj)await sb.from('parties').update({current_balance:(ownerObj.current_balance||0)+pprow.amount}).eq('id',pprow.subId);
+        } else if(pprow.type==='loan'){
+          // Loan funds purchase: creates liability to lender
+          if(!pprow.subId)continue;
+          await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:pprow.subId,amount:pprow.amount,description:ppDesc+' (Loan: '+pprow.subName+')',created_by:CUP&&CUP.id});
+          var loanObj=parties.find(function(p){return p.id===pprow.subId;});
+          if(loanObj)await sb.from('parties').update({current_balance:(loanObj.current_balance||0)+pprow.amount}).eq('id',pprow.subId);
+        } else if(pprow.type==='credit'){
+          // Supplier credit: AP increases (handled by post_transaction_ledger — skip here)
+          // just track for paid_amount calc (credit = 0 cash paid)
+        }
       }
-      pd=_pv.cashRows.reduce(function(s,r){return s+r.amount;},0);
+      // outstanding = amount on supplier credit (already handled by post_transaction_ledger)
     } else if(payAccId&&purPayMode!=='credit'&&pd>0){
-      // Fallback single-account (legacy)
+      // Legacy single-account fallback
       await sb.from('cash_entries').insert({transaction_id:txn.data.id,entry_date:td(),amount:pd,direction:'out',account_id:payAccId,description:'Purchase Payment: '+skuN.data+(sup?' - '+sup:''),nature:'payment',party_category:'Supplier Payment'});
       await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:payAccId,amount:pd,description:'Purchase: '+skuN.data,created_by:CUP&&CUP.id});
     }
@@ -3481,30 +3498,69 @@ function renderPurPayments(total){
   var overAlloc=allocated>total;
   var h='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);margin-bottom:4px">Payment Allocation</div>';
   h+='<div style="border:1px solid var(--cream2);border-radius:8px;overflow:hidden;margin-bottom:6px">';
-  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;background:var(--ink);color:white;padding:5px 8px;font-size:.54rem;font-weight:700"><div>Account</div><div style="text-align:right">Amount</div><div></div></div>';
+  h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;background:var(--ink);color:white;padding:5px 8px;font-size:.52rem;font-weight:700"><div>Type</div><div>Account / Party</div><div style="text-align:right">Amount</div><div></div></div>';
   _purPayments.forEach(function(row,i){
-    h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;border-top:1px solid var(--cream2);background:white">';
-    h+='<select class="sl" data-idx="'+i+'" onchange="purPayAcc(this)" style="font-size:.6rem;height:28px;padding:2px 4px">';
-    accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
-    h+='<option value="__credit__"'+(row.accId==='__credit__'?' selected':'')+'>Supplier Credit</option>';
+    var idx='data-idx="'+i+'"';
+    h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;border-top:1px solid var(--cream2);background:white;align-items:center">';
+    // Type selector
+    h+='<select class="sl" '+idx+' onchange="purPayType(this)" style="font-size:.58rem;height:28px;padding:2px 4px">';
+    h+='<option value="account"'+(row.type==='account'?' selected':'')+'>Cash/Bank</option>';
+    h+='<option value="owner"'+(row.type==='owner'?' selected':'')+'>Owner</option>';
+    h+='<option value="loan"'+(row.type==='loan'?' selected':'')+'>Loan</option>';
+    h+='<option value="credit"'+(row.type==='credit'?' selected':'')+'>Supplier Credit</option>';
     h+='</select>';
-    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
-    h+='<button onclick="removePurPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0">×</button>';
+    // Sub-selector based on type
+    h+='<div style="padding:0 4px">';
+    if(row.type==='account'){
+      h+='<select class="sl" '+idx+' onchange="purPaySub(this)" style="font-size:.58rem;height:28px;width:100%">';
+      accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.subId?' selected':'')+'>'+a.name+'</option>';});
+      h+='</select>';
+    } else if(row.type==='owner'){
+      var owners=parties.filter(function(p){return p.party_type==='owner';});
+      h+='<select class="sl" '+idx+' onchange="purPaySub(this)" style="font-size:.58rem;height:28px;width:100%">';
+      if(!owners.length)h+='<option value="">No owner records</option>';
+      owners.forEach(function(p){h+='<option value="'+p.id+'"'+(p.id===row.subId?' selected':'')+'>'+p.name+'</option>';});
+      h+='</select>';
+    } else if(row.type==='loan'){
+      var loans=parties.filter(function(p){return p.party_type==='loan';});
+      h+='<select class="sl" '+idx+' onchange="purPaySub(this)" style="font-size:.58rem;height:28px;width:100%">';
+      if(!loans.length)h+='<option value="">No loan records</option>';
+      loans.forEach(function(p){h+='<option value="'+p.id+'"'+(p.id===row.subId?' selected':'')+'>'+p.name+'</option>';});
+      h+='</select>';
+    } else {
+      h+='<span style="font-size:.58rem;color:var(--ink3);padding:4px">Posted to Supplier Ledger</span>';
+    }
+    h+='</div>';
+    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" '+idx+' oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
+    h+='<button onclick="removePurPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0 4px">×</button>';
     h+='</div>';
   });
-  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:6px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.65rem;font-weight:700">';
-  h+='<div>Allocated</div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.65rem;font-weight:700;color:'+(overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)')+'">';
-  h+='<div>'+(overAlloc?'OVER-ALLOCATED':remaining>0?'Outstanding (Supplier Credit)':'FULLY PAID')+'</div>';
-  h+='<div style="text-align:right">'+(overAlloc?'- '+fmt(allocated-total):fmt(remaining))+'</div><div></div></div>';
+  // Totals
+  h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.63rem;font-weight:700">';
+  h+='<div colspan="2">Allocated</div><div></div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
+  var remColor=overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)';
+  var remLabel=overAlloc?'OVER':remaining>0?'Outstanding (Credit)':'FULLY PAID';
+  h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.63rem;font-weight:700;color:'+remColor+'">';
+  h+='<div colspan="2">'+remLabel+'</div><div></div><div style="text-align:right">'+fmt(remaining>0?remaining:allocated-total)+'</div><div></div></div>';
   h+='</div>';
-  h+='<button class="btn bh bsm" onclick="addPurPay()" style="margin-bottom:8px">+ Add Payment Row</button>';
+  h+='<button class="btn bh bsm" onclick="addPurPay()" style="margin-bottom:8px">+ Add Row</button>';
   el.innerHTML=h;
 }
-
+function _purDefaultSub(type){
+  if(type==='account'){var ca=accs.find(function(a){return a.name==='Cash Drawer';});return ca&&ca.id||accs[0]&&accs[0].id||'';}
+  if(type==='owner'){var o=parties.find(function(p){return p.party_type==='owner';});return o&&o.id||'';}
+  if(type==='loan'){var l=parties.find(function(p){return p.party_type==='loan';});return l&&l.id||'';}
+  return '';
+}
+function _purDefaultSubName(type,subId){
+  if(type==='credit')return 'Supplier Credit';
+  var acc=accs.find(function(a){return a.id===subId;});if(acc)return acc.name;
+  var pty=parties.find(function(p){return p.id===subId;});if(pty)return pty.name;
+  return type;
+}
 function addPurPay(){
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  _purPayments.push({accId:ca&&ca.id||accs[0]&&accs[0].id,accName:ca&&ca.name||'Cash',amount:0});
+  var subId=_purDefaultSub('account');
+  _purPayments.push({type:'account',subId:subId,subName:_purDefaultSubName('account',subId),amount:0});
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
@@ -3513,11 +3569,18 @@ function removePurPay(i){
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
-function purPayAcc(sel){
+function purPayType(sel){
   var i=Number(sel.dataset.idx);
-  var accId=sel.value;
-  var accName=accId==='__credit__'?'Supplier Credit':(accs.find(function(a){return a.id===accId;})||{name:accId}).name;
-  _purPayments[i].accId=accId;_purPayments[i].accName=accName;
+  var type=sel.value;
+  var subId=_purDefaultSub(type);
+  _purPayments[i]={type:type,subId:subId,subName:_purDefaultSubName(type,subId),amount:_purPayments[i].amount||0};
+  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
+  renderPurPayments(tot);
+}
+function purPaySub(sel){
+  var i=Number(sel.dataset.idx);
+  _purPayments[i].subId=sel.value;
+  _purPayments[i].subName=_purDefaultSubName(_purPayments[i].type,sel.value);
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
@@ -3527,6 +3590,9 @@ function purPayAmt(inp){
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
+// Old compat aliases for accId field (old rows may have accId instead of subId)
+function purPayAcc(sel){purPaySub(sel);}
+
 
 // ── Validate payment allocations before saving ──
 function validatePayments(payments, total, allowCredit){
