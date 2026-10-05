@@ -171,7 +171,7 @@ async function insertWithUniqueNo(table,prefix,buildRow){
   throw lastErr||new Error('Failed to insert after retries');
 }
 var td=function(){return new Date().toISOString().split('T')[0];};
-var CATS=['3PC','2PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
+var CATS=['3PC','2PC','Frock 3PC','Frock 2PC','Frock 1PC','Shirt','Jeans','Trouser','Dupatta','Abaya','Scarf','Maxi','Kurti','Shalwar','Palazzo','Skirt','Leggings','Night Suit','Inner Wear','Others'];
 // -- PRODUCT MASTER DROPDOWNS (loaded from DB) --
 var _fabrics=[];var _seasons=[];var _segments=[];var _designs=[];var _brands=[];
 // Colour master (static list per spec)
@@ -182,7 +182,7 @@ var COLOURS=['Black','White','Off White','Cream','Beige','Brown','Maroon','Red',
 // Size master (static list per spec)  
 var SIZES=['Free Size','XS','S','M','L','XL','XXL','3XL','4XL','5XL',
   '24','26','28','30','32','34','36','Other'];
-var CCOD={'3PC':'3PC','2PC':'2PC','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF','Maxi':'MAX','Kurti':'KRT','Shalwar':'SHL','Palazzo':'PLZ','Skirt':'SKT','Leggings':'LGG','Night Suit':'NGT','Inner Wear':'INW','Others':'OTH'};
+var CCOD={'3PC':'3PC','2PC':'2PC','Frock 3PC':'F3P','Frock 2PC':'F2P','Frock 1PC':'F1P','Shirt':'SHT','Jeans':'JNS','Trouser':'TRS','Dupatta':'DPT','Abaya':'ABY','Scarf':'SCF','Maxi':'MAX','Kurti':'KRT','Shalwar':'SHL','Palazzo':'PLZ','Skirt':'SKT','Leggings':'LGG','Night Suit':'NGT','Inner Wear':'INW','Others':'OTH'};
 var CEMI={'3PC':'X','2PC':'X','Shirt':'X','Jeans':'X','Trouser':'X','Dupatta':'X','Abaya':'X','Scarf':'X'};
 var CU=null,CUP=null,cart=[],payMode='cash',purPayMode='cash',prods=[],accs=[],parties=[],bCat='';
 
