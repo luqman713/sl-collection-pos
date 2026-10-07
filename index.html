@@ -461,7 +461,7 @@ async function iDash(){
   }
   // Purchases & Purchase Returns (read-only, from transactions)
   try{
-    var _pq=async function(tp,from,to){var q=sb.from('transactions').select('total_amount').eq('transaction_type',tp);q=to?q.eq('transaction_date',to):q.gte('transaction_date',from);var r=await q;return(r.data||[]).reduce(function(a,x){return a+Number(x.total_amount||0);},0);};
+    var _pq=async function(tp,from,to){var q=sb.from('transactions').select('total_amount').eq('transaction_type',tp).eq('is_cancelled',false);q=to?q.eq('transaction_date',to):q.gte('transaction_date',from);var r=await q;return(r.data||[]).reduce(function(a,x){return a+Number(x.total_amount||0);},0);};
     var tPur=await _pq('purchase',null,td()),tPRet=await _pq('purchase_return',null,td());
     var mPur=await _pq('purchase',monthStart,null),mPRet=await _pq('purchase_return',monthStart,null);
     if(ds){ds.insertAdjacentHTML('beforeend','<div class="sc"><div class="sl2">Net Purchases (Today)</div><div class="sv">'+fmt(Math.max(0,tPur-tPRet))+'</div><div style="font-size:.5rem;color:var(--ink3)">Purchases: '+fmt(tPur)+(tPRet>0?' | Returns: -'+fmt(tPRet):'')+'</div></div><div class="sc"><div class="sl2">Net Purchases (Month)</div><div class="sv">'+fmt(Math.max(0,mPur-mPRet))+'</div><div style="font-size:.5rem;color:var(--ink3)">Purchases: '+fmt(mPur)+(mPRet>0?' | Returns: -'+fmt(mPRet):'')+'</div></div>');}
@@ -673,7 +673,7 @@ async function completeSale(){
     var accId2=(_bv.cashRows&&_bv.cashRows[0]&&_bv.cashRows[0].accId)||ca&&ca.id; // primary for legacy compat
     var custPhone=($('bphone')&&$('bphone').value||'').trim();
     var wantsWA=$('bwa')&&$('bwa').checked&&isValidPhone(custPhone);
-    var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,customer_phone:custPhone||null,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:_cashSum,payment_mode:(_cashSum<=0?'credit':(_arNeeded||_pre.cashRows.length>1)?'split':'cash'),credit_amount:_arAmt,split_payments:_pre.cashRows.concat(_pre.creditRows).map(function(r){return{account:r.accName,account_id:r.accId,amount:r.amount};}),primary_account_id:accId2,gross_profit:mg}).select().single();
+    var sr2=await sb.from('sales').insert({transaction_id:tr.data.id,customer_party_id:custId,customer_name:cust,customer_phone:custPhone||null,sale_date:td(),subtotal:tot,total_amount:tot,paid_amount:_cashSum,payment_mode:(_cashSum<=0?'credit':(_arNeeded||_pre.cashRows.length>1)?'split':'cash'),split_payments:_pre.cashRows.concat(_pre.creditRows).map(function(r){return{account:r.accName,account_id:r.accId,amount:r.amount};}),primary_account_id:accId2,gross_profit:mg}).select().single();
     if(sr2.error)throw sr2.error;
     var siR=await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:sr2.data.id,transaction_id:tr.data.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
     if(siR&&siR.error){
@@ -1006,7 +1006,7 @@ async function savePur(){
       throw txn.error;
     }
     if(txn.error)throw txn.error;
-    var pur=await sb.from('purchases').insert({transaction_id:txn.data.id,supplier_party_id:sp&&sp.id||null,purchase_date:td(),total_amount:tot,paid_amount:pd,payment_mode:effMode,payable_amount:_purPayable,payment_source_account_id:payAccId}).select().single();
+    var pur=await sb.from('purchases').insert({transaction_id:txn.data.id,supplier_party_id:sp&&sp.id||null,purchase_date:td(),total_amount:tot,paid_amount:pd,payment_mode:effMode,payment_source_account_id:payAccId}).select().single();
     if(pur.error)throw pur.error;
     var piR=await sb.from('purchase_items').insert({purchase_id:pur.data.id,transaction_id:txn.data.id,variant_id:variant.data.id,qty:qty,purchase_price:cst});
     if(piR&&piR.error)throw piR.error;
@@ -1040,7 +1040,9 @@ async function savePur(){
     if($('pc2'))$('pc2').value='';if($('pz'))$('pz').value='';if($('pcl'))$('pcl').value='';
     if($('sku'))$('sku').textContent='Select category...';if($('pprev'))$('pprev').style.display='none';
     if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}
-  }catch(ex){toast('Error: '+ex.message,'err');if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}}
+  }catch(ex){
+    try{if(typeof txn!=='undefined'&&txn&&txn.data&&txn.data.id)await sb.from('transactions').update({is_cancelled:true,cancelled_reason:'Purchase not completed: '+ex.message,posting_error:ex.message}).eq('id',txn.data.id);}catch(x2){}
+    toast('Error: '+ex.message,'err');if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}}
 }
 
 
