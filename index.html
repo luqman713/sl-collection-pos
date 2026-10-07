@@ -626,6 +626,7 @@ function updSum(){
     var caInit=accs.find(function(a){return a.name==='Cash Drawer';});
     _billPayments=[{accId:caInit&&caInit.id||'',accName:caInit&&caInit.name||'Cash',amount:0}];
   }
+  if(_billPayments.length===1&&finalTotal>0&&(!_billPayments[0].amount||_billPayments[0].auto)){_billPayments[0].amount=finalTotal;_billPayments[0].auto=true;}
   renderBillPayments(finalTotal);
 }
 async function completeSale(){
@@ -3415,7 +3416,9 @@ var _billPayments = [];  // [{accId, accName, amount}]
 var _purPayments  = [];  // [{accId, accName, amount}]
 
 // ── Render payment rows for Bill tab ──
+var _billTotalCur=0;
 function renderBillPayments(total){
+  _billTotalCur=Number(total)||0;
   var el=document.getElementById('bill-payments');if(!el)return;
   var allocated=_billPayments.reduce(function(s,r){return s+(r.amount||0);},0);
   var remaining=Math.max(0,total-allocated);
@@ -3431,16 +3434,16 @@ function renderBillPayments(total){
     accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
     h+='<option value="__credit__"'+( row.accId==='__credit__'?' selected':'')+'>Customer Credit</option>';
     h+='</select>';
-    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="billPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
+    h+='<input type="number" inputmode="decimal" min="0" step="any" onfocus="this.select()" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="billPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
     h+='<button onclick="removeBillPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0">×</button>';
     h+='</div>';
   });
   // Footer totals
   h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:6px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.65rem;font-weight:700">';
-  h+='<div>Allocated</div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.65rem;font-weight:700;color:'+(overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)')+'">';
-  h+='<div>'+(overAlloc?'OVER-ALLOCATED':remaining>0?'Outstanding (Credit)':'FULLY PAID')+'</div>';
-  h+='<div style="text-align:right">'+(overAlloc?'- '+fmt(allocated-total):fmt(remaining))+'</div><div></div></div>';
+  h+='<div>Allocated</div><div id="bp-alloc" style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
+  h+='<div id="bp-status" style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.65rem;font-weight:700;color:'+(overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)')+'">';
+  h+='<div id="bp-status-l">'+(overAlloc?'OVER-ALLOCATED':remaining>0?'Outstanding (Credit)':'FULLY PAID')+'</div>';
+  h+='<div id="bp-status-v" style="text-align:right">'+(overAlloc?'- '+fmt(allocated-total):fmt(remaining))+'</div><div></div></div>';
   h+='</div>';
   h+='<button class="btn bh bsm" onclick="addBillPay()" style="margin-bottom:8px">+ Add Payment Row</button>';
   el.innerHTML=h;
@@ -3462,15 +3465,24 @@ function billPayAcc(sel){
   _billPayments[i].accId=accId;_billPayments[i].accName=accName;
   var tot=getBillTotal();renderBillPayments(tot);
 }
+function _billPayTotals(total){
+  var allocated=_billPayments.reduce(function(s,r){return s+(r.amount||0);},0);
+  var remaining=Math.max(0,total-allocated),over=allocated>total;
+  var a=document.getElementById('bp-alloc'),st=document.getElementById('bp-status'),l=document.getElementById('bp-status-l'),v=document.getElementById('bp-status-v');
+  if(a)a.textContent=fmt(allocated);
+  if(st)st.style.color=over?'var(--red)':remaining>0?'var(--gold)':'var(--sage)';
+  if(l)l.textContent=over?'OVER-ALLOCATED':remaining>0?'Outstanding (Credit)':'FULLY PAID';
+  if(v)v.textContent=over?'- '+fmt(allocated-total):fmt(remaining);
+}
 function billPayAmt(inp){
   var i=Number(inp.dataset.idx);
   _billPayments[i].amount=Number(inp.value||0);
-  var tot=getBillTotal();renderBillPayments(tot);
+  _billPayments[i].auto=false;
+  _billPayTotals(getBillTotal());
 }
 function getBillTotal(){
-  // Read from current cart total
-  var totEl=document.getElementById('ctot');
-  return totEl?Number(totEl.textContent.replace(/[^0-9.]/g,''))||0:0;
+  // total last passed to renderBillPayments (updSum sets it after discount)
+  return Number(_billTotalCur)||0;
 }
 
 // ── Render payment rows for Buy tab ──
@@ -3514,17 +3526,17 @@ function renderPurPayments(total){
       h+='<span style="font-size:.58rem;color:var(--ink3);padding:4px">Posted to Supplier Ledger</span>';
     }
     h+='</div>';
-    h+='<input type="number" value="'+(row.amount||'')+'" placeholder="0" '+idx+' oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
+    h+='<input type="number" inputmode="decimal" min="0" step="any" onfocus="this.select()" value="'+(row.amount||'')+'" placeholder="0" '+idx+' oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
     h+='<button onclick="removePurPay('+i+')" style="background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer;padding:0 4px">×</button>';
     h+='</div>';
   });
   // Totals
   h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;background:var(--cream2);border-top:2px solid var(--ink);font-size:.63rem;font-weight:700">';
-  h+='<div colspan="2">Allocated</div><div></div><div style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
+  h+='<div colspan="2">Allocated</div><div></div><div id="pp-alloc" style="text-align:right">'+fmt(allocated)+'</div><div></div></div>';
   var remColor=overAlloc?'var(--red)':remaining>0?'var(--gold)':'var(--sage)';
   var remLabel=overAlloc?'OVER':remaining>0?'Outstanding (Credit)':'FULLY PAID';
-  h+='<div style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.63rem;font-weight:700;color:'+remColor+'">';
-  h+='<div colspan="2">'+remLabel+'</div><div></div><div style="text-align:right">'+fmt(remaining>0?remaining:allocated-total)+'</div><div></div></div>';
+  h+='<div id="pp-status" style="display:grid;grid-template-columns:100px 1fr 90px 28px;padding:5px 8px;background:var(--cream2);font-size:.63rem;font-weight:700;color:'+remColor+'">';
+  h+='<div id="pp-status-l" colspan="2">'+remLabel+'</div><div></div><div id="pp-status-v" style="text-align:right">'+fmt(remaining>0?remaining:allocated-total)+'</div><div></div></div>';
   h+='</div>';
   h+='<button class="btn bh bsm" onclick="addPurPay()" style="margin-bottom:8px">+ Add Row</button>';
   el.innerHTML=h;
@@ -3571,7 +3583,13 @@ function purPayAmt(inp){
   var i=Number(inp.dataset.idx);
   _purPayments[i].amount=Number(inp.value||0);
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
-  renderPurPayments(tot);
+  var allocated=_purPayments.reduce(function(s,r){return s+(r.amount||0);},0);
+  var remaining=Math.max(0,tot-allocated),over=allocated>tot;
+  var a=document.getElementById('pp-alloc'),st=document.getElementById('pp-status'),l=document.getElementById('pp-status-l'),v=document.getElementById('pp-status-v');
+  if(a)a.textContent=fmt(allocated);
+  if(st)st.style.color=over?'var(--red)':remaining>0?'var(--gold)':'var(--sage)';
+  if(l)l.textContent=over?'OVER':remaining>0?'Outstanding (Credit)':'FULLY PAID';
+  if(v)v.textContent=fmt(remaining>0?remaining:allocated-tot);
 }
 // Old compat aliases for accId field (old rows may have accId instead of subId)
 function purPayAcc(sel){purPaySub(sel);}
