@@ -316,7 +316,7 @@ async function loadData(){
   var p=await sb.from('product_variants').select('*,products(name,categories(name,code))').eq('is_active',true);
   var a=await sb.from('cashflow_accounts').select('*').eq('is_active',true).order('sort_order');
   var pa=await sb.from('parties').select('*').eq('is_active',true).order('name');
-  prods=(p.data||[]).map(function(v){return{id:v.id,sku:v.sku,name:v.products&&v.products.name||'',cat:v.products&&v.products.categories&&v.products.categories.name||'',colour:v.colour||'',size:v.size||'',cost:Number(v.purchase_price)||0,stock:0,age:0};});
+  prods=(p.data||[]).map(function(v){return{id:v.id,sku:v.sku,name:v.products&&v.products.name||'',cat:v.products&&v.products.categories&&v.products.categories.name||'',colour:v.colour||'',size:v.size||'',cost:Number(v.purchase_price)||0,fid:v.fabric_id||'',sid:v.season_id||'',gid:v.segment_id||'',did:v.design_id||'',bid:v.brand_id||'',stock:0,age:0};});
   accs=a.data||[];parties=pa.data||[];
   // Resilient inventory query - falls back if new columns missing
   var inv=await sb.from('inventory').select('variant_id,qty_available,age_days');
@@ -507,6 +507,7 @@ function rBill(){
   h+='<input class="ip" id="bs" placeholder="Search products..." oninput="srch()" style="flex:1;margin-bottom:0">';
   h+='<button class="btn bh bsm" onclick="openBarcodeScanner()" title="Optional: scan barcode">Scan</button>';
   h+='</div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:6px"><button class="btn bh bsm" id="bf-toggle" onclick="toggleBF()">Filters</button><button class="btn bh bsm" onclick="clearBF()">Clear Filters</button></div><div id="bf-panel" style="display:none;background:#fff;border:1px solid var(--cream2);border-radius:9px;padding:8px 8px 0;margin-bottom:8px"></div>';
   h+='<div class="pr" id="cp" style="margin-bottom:10px"><div class="pl on" onclick="setBC(\'\',this)">All</div>';
   for(var i=0;i<CATS.length;i++)h+='<div class="pl" onclick="setBC(\''+CATS[i]+'\',this)">'+CATS[i]+'</div>';
   h+='</div><div id="br"></div>';
@@ -556,19 +557,76 @@ function onPhoneInput(){
   if(!valid&&$('bwa'))$('bwa').checked=false;
 }
 function setBC(c,el){bCat=c;var ps=document.querySelectorAll('#cp .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');srch();}
+var _bf={size:'',colour:'',fabric:'',season:'',segment:'',design:'',brand:'',cost:''};
+var _bfOpen=false;
+var _BF_DEFS=[
+  {k:'size',label:'Size',get:function(p){return p.size||'';},name:function(v){return v;}},
+  {k:'colour',label:'Colour',get:function(p){return p.colour||'';},name:function(v){return v;}},
+  {k:'fabric',label:'Fabric',get:function(p){return p.fid||'';},name:function(v){return _bfName(_fabrics,v);}},
+  {k:'season',label:'Season',get:function(p){return p.sid||'';},name:function(v){return _bfName(_seasons,v);}},
+  {k:'segment',label:'Customer Segment',get:function(p){return p.gid||'';},name:function(v){return _bfName(_segments,v);}},
+  {k:'design',label:'Design',get:function(p){return p.did||'';},name:function(v){return _bfName(_designs,v);}},
+  {k:'brand',label:'Brand',get:function(p){return p.bid||'';},name:function(v){return _bfName(_brands,v);}},
+  {k:'cost',label:'Unit Cost',get:function(p){return (p.cost||p.cost===0)?String(p.cost):'';},name:function(v){return 'Rs '+fmt(Number(v));}}
+];
+function _bfName(list,id){var x=(list||[]).find(function(m){return m.id===id;});return x?x.name:'';}
+// does an available item match every active criterion (optionally ignoring one filter, used to build the dropdown options)
+function _bMatch(p,q,skip){
+  if((p.stock||0)<=0)return false;
+  if(bCat&&p.cat!==bCat)return false;
+  if(q&&!((p.name||'').toLowerCase().indexOf(q)>=0||(p.sku||'').toLowerCase().indexOf(q)>=0))return false;
+  for(var i=0;i<_BF_DEFS.length;i++){var d=_BF_DEFS[i];if(d.k===skip)continue;if(_bf[d.k]&&d.get(p)!==_bf[d.k])return false;}
+  return true;
+}
+function _bfCount(){var n=0;for(var k in _bf)if(_bf[k])n++;return n;}
+function _bfOrder(def,vals){
+  if(def.k==='size'){return vals.sort(function(a,b){var x=SIZES.indexOf(a),y=SIZES.indexOf(b);x=x<0?999:x;y=y<0?999:y;return x-y||(a<b?-1:1);});}
+  if(def.k==='cost'){return vals.sort(function(a,b){return Number(a)-Number(b);});}
+  return vals.sort(function(a,b){var na=(def.name(a)||'').toLowerCase(),nb=(def.name(b)||'').toLowerCase();return na<nb?-1:na>nb?1:0;});
+}
+function renderBillFilters(){
+  var tg=$('bf-toggle');var n=_bfCount();
+  if(tg)tg.textContent='Filters'+(n?' ('+n+')':'');
+  var pn=$('bf-panel');if(!pn||!_bfOpen)return;
+  var q=($('bs')&&$('bs').value||'').toLowerCase();
+  var h='<div class="g2">';
+  _BF_DEFS.forEach(function(def){
+    var cnt={};
+    prods.forEach(function(p){if(_bMatch(p,q,def.k)){var v=def.get(p);if(v)cnt[v]=(cnt[v]||0)+1;}});
+    if(_bf[def.k]&&!cnt[_bf[def.k]])cnt[_bf[def.k]]=0;
+    var vals=_bfOrder(def,Object.keys(cnt));
+    if(!vals.length)return;                       // nothing in stock has this attribute: hide the dropdown
+    h+='<div class="fg"><label class="lb">'+def.label+'</label><select class="sl" onchange="setBF(\''+def.k+'\',this.value)"><option value="">Any</option>';
+    vals.forEach(function(v){h+='<option value="'+v+'"'+(_bf[def.k]===v?' selected':'')+'>'+(def.name(v)||v)+' ('+cnt[v]+')</option>';});
+    h+='</select></div>';
+  });
+  h+='</div>';
+  pn.innerHTML=h;
+}
+function toggleBF(){_bfOpen=!_bfOpen;var pn=$('bf-panel');if(pn)pn.style.display=_bfOpen?'block':'none';renderBillFilters();}
+function setBF(k,v){_bf[k]=v||'';srch();}
+function clearBF(){
+  for(var k in _bf)_bf[k]='';
+  bCat='';var ps=document.querySelectorAll('#cp .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');if(ps[0])ps[0].classList.add('on');
+  var bs=$('bs');if(bs)bs.value='';
+  srch();
+}
 function srch(){
   var q=($('bs')&&$('bs').value||'').toLowerCase();
   var r=$('br');if(!r)return;
-  var f=prods.filter(function(p){return(p.stock||0)>0&&(!bCat||p.cat===bCat)&&(!q||(p.name||'').toLowerCase().indexOf(q)>=0||(p.sku||'').toLowerCase().indexOf(q)>=0);});
-  if(!f.length){r.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No items</p></div>';return;}
-  var h='';
+  renderBillFilters();
+  var f=prods.filter(function(p){return _bMatch(p,q,'');});
+  if(!f.length){r.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No items'+((q||bCat||_bfCount())?' match - tap Clear Filters':'')+'</p></div>';return;}
+  var h=(q||bCat||_bfCount())?'<div style="font-size:.6rem;color:var(--ink3);margin-bottom:5px">'+f.length+' item'+(f.length===1?'':'s')+' match</div>':'';
   for(var i=0;i<f.length;i++){
     var p=f[i];
     var ag=p.age>=90?'Dead':p.age>=60?'Slow':p.age>=30?'Ageing':'Fresh';
+    var extra=[_bfName(_fabrics,p.fid),_bfName(_seasons,p.sid),_bfName(_segments,p.gid),_bfName(_designs,p.did),_bfName(_brands,p.bid)].filter(Boolean).join(' - ');
     h+='<div class="pc" onclick="addC(\''+p.id+'\')">';
     h+='<div class="pt">'+emo2(p.cat)+'</div>';
     h+='<div style="flex:1;min-width:0"><div class="psk">'+p.sku+'</div><div class="pn">'+p.name+'</div>';
     h+='<div class="pa">'+p.cat+(p.colour?' - '+p.colour:'')+(p.size?' - '+p.size:'')+' Stock: '+p.stock+'</div>';
+    if(extra)h+='<div class="pa" style="color:var(--ink3)">'+extra+'</div>';
     h+='<div class="pp">Cost: '+fmt(p.cost)+' | '+ag+'</div></div>';
     h+='<div class="pad">+</div></div>';
   }
