@@ -706,6 +706,7 @@ async function completeSale(){
   }
   var splitCash=Number($('sc2')&&$('sc2').value||0);
   var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  _syncPayInputs('bill-payments',_billPayments);
   var _pre=validatePayments(_billPayments,tot,true);
   if(!_pre.ok){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}toast(_pre.msg,'err');return;}
   var _cashSum=_pre.cashRows.reduce(function(a2,r){return a2+r.amount;},0);
@@ -727,8 +728,7 @@ async function completeSale(){
     var trIns=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:td(),party_id:custId,total_amount:tot,paid_amount:_cashSum,payment_status:_cashSum<=0?'credit':_arNeeded?'partial':'paid',performed_by:CUP&&CUP.id};});
     var bn={data:trIns.no};var tr={data:trIns.data};
     // Multi-payment: validate allocations
-    var _bv=validatePayments(_billPayments,tot,true);
-    if(!_bv.ok){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}toast(_bv.msg,'err');return;}
+    var _bv=_pre;
     var accId2=(_bv.cashRows&&_bv.cashRows[0]&&_bv.cashRows[0].accId)||ca&&ca.id; // primary for legacy compat
     var custPhone=($('bphone')&&$('bphone').value||'').trim();
     var wantsWA=$('bwa')&&$('bwa').checked&&isValidPhone(custPhone);
@@ -1002,7 +1002,8 @@ async function savePur(){
   if(purPayMode==='cash'){pd=tot;payAccId=selectedAcc&&selectedAcc.id||ca&&ca.id;if((selectedAcc&&selectedAcc.current_balance||0)<tot&&!confirm('Insufficient balance in '+((selectedAcc&&selectedAcc.name)||'selected account')+'. Continue?'))return;}
   else if(purPayMode==='partial'){pd=Number($('ppd2')&&$('ppd2').value||0);payAccId=selectedAcc&&selectedAcc.id||ca&&ca.id;}
   // ---- Payment allocation (single source of truth for posting) ----
-  var _pr=(_purPayments||[]).filter(function(r){return r&&r.amount>0;});
+  _syncPayInputs('pur-payments',_purPayments);
+  var _pr=(_purPayments||[]).filter(function(r){return r&&r.amount>0;}).map(function(r){return{type:r.type,subId:r.subId,subName:r.subName,amount:Math.round(Number(r.amount)*100)/100};});
   if(!_pr.length){
     if(purPayMode==='cash'&&payAccId)_pr=[{type:'account',subId:payAccId,subName:(selectedAcc&&selectedAcc.name)||'Cash',amount:tot}];
     else if(purPayMode==='partial'&&payAccId&&pd>0)_pr=[{type:'account',subId:payAccId,subName:(selectedAcc&&selectedAcc.name)||'Cash',amount:pd}];
@@ -3654,6 +3655,11 @@ function purPayAcc(sel){purPaySub(sel);}
 
 
 // ── Validate payment allocations before saving ──
+function _syncPayInputs(containerId,arr){
+  var c=document.getElementById(containerId);if(!c||!arr)return;
+  var ins=c.querySelectorAll('input[data-idx]');
+  for(var i=0;i<ins.length;i++){var ix=Number(ins[i].getAttribute('data-idx'));if(arr[ix])arr[ix].amount=Number(ins[i].value||0);}
+}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
@@ -3666,7 +3672,8 @@ function validatePayments(payments, total, allowCredit){
   var cashRows=payments.filter(function(r){return r.accId!=='__credit__';});
   if(creditRows.length>1)return {ok:false,msg:'Only one credit row allowed'};
   if(!allowCredit&&creditRows.length)return {ok:false,msg:'Credit not allowed here'};
-  return {ok:true,cashRows:cashRows,creditRows:creditRows,allocated:allocated,outstanding:total-allocated};
+  var _snap=function(r){var c={};for(var k in r)c[k]=r[k];c.amount=Math.round(Number(r.amount)*100)/100;return c;};
+  return {ok:true,cashRows:cashRows.map(_snap),creditRows:creditRows.map(_snap),allocated:allocated,outstanding:total-allocated};
 }
 
 </script>
