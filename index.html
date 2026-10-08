@@ -1271,7 +1271,7 @@ function rCash(){
   h+='<div class="fg" id="cc-wrap"><label class="lb">Category</label><select class="sl" id="cc"></select></div>';
   h+='<div class="fg"><label class="lb">Description</label><input class="ip" id="cdsc" placeholder="Details"></div>';
   h+='<div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="camt" type="number" placeholder="0"></div>';
-  h+='<div class="fg"><label class="lb">Account</label><select class="sl" id="cacc">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
+  h+='<div class="fg"><label class="lb">Account</label><select class="sl" id="cacc">'+payAccs().map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div>';
   h+='<div class="ib" id="cclass-preview" style="display:none;border-color:var(--gold)"></div>';
   h+='<button class="btn bi" onclick="saveCash()">Save</button></div>';
   h+='<div class="pr" style="margin-bottom:8px" id="cl-pills">';
@@ -3490,7 +3490,7 @@ function renderBillPayments(total){
   _billPayments.forEach(function(row,i){
     h+='<div style="display:grid;grid-template-columns:1fr 90px 28px;padding:5px 8px;border-top:1px solid var(--cream2);background:white">';
     h+='<select class="sl" data-idx="'+i+'" onchange="billPayAcc(this)" style="font-size:.6rem;height:28px;padding:2px 4px">';
-    accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
+    payAccs().forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.accId?' selected':'')+'>'+a.name+'</option>';});
     h+='<option value="__credit__"'+( row.accId==='__credit__'?' selected':'')+'>Customer Credit</option>';
     h+='</select>';
     h+='<input type="number" inputmode="decimal" min="0" step="any" onfocus="this.select()" value="'+(row.amount||'')+'" placeholder="0" data-idx="'+i+'" oninput="billPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
@@ -3567,7 +3567,7 @@ function renderPurPayments(total){
     h+='<div style="padding:0 4px">';
     if(row.type==='account'){
       h+='<select class="sl" '+idx+' onchange="purPaySub(this)" style="font-size:.58rem;height:28px;width:100%">';
-      accs.forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.subId?' selected':'')+'>'+a.name+'</option>';});
+      payAccs().forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.subId?' selected':'')+'>'+a.name+'</option>';});
       h+='</select>';
     } else if(row.type==='owner'){
       var owners=parties.filter(function(p){return p.party_type==='owner';});
@@ -3660,6 +3660,8 @@ function _syncPayInputs(containerId,arr){
   var ins=c.querySelectorAll('input[data-idx]');
   for(var i=0;i<ins.length;i++){var ix=Number(ins[i].getAttribute('data-idx'));if(arr[ix])arr[ix].amount=Number(ins[i].value||0);}
 }
+// accounts that hold real money (cash / bank / e-wallet). 'owner' type accounts are not payment accounts.
+function payAccs(){return accs.filter(function(a){return !a.account_type||a.account_type==='cash'||a.account_type==='bank'||a.account_type==='emoney';});}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
