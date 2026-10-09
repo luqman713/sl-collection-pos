@@ -1355,18 +1355,18 @@ function refreshCashPartyList(){
     return p.party_type===ptype && (p.current_balance||0)!==0;
   });
   // If none with balance, show all of that type (owner/loan always show all)
-  if(!filtered.length||ptype==='owner'||ptype==='loan')
-    filtered=parties.filter(function(p){return p.party_type===ptype;});
+  if(!filtered.length||ptype==='owner'||ptype==='loan'||ptype==='committee')
+    filtered=parties.filter(function(p){return p.party_type===ptype&&(ptype!=='committee'||p.is_active!==false);});
   sel.innerHTML='<option value="">Select...</option>'+filtered.map(function(p){
     var bal=p.current_balance||0;
     return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
   }).join('');
   // If no parties found for owner/loan, show add-new button hint
-  if(ptype==='loan'||(!filtered.length&&ptype==='owner')){
+  if(ptype==='loan'||ptype==='committee'||(!filtered.length&&ptype==='owner')){
     var hint=document.getElementById('cpty-empty-hint');
     if(!hint){hint=document.createElement('div');hint.id='cpty-empty-hint';hint.className='ib';hint.style.fontSize='.6rem';sel.parentNode.appendChild(hint);}
     hint.style.display='block';
-    hint.innerHTML=(filtered.length?'Need another '+ptype+' party? ':'No '+ptype+' record found. ')+'<button class="btn bh bsm" onclick="createPartyQuick(\''+ptype+'\')">+ Add '+ptype+' party</button>';
+    hint.innerHTML=ptype==='committee'?((filtered.length?'Need another committee? ':'No committee found. ')+'<button class="btn bh bsm" onclick="oCommittee()">+ Add committee</button>'):((filtered.length?'Need another '+ptype+' party? ':'No '+ptype+' record found. ')+'<button class="btn bh bsm" onclick="createPartyQuick(\''+ptype+'\')">+ Add '+ptype+' party</button>');
   } else {
     var hint2=document.getElementById('cpty-empty-hint');
     if(hint2)hint2.style.display='none';
@@ -3924,6 +3924,7 @@ async function saveCommittee(id){
     }
     await loadData();cmo();toast(id?'Committee updated':'Committee added','ok');
     if($('lc'))renderCommittees();
+    if($('cpty'))refreshCashPartyList();
   }catch(ex){toast(ex.message,'err');}
 }
 function oCmTxn(kind,id){
