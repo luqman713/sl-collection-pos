@@ -713,6 +713,16 @@ async function completeSale(){
   var _arAmt=Math.round((tot-_cashSum)*100)/100;
   var _arNeeded=_arAmt>0;
   if(_arNeeded&&cust==='Walk-in'){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}toast('Enter customer name for the credit/unpaid portion','err');return;}
+  // ---- confirmation (nothing is written until the cashier confirms) ----
+  var _cf='<div>'+cfmRow('Customer',cust)+cfmSec('Items sold (stock will be reduced)');
+  cart.forEach(function(it){_cf+=cfmRow(it.name+' x'+it.qty,'Rs '+fmt(it.price*it.qty))+'<div style="font-size:.6rem;color:#8a7a65;text-align:right">stock -'+it.qty+'</div>';});
+  _cf+=cfmSec('Amounts')+cfmRow('Subtotal','Rs '+fmt(subtotal))+(disc>0?cfmRow('Discount','- Rs '+fmt(disc)):'')+cfmRow('Total sale','Rs '+fmt(tot))+cfmSec('Payment received');
+  _pre.cashRows.forEach(function(r){_cf+=cfmRow(r.accName||'Account','Rs '+fmt(r.amount),'#2e7d32');});
+  _cf+=cfmRow('Total received','Rs '+fmt(_cashSum));
+  if(_arAmt>0)_cf+=cfmRow('Outstanding (customer owes)','Rs '+fmt(_arAmt),'#b26a00');
+  _cf+='</div>';
+  var _okSale=await askConfirm('Confirm Sale',_cf,'Confirm Sale');
+  if(!_okSale){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}return;}
   var custId=null;
   if(payMode==='credit'||payMode==='split'||_arNeeded){
     var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
@@ -803,16 +813,18 @@ function selP(el){
   if(field==='bc')onCI();
 }
 function newPM(t){omo('New '+t,'<div class="fg"><label class="lb">Name</label><input class="ip" id="np-n" placeholder="Full name"></div><div class="fg"><label class="lb">Phone</label><input class="ip" id="np-p" placeholder="03XX"></div><div class="fg"><label class="lb">Opening Balance</label><input class="ip" id="np-b" type="number" placeholder="0"></div><button class="btn bi" onclick="saveNP(\''+t+'\')">Create</button>');}
-async function saveNP(t){var n=$('np-n')&&$('np-n').value.trim();if(!n){toast('Enter name','err');return;}var r=await sb.from('parties').insert({party_type:t,name:n,phone:$('np-p')&&$('np-p').value||'',opening_balance:Number($('np-b')&&$('np-b').value||0),current_balance:Number($('np-b')&&$('np-b').value||0),created_by:CUP&&CUP.id}).select().single();if(r.error){toast(r.error.message,'err');return;}parties.push(r.data);if(t==='customer'&&$('bc'))$('bc').value=n;if(t==='supplier'&&$('ps2'))$('ps2').value=n;cmo();toast('Created: '+n,'ok');}
+async function saveNP(t){var n=$('np-n')&&$('np-n').value.trim();if(!n){toast('Enter name','err');return;}var r=await sb.from('parties').insert({party_type:t,name:n,phone:$('np-p')&&$('np-p').value||'',opening_balance:Number($('np-b')&&$('np-b').value||0),current_balance:Number($('np-b')&&$('np-b').value||0),created_by:CUP&&CUP.id}).select().single();if(r.error){toast(r.error.message,'err');return;}parties.push(r.data);if(t==='customer'&&$('bc'))$('bc').value=n;if(t==='supplier'&&$('ps2'))$('ps2').value=n;cmo();try{if($('lc'))renderLed();if($('cpty'))refreshCashPartyList();}catch(e){}toast('Created: '+n,'ok');}
 function oRet(){
   var opts=prods.map(function(p){return'<option value="'+p.id+'" data-cost="'+p.cost+'">'+p.name+' ('+p.sku+')</option>';}).join('');
+  var accOpts=payAccs().map(function(a){return'<option value="'+a.id+'"'+(a.name==='Cash Drawer'?' selected':'')+'>'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('');
   omo('Sales Return',
     '<div class="ib">Bill number is optional. If provided, system verifies the sale exists.</div>'+
     '<div class="fg"><label class="lb">Bill No (optional)</label><input class="ip" id="sr-b" placeholder="BILL-0001 (optional)"></div>'+
     '<div class="fg"><label class="lb">Product *</label><select class="sl" id="sr-s" onchange="autoFillCost()"><option value="">Select...</option>'+opts+'</select></div>'+
-    '<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sr-q" type="number" placeholder="0"></div>'+
+    '<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="sr-q" type="number" inputmode="numeric" placeholder="0"></div>'+
     '<div class="fg"><label class="lb">Cost Price Rs</label><input class="ip" id="sr-cost" type="number" placeholder="Auto-filled" readonly style="background:var(--cream2)"></div></div>'+
-    '<div class="fg"><label class="lb">Refund Amount Rs (sale price)</label><input class="ip" id="sr-p" type="number" placeholder="Enter sale price for refund"></div>'+
+    '<div class="fg"><label class="lb">Refund per unit Rs (sale price) *</label><input class="ip" id="sr-p" type="number" inputmode="decimal" placeholder="Enter sale price for refund"></div>'+
+    '<div class="fg"><label class="lb">Refund paid from *</label><select class="sl" id="sr-acc">'+accOpts+'</select></div>'+
     '<div class="fg"><label class="lb">Reason *</label><input class="ip" id="sr-r" placeholder="Defective, wrong size..."></div>'+
     '<button class="btn bi" onclick="processReturn()">Process Return</button>'
   );
@@ -824,36 +836,56 @@ function autoFillCost(){
   var costEl=document.getElementById('sr-cost');
   if(costEl)costEl.value=cost;
 }
+async function _cancelTxn(id,why){try{await sb.from('transactions').update({is_cancelled:true,cancelled_reason:why,posting_error:why}).eq('id',id);}catch(e){}}
 async function processReturn(){
-  var btnEl=event&&event.target;if(btnEl&&btnEl.disabled)return;
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
+  var btnEl=event&&event.target;
   var bn=($('sr-b')&&$('sr-b').value||'').trim();
   var vid=$('sr-s')&&$('sr-s').value;
   var qty=Number($('sr-q')&&$('sr-q').value||0);
   var pr=Number($('sr-p')&&$('sr-p').value||0);
   var rsn=($('sr-r')&&$('sr-r').value||'').trim();
-  var costVal=Number($('sr-cost')&&$('sr-cost').value||0);
+  var accId=$('sr-acc')&&$('sr-acc').value;
   if(!vid){toast('Select a product','err');return;}
   if(!qty||qty<=0){toast('Enter quantity','err');return;}
   if(!pr||pr<=0){toast('Enter refund amount','err');return;}
+  if(!accId){toast('Select the account the refund is paid from','err');return;}
   if(!rsn){toast('Enter reason','err');return;}
-  // FIX 1: Validate sale exists for this product (if bill no provided)
   var refTxnId=null;
   if(bn){
     var ot=await sb.from('transactions').select('id').eq('transaction_no',bn).single();
     if(ot.error||!ot.data){toast('Bill '+bn+' not found','err');return;}
-    // Verify item was in this sale
     var si=await sb.from('sale_items').select('qty').eq('transaction_id',ot.data.id).eq('variant_id',vid).single();
     if(si.error||!si.data){toast('This product was not in bill '+bn,'err');return;}
     if(qty>(si.data&&si.data.qty||0)){toast('Return qty ('+qty+') exceeds sold qty ('+(si.data&&si.data.qty||0)+')','err');return;}
     refTxnId=ot.data.id;
   } else {
-    // No bill number  -  verify item was ever sold (check sale_items)
     var anyS=await sb.from('sale_items').select('qty').eq('variant_id',vid).limit(1);
     if(!(anyS.data&&anyS.data.length)){toast('No sales record found for this product','err');return;}
-  }var ca=accs.find(function(a){return a.name==='Cash Drawer';});var ra=qty*pr;try{var r2=await sb.rpc('process_stock_movement',{p_variant_id:vid,p_movement_type:'sales_return',p_qty:qty,p_reason:rsn,p_reference_no:bn,p_cost_impact:pr,p_user_id:CUP&&CUP.id});if(r2.data&&!r2.data.success){toast(r2.data.error,'err');return;}var txnIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),total_amount:ra,paid_amount:ra,payment_status:'paid',reference_transaction_id:refTxnId||null,performed_by:CUP&&CUP.id,notes:rsn};});var rn={data:txnIns.no};var txn={data:txnIns.data};if(ca)await sb.from('ledger_entries').insert({transaction_id:txn.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:ra,description:'Refund '+(bn||''),created_by:CUP&&CUP.id});await loadData();toast('Return done: '+rn.data,'ok');cmo();}catch(ex){toast(ex.message,'err');}}
-function oExp(){var cats=['Daily Operating Expenses','Rent Expense','Utility Expenses','Committee Savings 1','Committee Savings 2','Shopping Bag Expenses','Security Guard Expenses','Battery Expenses','Miscellaneous Expenses','Other'];omo('Expense','<div class="fg"><label class="lb">Category</label><select class="sl" id="ec">'+cats.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div><div class="fg"><label class="lb">Description</label><input class="ip" id="ed" placeholder="Details"></div><div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="ea" type="number" placeholder="0"></div><div class="fg"><label class="lb">Paid From</label><select class="sl" id="es">'+accs.map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div><button class="btn br" onclick="saveExp()">Save</button>');}
-async function saveExp(){var cat=$('ec')&&$('ec').value;var desc=$('ed')&&$('ed').value.trim();var amt=Number($('ea')&&$('ea').value||0);var src=$('es')&&$('es').value;if(!amt||!desc){toast('Fill all','err');return;}var ec=await sb.from('expense_categories').select('id').eq('name',cat).maybeSingle();try{var expIns=await insertWithUniqueNo('transactions','EXP',function(noVal){return{transaction_no:noVal,transaction_type:'expense',transaction_date:td(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:desc};});var en={data:expIns.no};var t={data:expIns.data};if(ec.data)await insCash({transaction_id:t.data.id,category_id:ec.data.id,entry_date:td(),amount:amt,direction:'out',account_id:src,description:desc});await sb.rpc('post_transaction_ledger',{p_txn_id:t.data.id,p_txn_type:'expense',p_payment_mode:'cash',p_total:amt,p_paid:amt,p_account_id:src,p_user_id:CUP&&CUP.id});toast('Expense: '+fmt(amt),'ok');cmo();await loadData();}catch(ex){toast(ex.message,'err');}}
+  }
+  var racc=accs.find(function(a){return a.id===accId;});
+  var prod=prods.find(function(p){return p.id===vid;});
+  var ra=Math.round(qty*pr*100)/100;
+  var cf='<div>'+(bn?cfmRow('Original bill',bn):'')+cfmRow('Reason',rsn)+cfmSec('Stock')+cfmRow((prod?prod.name:'Item')+' x'+qty,'stock +'+qty)+(prod?cfmRow('Stock after',String((prod.stock||0)+qty)):'')+cfmSec('Money to customer')+cfmRow('Refund ('+qty+' x Rs '+fmt(pr)+')','Rs '+fmt(ra),'#c62828')+cfmRow('Paid from',(racc&&racc.name)||'')+(racc?cfmRow('Account balance after','Rs '+fmt((racc.current_balance||0)-ra)):'')+'</div>';
+  var okR=await askConfirm('Confirm Sales Return',cf,'Confirm Return');
+  if(!okR)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
+  var txnIns=null;
+  try{
+    txnIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),total_amount:ra,paid_amount:ra,payment_status:'paid',reference_transaction_id:refTxnId||null,performed_by:CUP&&CUP.id,notes:rsn};});
+    if(txnIns.error||!txnIns.data)throw new Error((txnIns.error&&txnIns.error.message)||'Could not create return record');
+    var r2=await sb.rpc('process_stock_movement',{p_variant_id:vid,p_movement_type:'sales_return',p_qty:qty,p_reason:rsn,p_reference_no:bn||txnIns.no,p_cost_impact:pr,p_user_id:CUP&&CUP.id,p_txn_id:txnIns.data.id});
+    if(!r2.data||!r2.data.success){await _cancelTxn(txnIns.data.id,'Return not completed: '+((r2.data&&r2.data.error)||'stock movement failed'));toast((r2.data&&r2.data.error)||'Stock movement failed','err');return;}
+    await sb.from('ledger_entries').insert({transaction_id:txnIns.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:accId,amount:ra,description:'Sales return refund '+(bn||txnIns.no)+' ('+((racc&&racc.name)||'')+')',created_by:CUP&&CUP.id});
+    await insCash({transaction_id:txnIns.data.id,entry_date:td(),amount:ra,direction:'out',account_id:accId,description:'Sales return refund '+(bn?'(Bill '+bn+') ':'')+'- '+rsn,nature:'payment',party_category:'Customer Refund'});
+    await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',txnIns.data.id);
+    await loadData();toast('Return done: '+txnIns.no,'ok');cmo();
+  }catch(ex){
+    if(txnIns&&txnIns.data)await _cancelTxn(txnIns.data.id,'Return not completed: '+ex.message);
+    toast(ex.message,'err');
+  }
+}
+function oExp(){var cats=['Daily Operating Expenses','Rent Expense','Utility Expenses','Committee Savings 1','Committee Savings 2','Shopping Bag Expenses','Security Guard Expenses','Battery Expenses','Miscellaneous Expenses','Other'];omo('Expense','<div class="fg"><label class="lb">Category</label><select class="sl" id="ec">'+cats.map(function(c){return'<option>'+c+'</option>';}).join('')+'</select></div><div class="fg"><label class="lb">Description</label><input class="ip" id="ed" placeholder="Details"></div><div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="ea" type="number" placeholder="0"></div><div class="fg"><label class="lb">Paid From</label><select class="sl" id="es">'+payAccs().map(function(a){return'<option value="'+a.id+'">'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('')+'</select></div><button class="btn br" onclick="saveExp()">Save</button>');}
+async function saveExp(){var cat=$('ec')&&$('ec').value;var desc=$('ed')&&$('ed').value.trim();var amt=Number($('ea')&&$('ea').value||0);var src=$('es')&&$('es').value;if(!amt||!desc){toast('Fill all','err');return;}var _ea=accs.find(function(a){return a.id===src;});var _okE=await askConfirm('Confirm Expense','<div>'+cfmRow('Category',cat)+cfmRow('Description',desc)+cfmRow('Paid from',(_ea&&_ea.name)||'')+cfmRow('Amount','Rs '+fmt(amt),'#c62828')+(_ea?cfmRow('Account balance after','Rs '+fmt((_ea.current_balance||0)-amt)):'')+'</div>','Confirm');if(!_okE)return;var ec=await sb.from('expense_categories').select('id').eq('name',cat).maybeSingle();try{var expIns=await insertWithUniqueNo('transactions','EXP',function(noVal){return{transaction_no:noVal,transaction_type:'expense',transaction_date:td(),total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:desc};});var en={data:expIns.no};var t={data:expIns.data};if(ec.data)await insCash({transaction_id:t.data.id,category_id:ec.data.id,entry_date:td(),amount:amt,direction:'out',account_id:src,description:desc});await sb.rpc('post_transaction_ledger',{p_txn_id:t.data.id,p_txn_type:'expense',p_payment_mode:'cash',p_total:amt,p_paid:amt,p_account_id:src,p_user_id:CUP&&CUP.id});toast('Expense: '+fmt(amt),'ok');cmo();await loadData();}catch(ex){toast(ex.message,'err');}}
 
 
 function rInv(){
@@ -1017,6 +1049,14 @@ async function savePur(){
   var _purPayable=Math.round((tot-_purPaid)*100)/100;
   if(!_purFail&&_purPayable>0&&!sp)_purFail='Select/enter a supplier for the unpaid (credit) portion';
   if(_purFail){toast(_purFail,'err');if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}return;}
+  // ---- confirmation (nothing is written until confirmed) ----
+  var _pc='<div>'+cfmRow('Supplier',sup||'(none)')+cfmSec('Stock to be added')+cfmRow(nm+' ('+cat+(cl?' / '+cl:'')+(sz?' / '+sz:'')+') x'+qty,'Rs '+fmt(tot))+'<div style="font-size:.6rem;color:#8a7a65;text-align:right">stock +'+qty+' @ Rs '+fmt(cst)+'</div>'+cfmSec('Payment');
+  _purNonCredit.forEach(function(r){_pc+=cfmRow(r.type==='account'?(r.subName||'Account'):(r.type==='owner'?'Owner capital ('+(r.subName||'')+')':'Loan ('+(r.subName||'')+')'),'Rs '+fmt(r.amount),'#c62828');});
+  _pc+=cfmRow('Total paid now','Rs '+fmt(_purPaid));
+  if(_purPayable>0)_pc+=cfmRow('Payable to supplier','Rs '+fmt(_purPayable),'#b26a00');
+  _pc+='</div>';
+  var _okPur=await askConfirm('Confirm Purchase',_pc,'Confirm Purchase');
+  if(!_okPur){if(btnEl){btnEl.disabled=false;btnEl.textContent='Save Purchase';}return;}
   pd=_purPaid;
   var effMode=_purPaid<=0?'credit':(_purPayable>0?'partial':((_purNonCredit.length===1&&_purNonCredit[0].type==='owner')?'owner':'cash'));
   var _firstAcct=_purNonCredit.find(function(r){return r.type==='account';});
@@ -1120,24 +1160,44 @@ function setLT(t,el){lTab=t;var ps=document.querySelectorAll('#lt .pl');for(var 
 async function renderLed(){
   var c=$('lc');if(!c)return;
   var tmap={cust:'customer',sup:'supplier',comm:'committee',own:'owner',loan:'loan'};
-  var pt=tmap[lTab];
-  var items=parties.filter(function(p){return p.party_type===pt&&(p.current_balance||0)!==0;});
-  if(!items.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No outstanding balances</p></div>';return;}
-  var tot=items.reduce(function(s,i){return s+(i.current_balance||0);},0);
-  var h='<div class="card" style="background:var(--ink);border:none;margin-bottom:12px"><div style="font-size:.55rem;color:rgba(255,255,255,.5);text-transform:uppercase">Total</div><div style="font-size:1.3rem;font-weight:700;color:white">'+fmt(Math.abs(tot))+'</div></div>';
-  for(var i=0;i<items.length;i++){var it=items[i];h+='<div class="card" style="cursor:pointer;padding:12px 13px;margin-bottom:8px" onclick="showStmt(\''+it.id+'\')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:.75rem;font-weight:700">'+it.name+'</div><div style="font-size:.58rem;color:var(--ink3)">Tap for statement</div></div><div style="text-align:right"><div style="font-size:.9rem;font-weight:700;color:'+(it.current_balance>0?'var(--red)':'var(--sage)')+'">'+fmt(Math.abs(it.current_balance||0))+'</div></div></div></div>';}
+  var pt=tmap[lTab];var isLoan=pt==='loan';
+  var items=parties.filter(function(p){return p.party_type===pt&&p.is_active!==false&&(isLoan||(p.current_balance||0)!==0);});
+  var addBtn=isLoan?'<button class="btn bi bsm" style="margin-bottom:10px" onclick="newPM(\'loan\')">+ Add New Loan Party</button>':'';
+  if(!items.length){c.innerHTML=addBtn+'<div class="em"><div class="ei">-</div><p style="font-size:.72rem">'+(isLoan?'No loan parties yet. Add one above.':'No outstanding balances')+'</p></div>';return;}
+  var tot=items.reduce(function(s2,i2){return s2+(i2.current_balance||0);},0);
+  var h=addBtn+'<div class="card" style="background:var(--ink);border:none;margin-bottom:12px"><div style="font-size:.55rem;color:rgba(255,255,255,.5);text-transform:uppercase">'+(isLoan?(tot<0?'Total loans outstanding (we owe)':tot>0?'Total loans given (owed to us)':'All loans settled'):'Total')+'</div><div style="font-size:1.3rem;font-weight:700;color:white">'+fmt(Math.abs(tot))+'</div></div>';
+  for(var i=0;i<items.length;i++){
+    var it=items[i];var b=it.current_balance||0;
+    var note=isLoan?(b<0?'We owe':b>0?'Owed to us':'Settled'):'Tap for statement';
+    h+='<div class="card" style="cursor:pointer;padding:12px 13px;margin-bottom:8px" onclick="showStmt(\''+it.id+'\')"><div style="display:flex;justify-content:space-between;align-items:center"><div><div style="font-size:.75rem;font-weight:700">'+_esc(it.name)+'</div><div style="font-size:.58rem;color:var(--ink3)">'+note+(isLoan?' - tap for statement':'')+'</div></div><div style="text-align:right"><div style="font-size:.9rem;font-weight:700;color:'+(isLoan?(b<0?'var(--red)':'var(--sage)'):(b>0?'var(--red)':'var(--sage)'))+'">'+fmt(Math.abs(b))+'</div></div></div></div>';
+  }
   c.innerHTML=h;
 }
 async function showStmt(id){
   var it=parties.find(function(p){return p.id===id;});
-  var s=await sb.rpc('get_party_statement',{p_party_id:id});
-  var bal=s.data&&s.data.length?s.data[s.data.length-1].running_balance:0;
-  var h='<div style="background:var(--cream2);border-radius:9px;padding:11px;margin-bottom:12px;display:flex;justify-content:space-between"><div><div style="font-size:.58rem;color:var(--ink3)">Balance</div><div style="font-size:1.1rem;font-weight:700;color:var(--red)">'+fmt(Math.abs(bal))+'</div></div><div style="text-align:right"><div style="font-size:.58rem;color:var(--ink3)">Txns</div><div style="font-size:1.1rem;font-weight:700">'+(s.data&&s.data.length||0)+'</div></div></div>';
-  h+='<div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">';
-  var rows=s.data||[];
-  for(var i=0;i<rows.length;i++){var r=rows[i];h+='<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:6px 10px;border-bottom:1px solid var(--cream2)"><div style="font-size:.62rem;font-weight:600">'+(r.entry_date||'')+'<div style="font-size:.54rem;color:var(--ink3)">'+(r.description||'').substring(0,20)+'</div></div><div style="text-align:right;font-size:.62rem;color:var(--red)">'+((r.debit||0)>0?fmt(r.debit):'')+'</div><div style="text-align:right;font-size:.62rem;color:var(--sage)">'+((r.credit||0)>0?fmt(r.credit):'')+'</div><div style="text-align:right;font-size:.62rem;font-weight:700">'+fmt(Math.abs(r.running_balance||0))+'</div></div>';}
+  var s2=await sb.rpc('get_party_statement',{p_party_id:id});
+  var rows=s2.data||[];
+  var open=Number(it&&it.opening_balance||0);
+  var dr=rows.reduce(function(a,r){return a+Number(r.debit||0);},0);
+  var cr=rows.reduce(function(a,r){return a+Number(r.credit||0);},0);
+  var bal=Math.round((open+dr-cr)*100)/100;              // debit adds, credit subtracts (same rule as the database trigger)
+  var cur=Number(it&&it.current_balance||0);
+  var isLoan=it&&it.party_type==='loan';
+  var meaning=isLoan?(bal<0?'Outstanding loan (we owe)':bal>0?'Loan given (owed to us)':'Settled'):(bal>0?'They owe us':bal<0?'We owe':'Settled');
+  var h='<div style="background:var(--cream2);border-radius:9px;padding:11px;margin-bottom:10px"><div style="display:flex;justify-content:space-between"><div><div style="font-size:.58rem;color:var(--ink3)">Current balance</div><div style="font-size:1.15rem;font-weight:700;color:'+(bal<0?'var(--red)':'var(--sage)')+'">'+fmt(Math.abs(bal))+'</div><div style="font-size:.58rem;color:var(--ink3)">'+meaning+'</div></div><div style="text-align:right"><div style="font-size:.58rem;color:var(--ink3)">Entries</div><div style="font-size:1.1rem;font-weight:700">'+rows.length+'</div></div></div>';
+  h+='<div style="display:flex;justify-content:space-between;margin-top:8px;font-size:.62rem"><span>Opening: <b>'+fmt(open)+'</b></span><span>'+(isLoan?'Repaid (debit)':'Debit')+': <b>'+fmt(dr)+'</b></span><span>'+(isLoan?'Received (credit)':'Credit')+': <b>'+fmt(cr)+'</b></span></div>';
+  if(Math.abs(bal-cur)>0.009)h+='<div style="margin-top:6px;font-size:.6rem;color:var(--red)">Note: stored balance '+fmt(cur)+' differs from statement - please report.</div>';
+  h+='</div><div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">';
+  h+='<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:6px 10px;background:var(--cream2);font-size:.55rem;font-weight:700;text-transform:uppercase"><div>Date / details</div><div style="text-align:right">Debit</div><div style="text-align:right">Credit</div><div style="text-align:right">Balance</div></div>';
+  if(open!==0)h+='<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:6px 10px;border-bottom:1px solid var(--cream2);font-size:.62rem"><div>Opening balance</div><div></div><div></div><div style="text-align:right;font-weight:600">'+fmt(open)+'</div></div>';
+  var run=open;
+  for(var i=0;i<rows.length;i++){
+    var r=rows[i];run=Math.round((run+Number(r.debit||0)-Number(r.credit||0))*100)/100;
+    h+='<div style="display:grid;grid-template-columns:1.5fr 1fr 1fr 1fr;padding:6px 10px;border-bottom:1px solid var(--cream2)"><div style="font-size:.62rem;font-weight:600">'+(r.entry_date||'')+' <span style="font-weight:400;color:var(--ink3)">'+_esc(r.transaction_no||'')+'</span><div style="font-size:.54rem;color:var(--ink3)">'+_esc((r.description||'').substring(0,34))+'</div></div><div style="text-align:right;font-size:.62rem;color:var(--red)">'+((r.debit||0)>0?fmt(r.debit):'')+'</div><div style="text-align:right;font-size:.62rem;color:var(--sage)">'+((r.credit||0)>0?fmt(r.credit):'')+'</div><div style="text-align:right;font-size:.62rem;font-weight:600">'+fmt(run)+'</div></div>';
+  }
+  if(!rows.length&&open===0)h+='<div style="padding:12px;font-size:.66rem;color:var(--ink3);text-align:center">No transactions yet</div>';
   h+='</div>';
-  omo(it&&it.name||'Statement',h);
+  omo((it&&it.name)||'Statement',h);
 }
 function oLE(){omo('Add Entry','<div class="fg"><label class="lb">Party Name</label><input class="ip" id="le-p" placeholder="Name"></div><div class="fg"><label class="lb">Type</label><select class="sl" id="le-t"><option>Payment Received</option><option>Payment Made</option><option>Owner Deposit</option><option>Owner Withdrawal</option><option>Loan Received</option><option>Repayment</option></select></div><div class="fg"><label class="lb">Amount Rs</label><input class="ip" id="le-a" type="number" placeholder="0"></div><div class="fg"><label class="lb">Notes</label><input class="ip" id="le-n" placeholder="Optional"></div><button class="btn bi" onclick="saveLE()">Save</button>');}
 async function saveLE(){var pn=$('le-p')&&$('le-p').value.trim();var t=$('le-t')&&$('le-t').value;var amt=Number($('le-a')&&$('le-a').value||0);var n=$('le-n')&&$('le-n').value||'';if(!pn||!amt){toast('Fill party and amount','err');return;}var tmap={cust:'customer',sup:'supplier',comm:'committee',own:'owner',loan:'loan'};var pt=tmap[lTab];var p=parties.find(function(p){return p.name===pn&&p.party_type===pt;});if(!p){var nr=await sb.from('parties').insert({party_type:pt,name:pn,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);p=nr.data;}}var isCr=['Payment Received','Owner Deposit','Loan Received'].includes(t);var leIns=await insertWithUniqueNo('transactions','MAN',function(noVal){return{transaction_no:noVal,transaction_type:'payment_received',transaction_date:td(),party_id:p&&p.id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:t+': '+n};});var no={data:leIns.no};var txn={data:leIns.data};await sb.from('ledger_entries').insert({transaction_id:txn.data&&txn.data.id,entry_date:td(),entry_type:isCr?'credit':'debit',account_category:'party',party_id:p&&p.id,amount:amt,description:t+': '+n,created_by:CUP&&CUP.id});cmo();toast('Entry saved','ok');renderLed();}
@@ -1301,11 +1361,11 @@ function refreshCashPartyList(){
     return'<option value="'+p.id+'" data-name="'+p.name.replace(/"/g,'&quot;')+'">'+p.name+(bal?' ('+fmt(Math.abs(bal))+(bal>0?' DR':' CR')+')':'')+'</option>';
   }).join('');
   // If no parties found for owner/loan, show add-new button hint
-  if(!filtered.length&&(ptype==='owner'||ptype==='loan')){
+  if(ptype==='loan'||(!filtered.length&&ptype==='owner')){
     var hint=document.getElementById('cpty-empty-hint');
     if(!hint){hint=document.createElement('div');hint.id='cpty-empty-hint';hint.className='ib';hint.style.fontSize='.6rem';sel.parentNode.appendChild(hint);}
     hint.style.display='block';
-    hint.innerHTML='No '+ptype+' record found. <button class="btn bh bsm" onclick="createPartyQuick(\''+ptype+'\')">Add '+ptype+'</button>';
+    hint.innerHTML=(filtered.length?'Need another '+ptype+' party? ':'No '+ptype+' record found. ')+'<button class="btn bh bsm" onclick="createPartyQuick(\''+ptype+'\')">+ Add '+ptype+' party</button>';
   } else {
     var hint2=document.getElementById('cpty-empty-hint');
     if(hint2)hint2.style.display='none';
@@ -1440,6 +1500,19 @@ async function saveCash(){
     }
   }
 
+  // ---- confirmation (nothing is written until confirmed) ----
+  var _cpObj=partyId2?parties.find(function(p){return p.id===partyId2;}):null;
+  var _cAcc=accs.find(function(a){return a.id===accId;});
+  var _cc='<div>'+cfmRow('Transaction',category)+cfmRow('Description',dsc)+cfmRow('Account',(_cAcc&&_cAcc.name)||'')+cfmRow(dir==='in'?'Money in':'Money out','Rs '+fmt(amt),dir==='in'?'#2e7d32':'#c62828');
+  if(_cAcc)_cc+=cfmRow('Account balance after','Rs '+fmt((_cAcc.current_balance||0)+(dir==='in'?amt:-amt)));
+  if(partyName||_cpObj){
+    var _pn=(_cpObj&&_cpObj.name)||partyName;var _b0=_cpObj?(_cpObj.current_balance||0):0;
+    var _b1=_b0+(dir==='in'?-amt:amt);
+    _cc+=cfmSec('Ledger impact')+cfmRow('Party',_pn)+cfmRow('Balance before',fmt(Math.abs(_b0))+(_b0>0?' (they owe us)':_b0<0?' (we owe)':''))+cfmRow('Balance after',fmt(Math.abs(_b1))+(_b1>0?' (they owe us)':_b1<0?' (we owe)':' (settled)'),'#1565c0');
+  }
+  _cc+='</div>';
+  var _okCash=await askConfirm('Confirm '+category,_cc,'Confirm');
+  if(!_okCash){return;}
   var partyId=null;
   if(partyId2){
     partyId=partyId2; // directly from select value (UUID)
@@ -1767,51 +1840,81 @@ async function showStockDetail(varId){
 }
 
 function oExchange(){
+  var accOpts=payAccs().map(function(a){return'<option value="'+a.id+'"'+(a.name==='Cash Drawer'?' selected':'')+'>'+a.name+' ('+fmt(a.current_balance)+')</option>';}).join('');
   var h='<div class="fg"><label class="lb">Customer</label><input class="ip" id="ex-c" placeholder="Customer name"></div>';
   h+='<div class="fg"><label class="lb">Item Returned (old)</label><select class="sl" id="ex-ri"><option value="">Select...</option>';
   for(var i=0;i<prods.length;i++)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+')</option>';
   h+='</select></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-rq" type="number" value="1"></div><div class="fg"><label class="lb">Return Price</label><input class="ip" id="ex-rp" type="number" placeholder="0" oninput="calcDiff()"></div></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-rq" type="number" value="1" oninput="calcDiff()"></div><div class="fg"><label class="lb">Return Price (per unit)</label><input class="ip" id="ex-rp" type="number" inputmode="decimal" placeholder="0" oninput="calcDiff()"></div></div>';
   h+='<div class="fg"><label class="lb">Item Issued (new)</label><select class="sl" id="ex-ii"><option value="">Select...</option>';
   for(var i=0;i<prods.length;i++){if((prods[i].stock||0)>0)h+='<option value="'+prods[i].id+'">'+prods[i].name+' ('+prods[i].sku+') Qty:'+prods[i].stock+'</option>';}
   h+='</select></div>';
-  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-iq" type="number" value="1"></div><div class="fg"><label class="lb">Issue Price</label><input class="ip" id="ex-ip" type="number" placeholder="0" oninput="calcDiff()"></div></div>';
+  h+='<div class="g2"><div class="fg"><label class="lb">Qty</label><input class="ip" id="ex-iq" type="number" value="1" oninput="calcDiff()"></div><div class="fg"><label class="lb">Issue Price (per unit)</label><input class="ip" id="ex-ip" type="number" inputmode="decimal" placeholder="0" oninput="calcDiff()"></div></div>';
   h+='<div id="ex-diff" class="ib" style="display:none;margin-top:8px"></div>';
-  h+='<div class="fg"><label class="lb">Difference</label><select class="sl" id="ex-dm"><option value="cash_in">Customer Pays Extra</option><option value="cash_out">Refund</option><option value="none">None</option></select></div>';
+  h+='<div class="fg"><label class="lb">Account for the difference (refund paid from / extra received into)</label><select class="sl" id="ex-acc">'+accOpts+'</select></div>';
   h+='<button class="btn bs" onclick="saveExchange()">Process Exchange</button>';
   omo('Exchange',h);
 }
-function calcDiff(){var rp=Number($('ex-rp')&&$('ex-rp').value||0);var ip=Number($('ex-ip')&&$('ex-ip').value||0);var d2=$('ex-diff');if(d2&&(rp||ip)){var diff=ip-rp;d2.style.display='block';d2.textContent=diff>0?'Customer pays extra: '+fmt(diff):diff<0?'Refund: '+fmt(Math.abs(diff)):'No difference';}}
+function _exDiff(){var rp=Number($('ex-rp')&&$('ex-rp').value||0),rq=Number($('ex-rq')&&$('ex-rq').value||1),ip=Number($('ex-ip')&&$('ex-ip').value||0),iq=Number($('ex-iq')&&$('ex-iq').value||1);return Math.round((ip*iq-rp*rq)*100)/100;}
+function calcDiff(){var d2=$('ex-diff');if(!d2)return;var rp=Number($('ex-rp')&&$('ex-rp').value||0),ip=Number($('ex-ip')&&$('ex-ip').value||0);if(!(rp||ip)){d2.style.display='none';return;}var diff=_exDiff();d2.style.display='block';d2.textContent=diff>0?'Customer pays extra: Rs '+fmt(diff)+' (received into the selected account)':diff<0?'Refund to customer: Rs '+fmt(Math.abs(diff))+' (paid from the selected account)':'Equal value: no money movement';}
 async function saveExchange(){
   var btnEl=event&&event.target;
-  if(btnEl&&btnEl.disabled)return;
-  var cust=($('ex-c')&&$('ex-c').value||'Walk-in').trim();
+  var cust=($('ex-c')&&$('ex-c').value||'Walk-in').trim()||'Walk-in';
   var riId=$('ex-ri')&&$('ex-ri').value;
   var rq=Number($('ex-rq')&&$('ex-rq').value||1);
   var rp=Number($('ex-rp')&&$('ex-rp').value||0);
   var iiId=$('ex-ii')&&$('ex-ii').value;
   var iq=Number($('ex-iq')&&$('ex-iq').value||1);
   var ip=Number($('ex-ip')&&$('ex-ip').value||0);
+  var accId=$('ex-acc')&&$('ex-acc').value;
   if(!riId||!iiId){toast('Select both items','err');return;}
-  var diff=ip-rp;
-  if(Math.abs(diff)>0){if(!confirm('Price difference: '+fmt(Math.abs(diff))+'. Proceed?'))return;}
-  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  if(!(rq>0)||!(iq>0)){toast('Enter quantities','err');return;}
+  if(!(rp>0)||!(ip>0)){toast('Enter return price and issue price','err');return;}
   var retP=prods.find(function(p){return p.id===riId;});
   var issP=prods.find(function(p){return p.id===iiId;});
+  if(issP&&(issP.stock||0)<iq){toast('Only '+(issP.stock||0)+' of '+issP.name+' available','err');return;}
+  var diff=_exDiff();
+  if(diff!==0&&!accId){toast('Select the account for the price difference','err');return;}
+  var acc=accs.find(function(a){return a.id===accId;});
+  var cf='<div>'+cfmRow('Customer',cust)+cfmSec('Returned by customer (stock increases)')+cfmRow(((retP&&retP.name)||'Item')+' x'+rq+' @ Rs '+fmt(rp),'Rs '+fmt(rp*rq))+cfmSec('Issued to customer (stock decreases)')+cfmRow(((issP&&issP.name)||'Item')+' x'+iq+' @ Rs '+fmt(ip),'Rs '+fmt(ip*iq))+cfmSec('Money movement');
+  if(diff>0)cf+=cfmRow('Customer pays extra','Rs '+fmt(diff),'#2e7d32')+cfmRow('Received into',(acc&&acc.name)||'')+(acc?cfmRow('Account balance after','Rs '+fmt((acc.current_balance||0)+diff)):'');
+  else if(diff<0)cf+=cfmRow('Refund to customer','Rs '+fmt(Math.abs(diff)),'#c62828')+cfmRow('Paid from',(acc&&acc.name)||'')+(acc?cfmRow('Account balance after','Rs '+fmt((acc.current_balance||0)+diff)):'');
+  else cf+=cfmRow('Equal value exchange','No money movement');
+  cf+='</div>';
+  var okX=await askConfirm('Confirm Exchange',cf,'Confirm Exchange');
+  if(!okX)return;
+  if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
   var custParty=cust!=='Walk-in'?parties.find(function(p){return p.name===cust&&p.party_type==='customer';}):null;
+  var retIns=null,exIns=null,issueMoved=false;
   try{
-    var retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:rp*rq,paid_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Return: '+((retP&&retP.name)||'')+' x'+rq};});
-    if(retP)await sb.rpc('process_stock_movement',{p_variant_id:riId,p_movement_type:'sales_return',p_qty:rq,p_reason:'Exchange return',p_cost_impact:retP.cost||0,p_user_id:CUP&&CUP.id});
-    if(custParty&&retIns.data)await sb.from('ledger_entries').insert({transaction_id:retIns.data.id,entry_date:td(),entry_type:'debit',account_category:'party',party_id:custParty.id,amount:rp*rq,description:'Exchange Return: '+((retP&&retP.name)||''),created_by:CUP&&CUP.id});
-    var exTxnIns=await insertWithUniqueNo('transactions','EXC',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:ip*iq,paid_amount:ip*iq,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Sale: '+((issP&&issP.name)||'')+' x'+iq+' | Ref: '+(retIns.no||'')};});
-    if(issP)await sb.rpc('process_stock_movement',{p_variant_id:iiId,p_movement_type:'sale',p_qty:iq,p_reason:'Exchange issue',p_cost_impact:issP.cost||0,p_user_id:CUP&&CUP.id});
-    if(ca&&diff>0)await sb.from('ledger_entries').insert({transaction_id:exTxnIns.data.id,entry_date:td(),entry_type:'credit',account_category:'cashflow',cashflow_account_id:ca.id,amount:diff,description:'Exchange extra received',created_by:CUP&&CUP.id});
-    if(ca&&diff<0)await sb.from('ledger_entries').insert({transaction_id:exTxnIns.data.id,entry_date:td(),entry_type:'debit',account_category:'cashflow',cashflow_account_id:ca.id,amount:Math.abs(diff),description:'Exchange refund paid',created_by:CUP&&CUP.id});
+    retIns=await insertWithUniqueNo('transactions','RET',function(noVal){return{transaction_no:noVal,transaction_type:'sale_return',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:rp*rq,paid_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Exchange Return: '+((retP&&retP.name)||'')+' x'+rq};});
+    if(retIns.error||!retIns.data)throw new Error((retIns.error&&retIns.error.message)||'Could not create return record');
+    exIns=await insertWithUniqueNo('transactions','EXC',function(noVal){return{transaction_no:noVal,transaction_type:'sale',transaction_date:td(),party_id:custParty&&custParty.id||null,total_amount:ip*iq,paid_amount:ip*iq,payment_status:'paid',reference_transaction_id:retIns.data.id,performed_by:CUP&&CUP.id,notes:'Exchange Sale: '+((issP&&issP.name)||'')+' x'+iq+' | Ref: '+retIns.no};});
+    if(exIns.error||!exIns.data)throw new Error((exIns.error&&exIns.error.message)||'Could not create exchange record');
+    // stock: issue first (can fail on insufficient stock), then return; undo the issue if the return is refused
+    var r1=await sb.rpc('process_stock_movement',{p_variant_id:iiId,p_movement_type:'sale',p_qty:iq,p_reason:'Exchange issue',p_cost_impact:(issP&&issP.cost)||0,p_user_id:CUP&&CUP.id,p_txn_id:exIns.data.id});
+    if(!r1.data||!r1.data.success)throw new Error((r1.data&&r1.data.error)||'Stock issue failed');
+    issueMoved=true;
+    var r2=await sb.rpc('process_stock_movement',{p_variant_id:riId,p_movement_type:'sales_return',p_qty:rq,p_reason:'Exchange return',p_cost_impact:(retP&&retP.cost)||0,p_user_id:CUP&&CUP.id,p_txn_id:retIns.data.id});
+    if(!r2.data||!r2.data.success)throw new Error((r2.data&&r2.data.error)||'Stock return failed');
+    // money (only the difference moves, always through the selected account)
+    if(diff!==0){
+      var isIn=diff>0,amtD=Math.abs(diff);
+      await sb.from('ledger_entries').insert({transaction_id:exIns.data.id,entry_date:td(),entry_type:isIn?'credit':'debit',account_category:'cashflow',cashflow_account_id:accId,amount:amtD,description:(isIn?'Exchange extra received ':'Exchange refund paid ')+exIns.no+' ('+((acc&&acc.name)||'')+')',created_by:CUP&&CUP.id});
+      await insCash({transaction_id:exIns.data.id,entry_date:td(),amount:amtD,direction:isIn?'in':'out',account_id:accId,description:(isIn?'Exchange extra received ':'Exchange refund paid ')+'('+retIns.no+' / '+exIns.no+')',nature:isIn?'receipt':'payment',party_category:isIn?'Exchange Receipt':'Exchange Refund'});
+    }
+    var exRec=await sb.from('exchanges').insert({return_transaction_id:retIns.data.id,new_sale_transaction_id:exIns.data.id,price_difference:Math.abs(diff),difference_direction:diff>0?'customer_pays':diff<0?'store_refunds':'zero',difference_account_id:diff!==0?accId:null,notes:'Customer: '+cust});
+    if(exRec&&exRec.error)toast('Exchange saved, audit link not stored: '+exRec.error.message,'warn',5000);
+    await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',retIns.data.id);
+    await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',exIns.data.id);
     await loadData();cmo();
-    toast('Exchange: Return '+retIns.no+' | Sale '+exTxnIns.no,'ok',7000);srch();
-  }catch(ex){toast(ex.message,'err');}
-  finally{if(btnEl){btnEl.disabled=false;btnEl.textContent='Process Exchange';}}
+    toast('Exchange: Return '+retIns.no+' | Sale '+exIns.no,'ok',7000);srch();
+  }catch(ex){
+    if(issueMoved){try{await sb.rpc('process_stock_movement',{p_variant_id:iiId,p_movement_type:'other_in',p_qty:iq,p_reason:'Undo failed exchange',p_user_id:CUP&&CUP.id});}catch(e2){}}
+    if(retIns&&retIns.data)await _cancelTxn(retIns.data.id,'Exchange not completed: '+ex.message);
+    if(exIns&&exIns.data)await _cancelTxn(exIns.data.id,'Exchange not completed: '+ex.message);
+    toast(ex.message,'err');
+  }
 }
 
 function openStockTake(){
@@ -3662,6 +3765,38 @@ function _syncPayInputs(containerId,arr){
 }
 // accounts that hold real money (cash / bank / e-wallet). 'owner' type accounts are not payment accounts.
 function payAccs(){return accs.filter(function(a){return !a.account_type||a.account_type==='cash'||a.account_type==='bank'||a.account_type==='emoney';});}
+
+// ---- Confirmation popup (shown BEFORE any transaction is written) ----
+function _esc(x){return String(x==null?'':x).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function cfmRow(l,v,c){return '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid #f0e6d6"><span style="color:#6b5a45">'+_esc(l)+'</span><b style="text-align:right;'+(c?'color:'+c:'')+'">'+_esc(v)+'</b></div>';}
+function cfmSec(t){return '<div style="margin-top:10px;font-size:.62rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#a07a1e">'+_esc(t)+'</div>';}
+function askConfirm(title,bodyHtml,okLabel){
+  return new Promise(function(res){
+    var ov=document.getElementById('cfm-ov');
+    if(!ov){ov=document.createElement('div');ov.id='cfm-ov';ov.style.cssText='position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.55);z-index:99999;display:flex;align-items:flex-end;justify-content:center';document.body.appendChild(ov);}
+    ov.innerHTML='<div style="background:#fff;width:100%;max-width:520px;max-height:90vh;overflow:auto;border-radius:16px 16px 0 0;padding:16px 16px 22px;font-size:.74rem"><div style="font-size:.98rem;font-weight:700;margin-bottom:6px">'+_esc(title)+'</div>'+bodyHtml+'<div style="display:flex;gap:8px;margin-top:16px"><button id="cfm-no" class="btn bh" style="flex:1">Cancel / Go Back</button><button id="cfm-ok" class="btn bi" style="flex:1">'+_esc(okLabel||'Confirm')+'</button></div></div>';
+    ov.style.display='flex';
+    var done=false;
+    function fin(v){if(done)return;done=true;ov.style.display='none';ov.innerHTML='';res(v);}
+    document.getElementById('cfm-no').onclick=function(){fin(false);};
+    document.getElementById('cfm-ok').onclick=function(){var b=document.getElementById('cfm-ok');if(b)b.disabled=true;fin(true);};
+  });
+}
+function _fmtSigned(n){return (n<0?'-':'+')+fmt(Math.abs(n));}
+// every Save/Confirm handler runs once at a time and its button always returns to normal (validation fail, success or error)
+var _wrapBusy={};
+function _wrapSave(name){
+  var f=window[name];if(typeof f!=='function'||f._wrapped)return;
+  var w=async function(){
+    if(_wrapBusy[name])return;
+    var ev=window.event,b=ev&&ev.target&&ev.target.tagName==='BUTTON'?ev.target:null;
+    var idle=b?b.textContent:'';
+    _wrapBusy[name]=true;
+    try{return await f.apply(this,arguments);}
+    finally{_wrapBusy[name]=false;if(b&&b.isConnected&&b.disabled){b.disabled=false;if(idle&&!/^(Saving|Processing)/.test(idle))b.textContent=idle;}}
+  };
+  w._wrapped=true;window[name]=w;
+}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
@@ -3678,6 +3813,8 @@ function validatePayments(payments, total, allowCredit){
   return {ok:true,cashRows:cashRows.map(_snap),creditRows:creditRows.map(_snap),allocated:allocated,outstanding:total-allocated};
 }
 
+
+['savePur','saveCash','processReturn','saveExchange','saveStockMove','saveExp','completeSale'].forEach(_wrapSave);
 </script>
 </body>
 </html>
