@@ -1159,6 +1159,7 @@ function iLed(){renderLed();}
 function setLT(t,el){lTab=t;var ps=document.querySelectorAll('#lt .pl');for(var i=0;i<ps.length;i++)ps[i].classList.remove('on');el.classList.add('on');renderLed();}
 async function renderLed(){
   var c=$('lc');if(!c)return;
+  if(lTab==='comm'){await renderCommittees();return;}
   var tmap={cust:'customer',sup:'supplier',comm:'committee',own:'owner',loan:'loan'};
   var pt=tmap[lTab];var isLoan=pt==='loan';
   var items=parties.filter(function(p){return p.party_type===pt&&p.is_active!==false&&(isLoan||(p.current_balance||0)!==0);});
@@ -1526,7 +1527,7 @@ async function saveCash(){
   }
 
   var category=nature==='income'?'Income':nature==='expense'?'Expense':
-    ptype==='owner'?(nature==='receipt'?'Owner Deposit':'Owner Withdrawal'):ptype==='loan'?(nature==='receipt'?'Loan Received':'Loan Repayment'):(ptype==='customer'?'Customer ':ptype==='supplier'?'Supplier ':'Committee ')+(nature==='receipt'?'Receipt':'Payment');
+    ptype==='owner'?(nature==='receipt'?'Owner Deposit':'Owner Withdrawal'):ptype==='loan'?(nature==='receipt'?'Loan Received':'Loan Repayment'):ptype==='committee'?(nature==='receipt'?'Committee Payout Received':'Committee Contribution'):(ptype==='customer'?'Customer ':'Supplier ')+(nature==='receipt'?'Receipt':'Payment');
 
   if(!navigator.onLine){
     await saveCashOffline(nature,dt,amt,dsc,ptype,partyName,partyId,accId,category);
@@ -1581,6 +1582,8 @@ async function loadCash(){
   var e=await q;
   var rows=e.data||[];
   if(!rows.length){c.innerHTML='<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No entries</p></div>';return;}
+  var _txRef={};
+  try{var _tr=await sb.from('transactions').select('id,transaction_no').in('id',rows.map(function(x){return x.transaction_id;}));(_tr.data||[]).forEach(function(x){_txRef[x.id]=x.transaction_no;});}catch(e3){}
   var badgeColor={income:'var(--sage)',expense:'var(--red)',receipt:'var(--gold)',payment:'#6B3E1A'};
   var h='';
   for(var i=0;i<rows.length;i++){
@@ -1589,7 +1592,7 @@ async function loadCash(){
     h+='<div class="card" style="padding:10px 12px;margin-bottom:8px">';
     h+='<div style="display:flex;justify-content:space-between">';
     h+='<div><div style="font-size:.72rem;font-weight:600">'+(en.description||'')+'</div>';
-    h+='<div style="font-size:.58rem;color:var(--ink3)">'+(en.entry_date||'')+'</div>';
+    h+='<div style="font-size:.58rem;color:var(--ink3)">'+(en.entry_date||'')+' - '+_esc((accs.find(function(a2){return a2.id===en.account_id;})||{}).name||'')+(_txRef[en.transaction_id]?' - Ref '+_esc(_txRef[en.transaction_id]):'')+'</div>';
     if(en.party_category)h+='<div style="font-size:.55rem;font-weight:700;margin-top:2px;color:'+(badgeColor[en.nature]||'var(--ink3)')+'">'+en.party_category+'</div>';
     h+='</div>';
     h+='<div style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(isIn?'var(--sage)':'var(--red)')+'">'+(isIn?'+':'-')+fmt(en.amount)+'</div></div>';
@@ -3797,6 +3800,179 @@ function _wrapSave(name){
   };
   w._wrapped=true;window[name]=w;
 }
+
+// ================= COMMITTEES (I am a member: my contributions paid and payouts received) =================
+// A committee is a party of type "committee" (the existing Ledger structure). Its terms live in committee_details.
+// Every real payment/receipt is a normal transaction + ledger entries + Cash tab entry (single posting, no RPC).
+var _cmDet={};
+var CM_FREQ=['Weekly','Fortnightly','Monthly','Quarterly','Other'];
+function _cmN(x){return Number(x)||0;}
+async function _cmLoadDetails(){
+  var r=await sb.from('committee_details').select('*');
+  if(r.error){_cmDet={};return r.error;}
+  _cmDet={};(r.data||[]).forEach(function(d){_cmDet[d.party_id]=d;});return null;
+}
+async function _cmTotals(ids){
+  var res={};ids.forEach(function(i){res[i]={paid:0,got:0,n:0};});
+  if(!ids.length)return res;
+  var r=await sb.from('cash_entries').select('party_id,direction,amount').in('party_id',ids);
+  (r.data||[]).forEach(function(e){var t=res[e.party_id];if(!t)return;if(e.direction==='out'){t.paid+=_cmN(e.amount);t.n++;}else{t.got+=_cmN(e.amount);}});
+  return res;
+}
+function _cmMetrics(p,d,t){
+  var open=_cmN(p.opening_balance);
+  var paid=t.paid+(open>0?open:0), got=t.got+(open<0?-open:0);
+  var total=_cmN(d&&d.total_amount), inst=_cmN(d&&d.installment_amount);
+  var remAmt=total>0?Math.max(0,Math.round((total-paid)*100)/100):null;
+  var remN=(remAmt!==null&&inst>0)?Math.ceil(remAmt/inst):null;
+  return {paid:paid,got:got,net:Math.round((got-paid)*100)/100,remAmt:remAmt,remN:remN,open:open};
+}
+async function renderCommittees(){
+  var c=$('lc');if(!c)return;
+  var err=await _cmLoadDetails();
+  var list=parties.filter(function(p){return p.party_type==='committee'&&p.is_active!==false;});
+  var tot=await _cmTotals(list.map(function(p){return p.id;}));
+  var h='<button class="btn bi bsm" style="margin-bottom:10px" onclick="oCommittee()">+ Add New Committee</button>';
+  if(err)h+='<div class="ib" style="color:var(--red);margin-bottom:8px">Committee details could not be loaded ('+_esc(err.message)+'). If this is the first use, run the committee setup script once, then reload.</div>';
+  if(!list.length){c.innerHTML=h+'<div class="em"><div class="ei">-</div><p style="font-size:.72rem">No committees yet. Add the first one above.</p></div>';return;}
+  list.forEach(function(p){
+    var d=_cmDet[p.id]||null,m=_cmMetrics(p,d,tot[p.id]);
+    var st=(d&&d.status)||'active';
+    h+='<div class="card" style="cursor:pointer;padding:12px 13px;margin-bottom:8px" onclick="openCommittee(\''+p.id+'\')">'+
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start"><div><div style="font-size:.78rem;font-weight:700">'+_esc(p.name)+'</div>'+
+      '<div style="font-size:.58rem;color:var(--ink3)">'+(st==='completed'?'Completed':'Active')+(d&&d.installment_amount?' - '+fmt(d.installment_amount)+' '+_esc((d.frequency||'').toLowerCase()):'')+'</div></div>'+
+      '<div style="text-align:right"><div style="font-size:.55rem;color:var(--ink3)">Net cash position</div><div style="font-size:.9rem;font-weight:700;color:'+(m.net<0?'var(--red)':'var(--sage)')+'">'+(m.net<0?'-':'')+fmt(Math.abs(m.net))+'</div></div></div>'+
+      '<div style="display:flex;justify-content:space-between;margin-top:6px;font-size:.6rem;color:var(--ink3)"><span>Paid: '+fmt(m.paid)+'</span><span>Received: '+fmt(m.got)+'</span>'+(m.remAmt!==null?'<span>Remaining: '+fmt(m.remAmt)+'</span>':'')+'</div></div>';
+  });
+  c.innerHTML=h;
+}
+async function openCommittee(id){
+  var p=parties.find(function(x){return x.id===id;});if(!p)return;
+  var err=await _cmLoadDetails();var d=_cmDet[id]||null;
+  var tt=await _cmTotals([id]);var t=tt[id];var m=_cmMetrics(p,d,t);
+  var ce=await sb.from('cash_entries').select('*').eq('party_id',id).order('entry_date',{ascending:false});
+  var rows=(ce.data||[]);
+  var tx={};
+  if(rows.length){var tr=await sb.from('transactions').select('id,transaction_no,notes').in('id',rows.map(function(e){return e.transaction_id;}));(tr.data||[]).forEach(function(x){tx[x.id]=x;});}
+  var row=function(l,v){return'<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:.66rem"><span style="color:var(--ink3)">'+l+'</span><b style="text-align:right">'+v+'</b></div>';};
+  var h='<div style="background:var(--cream2);border-radius:9px;padding:11px;margin-bottom:10px">';
+  h+=row('Status',(d&&d.status==='completed')?'Completed':'Active');
+  h+=row('Total committee amount',d&&d.total_amount?'Rs '+fmt(d.total_amount):'-');
+  h+=row('My contribution per installment',d&&d.installment_amount?'Rs '+fmt(d.installment_amount)+(d.frequency?' ('+_esc(d.frequency)+')':''):'-');
+  h+=row('Start date',(d&&d.start_date)||'-');
+  h+=row('Expected completion',(d&&d.end_date)||'-');
+  h+=row('Expected payout',(d&&(d.expected_payout_date||d.expected_payout_amount))?((d.expected_payout_date||'date n/a')+(d.expected_payout_amount?' - Rs '+fmt(d.expected_payout_amount):'')):'-');
+  if(d&&d.notes)h+=row('Notes',_esc(d.notes));
+  h+='</div><div style="background:var(--ink);border-radius:9px;padding:11px;margin-bottom:10px;color:#fff">';
+  h+='<div style="display:flex;justify-content:space-between;font-size:.66rem"><span>Total contributions paid</span><b>Rs '+fmt(m.paid)+'</b></div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:.66rem;margin-top:3px"><span>Total payout received</span><b>Rs '+fmt(m.got)+'</b></div>';
+  if(m.remAmt!==null)h+='<div style="display:flex;justify-content:space-between;font-size:.66rem;margin-top:3px"><span>Remaining expected contributions</span><b>Rs '+fmt(m.remAmt)+(m.remN!==null?' (about '+m.remN+' installments)':'')+'</b></div>';
+  h+='<div style="display:flex;justify-content:space-between;font-size:.74rem;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,.2)"><span>Net cash position</span><b style="color:'+(m.net<0?'#ff9a9a':'#9be39b')+'">'+(m.net<0?'-':'')+'Rs '+fmt(Math.abs(m.net))+'</b></div>';
+  h+='<div style="font-size:.52rem;opacity:.65;margin-top:3px">Net cash position = payout received - contributions paid. It is not necessarily profit or loss.</div></div>';
+  h+='<div style="display:flex;gap:6px;margin-bottom:8px"><button class="btn bi bsm" style="flex:1" onclick="oCmTxn(\'contribution\',\''+id+'\')">Record Contribution</button><button class="btn bs bsm" style="flex:1" onclick="oCmTxn(\'payout\',\''+id+'\')">Record Payout</button></div>';
+  h+='<button class="btn bh bsm" style="width:100%;margin-bottom:10px" onclick="oCommittee(\''+id+'\')">Edit Committee Details</button>';
+  h+='<div style="font-size:.6rem;font-weight:700;text-transform:uppercase;color:var(--gold);margin-bottom:4px">Transaction history</div>';
+  if(m.open!==0)h+='<div style="padding:6px 0;border-bottom:1px solid var(--cream2);font-size:.62rem">Opening (paid before using POS): <b>Rs '+fmt(Math.abs(m.open))+'</b></div>';
+  if(!rows.length&&m.open===0)h+='<div style="padding:10px;font-size:.66rem;color:var(--ink3);text-align:center">No contributions or payouts recorded yet</div>';
+  rows.forEach(function(e){
+    var isIn=e.direction==='in';var a=accs.find(function(x){return x.id===e.account_id;});var x=tx[e.transaction_id]||{};
+    h+='<div style="padding:7px 0;border-bottom:1px solid var(--cream2)"><div style="display:flex;justify-content:space-between"><div style="font-size:.66rem;font-weight:600">'+(isIn?'Payout received':'Contribution paid')+'</div><div style="font-size:.7rem;font-weight:700;color:'+(isIn?'var(--sage)':'var(--red)')+'">'+(isIn?'+':'-')+fmt(e.amount)+'</div></div><div style="font-size:.56rem;color:var(--ink3)">'+(e.entry_date||'')+' - '+_esc((a&&a.name)||'')+' - Ref '+_esc(x.transaction_no||'')+'</div><div style="font-size:.56rem;color:var(--ink3)">'+_esc(e.description||'')+'</div></div>';
+  });
+  omo(p.name,h);
+}
+function oCommittee(id){
+  var p=id?parties.find(function(x){return x.id===id;}):null;
+  var d=(id&&_cmDet[id])||{};
+  var v=function(x){return x==null?'':_esc(x);};
+  var fo=CM_FREQ.map(function(f){return'<option'+((d.frequency||'Monthly')===f?' selected':'')+'>'+f+'</option>';}).join('');
+  var h='<div class="fg"><label class="lb">Committee name *</label><input class="ip" id="cm-n" value="'+(p?_esc(p.name):'')+'" placeholder="e.g. Family committee"></div>'+
+   '<div class="g2"><div class="fg"><label class="lb">Total committee amount Rs</label><input class="ip" id="cm-t" type="number" inputmode="decimal" value="'+v(d.total_amount)+'"></div><div class="fg"><label class="lb">My installment Rs</label><input class="ip" id="cm-i" type="number" inputmode="decimal" value="'+v(d.installment_amount)+'"></div></div>'+
+   '<div class="g2"><div class="fg"><label class="lb">Frequency</label><select class="sl" id="cm-f">'+fo+'</select></div><div class="fg"><label class="lb">Status</label><select class="sl" id="cm-s"><option value="active"'+((d.status||'active')==='active'?' selected':'')+'>Active</option><option value="completed"'+(d.status==='completed'?' selected':'')+'>Completed</option></select></div></div>'+
+   '<div class="g2"><div class="fg"><label class="lb">Start date</label><input class="ip" id="cm-sd" type="date" value="'+v(d.start_date)+'"></div><div class="fg"><label class="lb">Expected completion</label><input class="ip" id="cm-ed" type="date" value="'+v(d.end_date)+'"></div></div>'+
+   '<div class="g2"><div class="fg"><label class="lb">Expected payout date</label><input class="ip" id="cm-pd" type="date" value="'+v(d.expected_payout_date)+'"></div><div class="fg"><label class="lb">Expected payout Rs</label><input class="ip" id="cm-pa" type="number" inputmode="decimal" value="'+v(d.expected_payout_amount)+'"></div></div>';
+  if(!p)h+='<div class="fg"><label class="lb">Already paid before using POS Rs (optional opening)</label><input class="ip" id="cm-o" type="number" inputmode="decimal" placeholder="0"></div>';
+  h+='<div class="fg"><label class="lb">Notes</label><input class="ip" id="cm-nt" value="'+v(d.notes)+'"></div><button class="btn bi" onclick="saveCommittee('+(id?'\''+id+'\'':'')+')">'+(id?'Save Changes':'Save Committee')+'</button>';
+  omo(id?'Edit Committee':'New Committee',h);
+}
+async function saveCommittee(id){
+  var g=function(k){return($(k)&&$(k).value||'').trim();};
+  var name=g('cm-n');
+  if(!name){toast('Enter committee name','err');return;}
+  var total=g('cm-t')===''?null:Number(g('cm-t')),inst=g('cm-i')===''?null:Number(g('cm-i')),pa=g('cm-pa')===''?null:Number(g('cm-pa'));
+  if((total!==null&&!(total>=0))||(inst!==null&&!(inst>=0))||(pa!==null&&!(pa>=0))){toast('Amounts cannot be negative','err');return;}
+  var sd=g('cm-sd')||null,ed=g('cm-ed')||null;
+  if(sd&&ed&&ed<sd){toast('Completion date is before the start date','err');return;}
+  var dup=parties.find(function(p){return p.party_type==='committee'&&p.id!==id&&(p.name||'').toLowerCase()===name.toLowerCase();});
+  if(dup){toast('A committee named "'+name+'" already exists','err');return;}
+  var det={total_amount:total,installment_amount:inst,frequency:g('cm-f')||null,start_date:sd,end_date:ed,expected_payout_date:g('cm-pd')||null,expected_payout_amount:pa,status:g('cm-s')||'active',notes:g('cm-nt')||null,updated_at:new Date().toISOString()};
+  var partyRow=null;
+  try{
+    if(!id){
+      var open=Number(g('cm-o')||0);if(!(open>=0)){toast('Opening amount cannot be negative','err');return;}
+      var pr=await sb.from('parties').insert({party_type:'committee',name:name,opening_balance:open,current_balance:open,is_active:true,created_by:CUP&&CUP.id}).select().single();
+      if(pr.error||!pr.data)throw new Error((pr.error&&pr.error.message)||'Could not create committee');
+      partyRow=pr.data;
+      det.party_id=partyRow.id;det.created_by=CUP&&CUP.id;
+      var dr=await sb.from('committee_details').insert(det);
+      if(dr.error){await sb.from('parties').delete().eq('id',partyRow.id);throw new Error('Committee details could not be saved: '+dr.error.message);}
+    } else {
+      var p0=parties.find(function(x){return x.id===id;});
+      if(p0&&p0.name!==name){var up=await sb.from('parties').update({name:name}).eq('id',id);if(up.error)throw new Error(up.error.message);}
+      var ex=await sb.from('committee_details').select('id').eq('party_id',id).maybeSingle();
+      var wr=(ex.data&&ex.data.id)?await sb.from('committee_details').update(det).eq('party_id',id):await sb.from('committee_details').insert(Object.assign({party_id:id,created_by:CUP&&CUP.id},det));
+      if(wr.error)throw new Error('Committee details could not be saved: '+wr.error.message);
+    }
+    await loadData();cmo();toast(id?'Committee updated':'Committee added','ok');
+    if($('lc'))renderCommittees();
+  }catch(ex){toast(ex.message,'err');}
+}
+function oCmTxn(kind,id){
+  var p=parties.find(function(x){return x.id===id;});if(!p)return;var d=_cmDet[id]||{};
+  var isC=kind==='contribution';
+  var accOpts=payAccs().map(function(a){return'<option value="'+a.id+'"'+(a.name==='Cash Drawer'?' selected':'')+'>'+_esc(a.name)+' ('+fmt(a.current_balance)+')</option>';}).join('');
+  var h='<div class="ib">'+_esc(p.name)+' - '+(isC?'a contribution I have actually paid':'the payout I have actually received')+'. Unpaid or expected amounts do not affect Cash.</div>'+
+   '<div class="g2"><div class="fg"><label class="lb">'+(isC?'Payment date':'Date received')+' *</label><input class="ip" id="ct-d" type="date" value="'+td()+'"></div>'+
+   '<div class="fg"><label class="lb">'+(isC?'Amount paid':'Actual amount received')+' Rs *</label><input class="ip" id="ct-a" type="number" inputmode="decimal" value="'+((isC?d.installment_amount:d.expected_payout_amount)||'')+'"></div></div>'+
+   '<div class="fg"><label class="lb">'+(isC?'Paid from':'Received into')+' *</label><select class="sl" id="ct-acc">'+accOpts+'</select></div>'+
+   (isC?'<div class="fg"><label class="lb">Installment number (optional)</label><input class="ip" id="ct-n" type="number" inputmode="numeric"></div>':'')+
+   '<div class="fg"><label class="lb">Reference / notes</label><input class="ip" id="ct-r"></div>'+
+   '<button class="btn '+(isC?'bi':'bs')+'" onclick="saveCmTxn(\''+kind+'\',\''+id+'\')">Review &amp; Confirm</button>';
+  omo((isC?'Record Contribution':'Record Payout')+' - '+p.name,h);
+}
+async function saveCmTxn(kind,id){
+  var p=parties.find(function(x){return x.id===id;});if(!p)return;
+  var isC=kind==='contribution';
+  var dt=$('ct-d')&&$('ct-d').value;var amt=Number($('ct-a')&&$('ct-a').value||0);var accId=$('ct-acc')&&$('ct-acc').value;
+  var inst=isC?($('ct-n')&&$('ct-n').value||''):'';var ref=($('ct-r')&&$('ct-r').value||'').trim();
+  if(!dt){toast('Select the date','err');return;}
+  if(!(amt>0)){toast('Enter an amount above 0','err');return;}
+  if(!accId){toast('Select the payment account','err');return;}
+  var acc=accs.find(function(a){return a.id===accId;});
+  var after=((acc&&acc.current_balance)||0)+(isC?-amt:amt);
+  var cf='<div>'+cfmRow('Committee',p.name)+cfmRow('Transaction',isC?'Committee Contribution (money paid)':'Committee Payout Received (money in)')+cfmRow('Date',dt)+cfmRow('Amount','Rs '+fmt(amt),isC?'#c62828':'#2e7d32')+cfmRow('Payment account',(acc&&acc.name)||'')+cfmRow('Account '+(isC?'decreases':'increases')+' by','Rs '+fmt(amt))+cfmRow('Account balance after','Rs '+fmt(after))+(inst?cfmRow('Installment no.',inst):'')+(ref?cfmRow('Reference',ref):'')+'</div>';
+  var ok=await askConfirm(isC?'Confirm Contribution':'Confirm Payout',cf,'Confirm');
+  if(!ok)return;
+  var dir=isC?'out':'in';
+  var desc='Committee '+p.name+' - '+(isC?'Contribution paid':'Payout received')+(inst?' #'+inst:'')+(ref?' - '+ref:'');
+  var tIns=null;
+  try{
+    tIns=await insertWithUniqueNo('transactions','CMT',function(noVal){return{transaction_no:noVal,transaction_type:isC?'payment':'receipt',transaction_date:dt,party_id:id,total_amount:amt,paid_amount:amt,payment_status:'paid',performed_by:CUP&&CUP.id,notes:desc};});
+    if(tIns.error||!tIns.data)throw new Error((tIns.error&&tIns.error.message)||'Could not create the transaction');
+    var et=isC?'debit':'credit';
+    var le=await sb.from('ledger_entries').insert([
+      {transaction_id:tIns.data.id,entry_date:dt,entry_type:et,account_category:'cashflow',cashflow_account_id:accId,amount:amt,description:desc,created_by:CUP&&CUP.id},
+      {transaction_id:tIns.data.id,entry_date:dt,entry_type:et,account_category:'party',party_id:id,amount:amt,description:desc,created_by:CUP&&CUP.id}]);
+    if(le&&le.error)throw new Error(le.error.message);
+    await insCash({transaction_id:tIns.data.id,entry_date:dt,amount:amt,direction:dir,account_id:accId,party_id:id,description:desc,nature:isC?'payment':'receipt',party_category:isC?'Committee Contribution':'Committee Payout Received'});
+    await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',tIns.data.id);
+    logActivity('committee_'+kind,'ledger',{committee:p.name,amount:amt});
+    await loadData();cmo();toast((isC?'Contribution':'Payout')+' recorded: '+tIns.no,'ok');
+    openCommittee(id);if($('lc'))renderCommittees();
+  }catch(ex){
+    if(tIns&&tIns.data)await _cancelTxn(tIns.data.id,'Committee transaction not completed: '+ex.message);
+    toast(ex.message,'err');
+  }
+}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
@@ -3814,7 +3990,7 @@ function validatePayments(payments, total, allowCredit){
 }
 
 
-['savePur','saveCash','processReturn','saveExchange','saveStockMove','saveExp','completeSale'].forEach(_wrapSave);
+['savePur','saveCash','processReturn','saveExchange','saveStockMove','saveExp','completeSale','saveCommittee','saveCmTxn'].forEach(_wrapSave);
 </script>
 </body>
 </html>
