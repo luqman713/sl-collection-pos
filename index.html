@@ -24,7 +24,9 @@ html,body{height:100%;background:var(--cream);color:var(--ink);max-width:480px;m
 .brand small{display:block;font-size:.52rem;color:rgba(255,255,255,.35);font-weight:300;}
 .uc{background:rgba(255,255,255,.1);color:white;font-size:.6rem;padding:4px 10px;border-radius:16px;border:1px solid rgba(255,255,255,.1);}
 .xb{background:none;border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.6);border-radius:6px;padding:4px 9px;font-size:.6rem;cursor:pointer;margin-left:6px;}
-.nt{display:flex;gap:1px;overflow-x:auto;scrollbar-width:none;}
+.nt{display:flex;flex-wrap:wrap;gap:2px;}
+@media(max-width:480px){.ni{padding:7px 8px;}}
+@media(min-width:900px){.ni{font-size:.68rem;padding:9px 16px;}#ct{max-width:1100px;margin-left:auto;margin-right:auto;}}
 .nt::-webkit-scrollbar{display:none;}
 .ni{color:rgba(255,255,255,.4);font-size:.57rem;font-weight:500;text-transform:uppercase;padding:8px 11px;border-radius:8px 8px 0 0;cursor:pointer;white-space:nowrap;flex-shrink:0;}
 .ni.on{background:var(--cream);color:var(--ink);font-weight:700;}
@@ -92,7 +94,7 @@ html,body{height:100%;background:var(--cream);color:var(--ink);max-width:480px;m
 // Register service worker only on the real deployment (not preview/localhost)
 if('serviceWorker' in navigator &&
    location.hostname.includes('github.io')){
-  navigator.serviceWorker.register('./sw.js').then(function(reg){
+  navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(function(reg){
     console.log('SW registered');
   }).catch(function(e){
     // Non-fatal: IndexedDB offline queue still works without SW
@@ -917,6 +919,7 @@ function rInv(){
 
 function ddOpts(arr){return arr.map(function(x){var v=x.id?x.id:x;return'<option value="'+v+'">'+(x.name||x)+'</option>';}).join('');}
 function rBuy(){
+  _purPayments=[];_purAuto=true;purPayMode='cash';
   var hasMasters=_fabrics.length>0;
   var h='<div class="card"><div class="ct">New Purchase</div>';
   h+='<div class="fg"><label class="lb">Product Name *</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC Suit"></div>';
@@ -935,7 +938,7 @@ function rBuy(){
     h+='<div style="font-size:.62rem;font-weight:700;color:var(--ink3);text-transform:uppercase;margin:10px 0 4px">Purchase Details</div>';
   }
   h+='<div class="g2"><div class="fg"><label class="lb">Qty *</label><input class="ip" id="pq" type="number" placeholder="0"></div><div class="fg"><label class="lb">Cost Rs *</label><input class="ip" id="pcs" type="number" placeholder="0"></div></div>';
-  h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
+  h+='<div class="fg"><label class="lb">Supplier</label><div style="display:flex;gap:6px"><input class="ip" id="ps2" list="dl-suppliers" placeholder="Supplier name" style="flex:1" oninput="updPP()" onchange="updPP()"><button class="btn bh bsm" onclick="newPM(\'supplier\')">New</button></div></div>';
   h+='<div class="ib">Sale price set at billing time.</div>';
   h+='<div class="fg"><label class="lb">Payment</label><div class="pr" id="ppm"><div class="pl on" onclick="setPurPM(\'cash\',this)">Cash</div><div class="pl" onclick="setPurPM(\'credit\',this)">Credit</div><div class="pl" onclick="setPurPM(\'partial\',this)">Partial</div><div class="pl" onclick="setPurPM(\'owner\',this)">Owner</div></div></div>';
   // Multi-payment allocation
@@ -986,18 +989,9 @@ function setPurPM(m,el){
     if(accWrap)accWrap.style.display='none';
     d.innerHTML='<div class="ib">Posted to Owner Payable</div>';
   }
+  _purAuto=true;
   updPP();
 }
-function updPP(){
-  var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
-  if(!_purPayments.length&&tot>0){
-    var caP=accs.find(function(a){return a.name==='Cash Drawer';});
-    _purPayments=[{type:'account',subId:caP&&caP.id||'',subName:caP&&caP.name||'Cash',amount:tot}];
-  } else if(_purPayments.length&&tot>0){
-    // Auto-fill first row amount if only one row and amount is 0
-    if(_purPayments.length===1&&!_purPayments[0].amount)_purPayments[0].amount=tot;
-  }
-  if(tot>0)renderPurPayments(tot);var q=Number($('pq')&&$('pq').value||0);var c=Number($('pcs')&&$('pcs').value||0);var t=q*c;var pd=purPayMode==='partial'?Number($('ppd2')&&$('ppd2').value||0):purPayMode==='cash'?t:0;var pay=Math.max(0,t-pd);var p=$('pprev');if(!p)return;if(t>0){p.style.display='block';p.innerHTML='<div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:4px"><span>Total</span><span style="font-weight:700">'+fmt(t)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.72rem;color:var(--sage)"><span>Paid</span><span>'+fmt(pd)+'</span></div><div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable</span><span>'+fmt(pay)+'</span></div>';}else p.style.display='none';}
 async function savePur(){
   var btnEl=event&&event.target;
   if(btnEl&&btnEl.disabled)return; // block double-tap
@@ -1147,7 +1141,7 @@ async function savePur(){
 
 
 function rLed(){
-  var h='<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px" id="lt">';
+  var h='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px" id="lt">';
   var tabs=[['cust','Customers'],['sup','Suppliers'],['comm','Committees'],['own','Owner'],['loan','Loans']];
   for(var i=0;i<tabs.length;i++)h+='<div class="pl'+(i===0?' on':'')+'" onclick="setLT(\''+tabs[i][0]+'\',this)">'+tabs[i][1]+'</div>';
   h+='</div><div id="lc"></div>';
@@ -1206,7 +1200,7 @@ async function saveLE(){var pn=$('le-p')&&$('le-p').value.trim();var t=$('le-t')
 
 function rRep(){
   var h='<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn bh bsm" onclick="exportReport()">Export CSV</button><button class="btn bh bsm" onclick="printReport()">Print</button></div>';
-  h+='<div style="display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px" id="rtabs">';
+  h+='<div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px" id="rtabs">';
   var tabs=[['sales','Sales'],['purchase','Purchase'],['stock','Stock'],['pl','P&L'],['ledger','Ledger']];
   for(var i=0;i<tabs.length;i++)h+='<div class="pl'+(i===0?' on':'')+'" onclick="setRT(\''+tabs[i][0]+'\',this)">'+tabs[i][1]+'</div>';
   h+='</div><div class="df"><input class="ip" id="rf" type="date" value="'+td()+'"><input class="ip" id="rt2" type="date" value="'+td()+'"><button class="btn bi bsm" onclick="genR()">Go</button></div><div id="rc"></div>';
@@ -1221,9 +1215,10 @@ async function genR(){
   c.innerHTML='<div class="em"><div style="width:22px;height:22px;border:2px solid rgba(0,0,0,.1);border-radius:50%;border-top-color:var(--gold);animation:sp .8s linear infinite;margin:0 auto"></div></div>';
   if(rTab2==='sales')await rSales(from,to,c);
   else if(rTab2==='purchase')await rPur(from,to,c);
-  else if(rTab2==='stock')await rStock(c);
+  else if(rTab2==='stock')await rStock(from,to,c);
   else if(rTab2==='pl')await rPL(from,to,c);
   else rLedRep(c);
+  if(rTab2==='pl'||rTab2==='ledger')lastReportData=_domRows(c);
 }
 async function rSales(f,t,c){
   lastReportTitle='Sales_'+f+'_'+t;
@@ -1241,17 +1236,79 @@ async function rSales(f,t,c){
       }).filter(Boolean).join('; ');
       return '<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(s.transactions&&s.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+s.sale_date+' - '+s.customer_name+' - '+s.payment_mode+'</div>'+(items?'<div style="font-size:.52rem;color:var(--ink3)">'+items+'</div>':'')+'</span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(s.total_amount)+'</div><div style="font-size:.58rem;color:var(--sage)">+'+fmt(s.gross_profit)+'</div></span></div>';
     }).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Sales Returns</span><span>- '+fmt(retTot)+'</span></div><div class="rf"><span>Net Sales</span><span>'+fmt(netTot)+'</span></div></div>';
+  try{var rq2=await sb.from('transactions').select('transaction_no,transaction_date,total_amount,notes,is_cancelled').eq('transaction_type','sale_return').gte('transaction_date',f).lte('transaction_date',t).order('transaction_date',{ascending:false});
+    var rl=(rq2.data||[]).filter(function(r){return !r.is_cancelled;});
+    if(rl.length)c.innerHTML+='<div style="margin-bottom:14px"><div class="rh"><div>Sales Returns</div></div>'+rl.map(function(r){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+_esc(r.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+r.transaction_date+(r.notes?' - '+_esc(r.notes):'')+'</div></span><span style="font-weight:700;color:var(--red)">- '+fmt(r.total_amount)+'</span></div>';}).join('')+'</div>';}catch(e5){}
   lastReportData=v.map(function(r){return{Date:r.sale_date,Bill:r.transactions&&r.transactions.transaction_no||'',Customer:r.customer_name,Amount:r.total_amount,Profit:r.gross_profit,Payment:r.payment_mode};});
 }
 async function rPur(f,t,c){
-  var p=await sb.from('purchases').select('*,transactions(transaction_no),parties(name)').gte('purchase_date',f).lte('purchase_date',t).order('purchase_date',{ascending:false});
-  var tot=(p.data||[]).reduce(function(s,t){return s+Number(t.total_amount||0);},0);
-  var pretQ=await sb.from('transactions').select('total_amount').eq('transaction_type','purchase_return').gte('transaction_date',f).lte('transaction_date',t);
-  var pretTot=(pretQ.data||[]).reduce(function(s2,r){return s2+Number(r.total_amount||0);},0);
-  var netTot=Math.max(0,tot-pretTot);
-  c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">Net Purchases</div><div class="sv">'+fmt(netTot)+'</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(pretTot)+'</div></div></div><div style="margin-bottom:14px"><div class="rh"><div>Purchases</div></div>'+(p.data||[]).map(function(pr){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(pr.transactions&&pr.transactions.transaction_no||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+pr.purchase_date+' - '+(pr.parties&&pr.parties.name||'')+'</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700">'+fmt(pr.total_amount)+'</div></span></div>';}).join('')+'<div class="rr" style="color:var(--red)"><span>Less: Purchase Returns</span><span>- '+fmt(pretTot)+'</span></div><div class="rf"><span>Net Purchases</span><span>'+fmt(netTot)+'</span></div></div>';
+  lastReportTitle='Purchases_'+f+'_'+t;
+  var p=await _fetchAll(function(){return sb.from('purchases').select('*,transactions(transaction_no,is_cancelled),parties(name),purchase_items(qty,purchase_price,product_variants(sku,colour,size,products(name)))').gte('purchase_date',f).lte('purchase_date',t).order('purchase_date',{ascending:false});});
+  p=p.filter(function(x){return !x.transactions||!x.transactions.is_cancelled;});
+  var rq=await sb.from('transactions').select('id,transaction_no,transaction_date,total_amount,party_id,notes,is_cancelled').eq('transaction_type','purchase_return').gte('transaction_date',f).lte('transaction_date',t).order('transaction_date',{ascending:false});
+  var rets=(rq.data||[]).filter(function(r){return !r.is_cancelled;});
+  var tot=p.reduce(function(s2,x){return s2+Number(x.total_amount||0);},0);
+  var paid=p.reduce(function(s2,x){return s2+Number(x.paid_amount||0);},0);
+  var retTot=rets.reduce(function(s2,x){return s2+Number(x.total_amount||0);},0);
+  var h='<div class="sg"><div class="sc"><div class="sl2">Net Purchases</div><div class="sv">'+fmt(Math.max(0,tot-retTot))+'</div><div style="font-size:.54rem;color:var(--ink3)">'+p.length+' purchases</div></div><div class="sc rd"><div class="sl2">Returns</div><div class="sv">'+fmt(retTot)+'</div></div><div class="sc sg2"><div class="sl2">Paid</div><div class="sv">'+fmt(paid)+'</div></div><div class="sc go"><div class="sl2">Outstanding</div><div class="sv">'+fmt(Math.max(0,tot-paid))+'</div></div></div>';
+  h+='<div style="margin-bottom:14px"><div class="rh"><div>Purchases (tap for details)</div></div>';
+  p.forEach(function(x){
+    var items=(x.purchase_items||[]).map(function(it){var pv=it.product_variants||{};return((pv.products&&pv.products.name)||pv.sku||'')+(pv.colour?' | '+pv.colour:'')+(pv.size?' | '+pv.size:'')+' x'+it.qty+' @'+fmt(it.purchase_price);}).filter(Boolean).join('; ');
+    var out=Math.max(0,Number(x.total_amount||0)-Number(x.paid_amount||0));
+    h+='<div class="rr" style="cursor:pointer" onclick="showPurchase(\''+x.transaction_id+'\')"><span><div style="font-size:.72rem;font-weight:600">'+_esc((x.transactions&&x.transactions.transaction_no)||'')+' - '+_esc((x.parties&&x.parties.name)||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+x.purchase_date+' - paid '+fmt(x.paid_amount)+(out>0?' - owes '+fmt(out):'')+'</div>'+(items?'<div style="font-size:.52rem;color:var(--ink3)">'+_esc(items)+'</div>':'')+'</span><span style="font-weight:700">'+fmt(x.total_amount)+'</span></div>';
+  });
+  if(!p.length)h+='<div style="padding:10px;font-size:.66rem;color:var(--ink3);text-align:center">No purchases in this period</div>';
+  h+='</div>';
+  if(rets.length){h+='<div style="margin-bottom:14px"><div class="rh"><div>Purchase Returns</div></div>';rets.forEach(function(r){var pt=parties.find(function(q){return q.id===r.party_id;});h+='<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+_esc(r.transaction_no||'')+(pt?' - '+_esc(pt.name):'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+r.transaction_date+(r.notes?' - '+_esc(r.notes):'')+'</div></span><span style="font-weight:700;color:var(--red)">- '+fmt(r.total_amount)+'</span></div>';});h+='</div>';}
+  c.innerHTML=h;
+  lastReportData=p.map(function(x){return{Date:x.purchase_date,Reference:(x.transactions&&x.transactions.transaction_no)||'',Supplier:(x.parties&&x.parties.name)||'',Items:(x.purchase_items||[]).map(function(it){var pv=it.product_variants||{};return((pv.products&&pv.products.name)||pv.sku||'')+' x'+it.qty+' @'+it.purchase_price;}).join('; '),Total:x.total_amount,Paid:x.paid_amount,Outstanding:Math.max(0,Number(x.total_amount||0)-Number(x.paid_amount||0)),Payment:x.payment_mode};}).concat(rets.map(function(r){return{Date:r.transaction_date,Reference:r.transaction_no,Supplier:(parties.find(function(q){return q.id===r.party_id;})||{}).name||'',Items:'PURCHASE RETURN',Total:-Number(r.total_amount),Paid:'',Outstanding:'',Payment:''};}));
 }
-async function rStock(c){var inv=await sb.rpc('get_inventory_report');var tv=(inv.data||[]).reduce(function(s,p){return s+Number(p.stock_value||0);},0);c.innerHTML='<div class="sg"><div class="sc"><div class="sl2">SKUs</div><div class="sv">'+(inv.data||[]).length+'</div></div><div class="sc go"><div class="sl2">Value</div><div class="sv">'+fmt(tv)+'</div></div></div><div style="border:1px solid #E8D8C0;border-radius:9px;overflow:hidden">'+(inv.data||[]).map(function(p){return'<div class="rr"><span><div style="font-size:.72rem;font-weight:600">'+(p.product_name||'')+'</div><div style="font-size:.58rem;color:var(--ink3)">'+(p.sku||'')+' - '+(p.age_days||0)+'d</div></span><span style="text-align:right"><div style="font-size:.72rem;font-weight:700;color:'+(p.qty_available<=2?'var(--red)':'var(--sage)')+'">'+( p.qty_available||0)+'</div><div style="font-size:.58rem;color:var(--ink3)">'+fmt(p.stock_value||0)+'</div></span></div>';}).join('')+'<div class="rf"><span>Total Value</span><span>'+fmt(tv)+'</span></div></div>';}
+var _stkRows=[];
+async function rStock(f,t,c){
+  lastReportTitle='Stock_History_'+f+'_'+t;
+  try{
+  var inv=await sb.rpc('get_inventory_report');
+  var tv=(inv.data||[]).reduce(function(s2,p){return s2+Number(p.stock_value||0);},0);
+  var lo=new Date(f+'T00:00:00').toISOString(),hi=new Date(t+'T23:59:59.999').toISOString();
+  var mv=await _fetchAll(function(){return sb.from('inventory_movements').select('*,product_variants(sku,colour,size,products(name))').gte('created_at',lo).lte('created_at',hi).order('created_at',{ascending:true});});
+  // the system records a purchase twice (database trigger + stock function): keep the later, accurate record
+  var grp={};mv.forEach(function(m,i){if(m.movement_type==='purchase'&&m.transaction_id){var k=m.transaction_id+'|'+m.variant_id;(grp[k]=grp[k]||[]).push(i);}});
+  var drop={};Object.keys(grp).forEach(function(k){var ix=grp[k];if(ix.length>1){ix.sort(function(a,b){return mv[a].created_at<mv[b].created_at?-1:1;});for(var q=0;q<ix.length-1;q++)drop[ix[q]]=true;}});
+  mv=mv.filter(function(m,i){return !drop[i];});
+  var tids=mv.map(function(m){return m.transaction_id;});
+  var txs=await _inChunks('transactions','id,transaction_no,transaction_date,transaction_type,party_id,notes','id',tids);
+  var sls=await _inChunks('sales','transaction_id,customer_name','transaction_id',tids);
+  var pus=await _inChunks('purchases','transaction_id,supplier_party_id','transaction_id',tids);
+  var T={},S={},P={};txs.forEach(function(x){T[x.id]=x;});sls.forEach(function(x){S[x.transaction_id]=x.customer_name;});pus.forEach(function(x){P[x.transaction_id]=x.supplier_party_id;});
+  var pname=function(id){var p=parties.find(function(q){return q.id===id;});return p?p.name:'';};
+  var TYPE={purchase:'Purchase',sale:'Sale',sale_return:'Sales Return',sales_return:'Sales Return',purchase_return:'Purchase Return',damaged:'Adjustment - Damaged',lost_owner:'Adjustment - Lost (owner)',lost_staff:'Adjustment - Lost (staff)',aged_sale:'Aged stock sale',other:'Adjustment - Other',other_in:'Adjustment - Stock added',stock_take:'Stock count adjustment'};
+  _stkRows=mv.map(function(m){
+    var tx=T[m.transaction_id]||{};var pv=m.product_variants||{};var nm=(pv.products&&pv.products.name)||'';
+    var q=Number(m.qty_change);var isSale=m.movement_type==='sale',isPur=m.movement_type==='purchase';
+    var unit=isSale?m.sale_price:m.purchase_price;
+    var party=isSale?(S[m.transaction_id]||pname(tx.party_id)||''):isPur?pname(P[m.transaction_id]):pname(tx.party_id);
+    return{Date:tx.transaction_date||_lday(m.created_at),Type:TYPE[m.movement_type]||m.movement_type,SKU:pv.sku||'',Item:nm+(pv.colour?' | '+pv.colour:'')+(pv.size?' | '+pv.size:''),'Supplier / Customer':party||'',Reference:tx.transaction_no||m.reference_no||'','Qty In':q>0?q:'','Qty Out':q<0?-q:'','Unit Price':(unit===null||unit===undefined)?'':Number(unit),Total:(unit===null||unit===undefined)?'':Math.round(Math.abs(q)*Number(unit)*100)/100,'Stock Balance':m.qty_after,Note:m.reason||'',_tx:isPur?m.transaction_id:''};
+  });
+  var sum=function(fn){return _stkRows.filter(fn).reduce(function(a,r){return a+(Number(r.Total)||0);},0);};
+  var cnt=function(fn,k){return _stkRows.filter(fn).reduce(function(a,r){return a+(Number(r[k])||0);},0);};
+  var isT=function(r){return r.Type==='Purchase';},isS=function(r){return r.Type==='Sale';};
+  var h='<div class="sg"><div class="sc"><div class="sl2">Current SKUs</div><div class="sv">'+(inv.data||[]).length+'</div></div><div class="sc go"><div class="sl2">Stock value now</div><div class="sv">'+fmt(tv)+'</div></div><div class="sc sg2"><div class="sl2">Purchased</div><div class="sv">'+cnt(isT,'Qty In')+'</div><div style="font-size:.54rem;color:var(--ink3)">Rs '+fmt(sum(isT))+'</div></div><div class="sc rd"><div class="sl2">Sold</div><div class="sv">'+cnt(isS,'Qty Out')+'</div><div style="font-size:.54rem;color:var(--ink3)">Rs '+fmt(sum(isS))+'</div></div></div>';
+  h+='<input class="ip" id="stk-f" placeholder="Filter by item, SKU, supplier/customer or reference" oninput="_stkRender()" style="margin-bottom:8px"><div id="stk-t"></div>';
+  c.innerHTML=h;_stkRender();
+  lastReportData=_stkRows.map(function(r){var o={};Object.keys(r).forEach(function(k){if(k!=='_tx')o[k]=r[k];});return o;});
+  }catch(ex){c.innerHTML='<div class="ib" style="color:var(--red)">'+_esc(ex.message)+'</div>';}
+}
+function _stkRender(){
+  var el=$('stk-t');if(!el)return;var q=(($('stk-f')&&$('stk-f').value)||'').toLowerCase();
+  var rows=_stkRows.filter(function(r){return !q||[r.Item,r.SKU,r['Supplier / Customer'],r.Reference,r.Type].join(' ').toLowerCase().indexOf(q)>=0;});
+  var h='<div style="font-size:.58rem;color:var(--ink3);margin-bottom:4px">'+rows.length+' movement'+(rows.length===1?'':'s')+' - dates are the purchase / sale dates, prices are the prices recorded at that time</div><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.58rem;min-width:760px"><tr style="background:var(--ink);color:#fff">'+['Date','Type','Item','Supplier / Customer','Ref','In','Out','Unit Price','Total','Balance'].map(function(x){return'<th style="padding:5px;text-align:left">'+x+'</th>';}).join('')+'</tr>';
+  rows.forEach(function(r){
+    var inn=r['Qty In']!=='';
+    h+='<tr style="border-bottom:1px solid var(--cream2)"><td style="padding:4px">'+r.Date+'</td><td style="padding:4px">'+_esc(r.Type)+'</td><td style="padding:4px">'+_esc(r.Item)+'<div style="color:var(--ink3);font-size:.5rem">'+_esc(r.SKU)+'</div></td><td style="padding:4px">'+_esc(r['Supplier / Customer'])+'</td><td style="padding:4px">'+(r._tx?'<a style="color:var(--gold);cursor:pointer" onclick="showPurchase(\''+r._tx+'\')">'+_esc(r.Reference)+'</a>':_esc(r.Reference))+'</td><td style="padding:4px;text-align:right;color:var(--sage)">'+(inn?r['Qty In']:'')+'</td><td style="padding:4px;text-align:right;color:var(--red)">'+(r['Qty Out']!==''?r['Qty Out']:'')+'</td><td style="padding:4px;text-align:right">'+(r['Unit Price']===''?'':fmt(r['Unit Price']))+'</td><td style="padding:4px;text-align:right">'+(r.Total===''?'':fmt(r.Total))+'</td><td style="padding:4px;text-align:right;font-weight:700">'+r['Stock Balance']+'</td></tr>';
+  });
+  h+='</table></div>';if(!rows.length)h+='<div style="padding:12px;text-align:center;font-size:.66rem;color:var(--ink3)">No stock movements in this period</div>';
+  el.innerHTML=h;
+}
 async function rPL(f,t,c){
   var s=await sb.from('sales').select('total_amount,gross_profit').gte('sale_date',f).lte('sale_date',t);
   // FIX: only genuine Expense/Income natures hit P&L  -  Receipts/Payments (now also in cash_entries) are excluded
@@ -1279,23 +1336,31 @@ async function rPL(f,t,c){
 }
 function rLedRep(c){
   var cr=parties.filter(function(p){return p.party_type==='customer'&&p.current_balance>0;});
-  var sp2=parties.filter(function(p){return p.party_type==='supplier'&&p.current_balance>0;});
-  var comm=parties.filter(function(p){return p.party_type==='committee';});
-  c.innerHTML='<div class="sg"><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Receivables</div><div class="sv">'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</div></div></div>'+
-  '<div style="margin-bottom:14px"><div class="rh"><div>Customer Outstanding</div></div>'+cr.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(cr.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>'+
-  '<div style="margin-bottom:14px"><div class="rh"><div>Supplier Payables</div></div>'+sp2.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--red)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(sp2.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>'+
-  '<div style="margin-bottom:14px"><div class="rh"><div>Committee Balances</div></div>'+comm.map(function(p){return'<div class="rr"><span>'+p.name+'</span><span style="font-weight:700;color:var(--gold)">'+fmt(p.current_balance)+'</span></div>';}).join('')+'<div class="rf"><span>Total</span><span>'+fmt(comm.reduce(function(s,p){return s+p.current_balance;},0))+'</span></div></div>';
+  var sp2=parties.filter(function(p){return p.party_type==='supplier'&&p.current_balance<0;});
+  var comm=parties.filter(function(p){return p.party_type==='committee'&&p.is_active!==false;});
+  var sumA=function(a,fn){return a.reduce(function(s2,p){return s2+fn(p);},0);};
+  var rowsH=function(a,fn,col){return a.map(function(p){return'<div class="rr"><span>'+_esc(p.name)+'</span><span style="font-weight:700;color:'+col+'">'+fmt(fn(p))+'</span></div>';}).join('')||'<div style="padding:8px;font-size:.64rem;color:var(--ink3)">None</div>';};
+  var recv=function(p){return p.current_balance;},pay=function(p){return -p.current_balance;};
+  c.innerHTML='<div class="sg"><div class="sc" style="border-left-color:var(--red)"><div class="sl2">Receivables</div><div class="sv">'+fmt(sumA(cr,recv))+'</div></div><div class="sc rd"><div class="sl2">Payables</div><div class="sv">'+fmt(sumA(sp2,pay))+'</div></div></div>'+
+   '<div style="margin-bottom:14px"><div class="rh"><div>Customer Outstanding</div></div>'+rowsH(cr,recv,'var(--red)')+'<div class="rf"><span>Total</span><span>'+fmt(sumA(cr,recv))+'</span></div></div>'+
+   '<div style="margin-bottom:14px"><div class="rh"><div>Supplier Payables</div></div>'+rowsH(sp2,pay,'var(--red)')+'<div class="rf"><span>Total</span><span>'+fmt(sumA(sp2,pay))+'</span></div></div>'+
+   '<div style="margin-bottom:14px"><div class="rh"><div>Committee Balances (paid in, net)</div></div>'+rowsH(comm,recv,'var(--gold)')+'<div class="rf"><span>Total</span><span>'+fmt(sumA(comm,recv))+'</span></div></div>'+
+   '<div style="font-size:.54rem;color:var(--ink3)">Ledger balances are as of now (they do not depend on the date range).</div>';
 }
-
-
 function rCash(){
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
+  var pa=payAccs();
+  var total=pa.reduce(function(s2,a){return s2+Number(a.current_balance||0);},0);
+  var typeLbl={cash:'Cash',bank:'Bank',emoney:'Wallet'};
   var h='<div style="background:var(--ink);color:white;border-radius:16px;padding:16px;margin-bottom:14px">';
-  h+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.12em;opacity:.5">Cash Balance</div>';
-  h+='<div style="font-size:2rem;font-weight:700;margin:5px 0">'+fmt(ca&&ca.current_balance||0)+'</div>';
-  h+='<div style="display:flex;gap:12px;flex-wrap:wrap">';
-  for(var i=0;i<accs.length;i++)h+='<div><div style="font-size:.55rem;opacity:.5">'+accs[i].name+'</div><div style="font-size:.72rem;font-weight:600;color:'+(accs[i].current_balance>=0?'#90EE90':'#FFB3B3')+'">'+fmt(accs[i].current_balance)+'</div></div>';
-  h+='</div></div>';
+  h+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.12em;opacity:.5">Total Balance - All Accounts</div>';
+  h+='<div id="cash-total" style="font-size:2rem;font-weight:700;margin:5px 0;color:'+(total>=0?'#fff':'#FFB3B3')+'">'+fmt(total)+'</div>';
+  h+='<div style="font-size:.55rem;opacity:.5;margin-bottom:8px">Combined balance of '+pa.length+' payment accounts</div>';
+  h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:8px">';
+  pa.forEach(function(a){var b=Number(a.current_balance||0);h+='<div style="background:rgba(255,255,255,.08);border-radius:10px;padding:8px 10px"><div style="font-size:.52rem;opacity:.55">'+_esc(a.name)+(typeLbl[a.account_type]?' - '+typeLbl[a.account_type]:'')+'</div><div style="font-size:.8rem;font-weight:700;color:'+(b>=0?'#90EE90':'#FFB3B3')+'">'+fmt(b)+'</div></div>';});
+  h+='</div>';
+  var other=accs.filter(function(a){return pa.indexOf(a)<0&&Number(a.current_balance||0)!==0;});
+  if(other.length)h+='<div style="font-size:.5rem;opacity:.45;margin-top:8px">Not included in total (not a payment account): '+other.map(function(a){return _esc(a.name)+' '+fmt(a.current_balance);}).join(', ')+'</div>';
+  h+='<button class="btn bh bsm" style="margin-top:12px" onclick="oCashReport()">Transaction Report</button></div>';
   h+='<div class="card"><div class="ct">New Entry</div>';
   h+='<div class="fg"><label class="lb">Transaction Nature *</label><select class="sl" id="cnature" onchange="onNatureChange()"><option value="">Select...</option>'+
     '<optgroup label="P&amp;L Transactions">'+
@@ -2108,13 +2173,7 @@ async function exportStockReport(){
 function exportReport(){
   if(!lastReportData||!lastReportData.length){toast('Generate a report first','warn');return;}
   var keys=Object.keys(lastReportData[0]);
-  var rows=[keys.join(',')];
-  lastReportData.forEach(function(r){rows.push(keys.map(function(k){return '"'+(String(r[k]||'').replace(/"/g,'""'))+'"';}).join(','));});
-  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
-  var a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);
-  a.download=lastReportTitle+'_'+td()+'.csv';
-  a.click();
+  _csvDownload(lastReportTitle+'_'+td()+'.csv',keys,lastReportData);
   toast('CSV downloaded','ok');
 }
 function printReport(){
@@ -3673,7 +3732,7 @@ function renderPurPayments(total){
     h+='<div style="padding:0 4px">';
     if(row.type==='account'){
       h+='<select class="sl" '+idx+' onchange="purPaySub(this)" style="font-size:.58rem;height:28px;width:100%">';
-      payAccs().forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.subId?' selected':'')+'>'+a.name+'</option>';});
+      payAccs().forEach(function(a){h+='<option value="'+a.id+'"'+(a.id===row.subId?' selected':'')+'>'+_esc(a.name)+' ('+fmt(a.current_balance)+')</option>';});
       h+='</select>';
     } else if(row.type==='owner'){
       var owners=parties.filter(function(p){return p.party_type==='owner';});
@@ -3688,7 +3747,7 @@ function renderPurPayments(total){
       loans.forEach(function(p){h+='<option value="'+p.id+'"'+(p.id===row.subId?' selected':'')+'>'+p.name+'</option>';});
       h+='</select>';
     } else {
-      h+='<span style="font-size:.58rem;color:var(--ink3);padding:4px">Posted to Supplier Ledger</span>';
+      var _sn=($('ps2')&&$('ps2').value||'').trim();h+='<span style="font-size:.6rem;color:var(--ink2);padding:4px">Supplier: <b>'+(_sn?_esc(_sn):'<span style="color:var(--red)">not selected</span>')+'</b></span>';
     }
     h+='</div>';
     h+='<input type="number" inputmode="decimal" min="0" step="any" onfocus="this.select()" value="'+(row.amount||'')+'" placeholder="0" '+idx+' oninput="purPayAmt(this)" style="width:82px;font-size:.65rem;text-align:right;border:1px solid var(--cream2);border-radius:5px;padding:3px 5px">';
@@ -3719,17 +3778,20 @@ function _purDefaultSubName(type,subId){
   return type;
 }
 function addPurPay(){
+  _purAuto=false;
   var subId=_purDefaultSub('account');
   _purPayments.push({type:'account',subId:subId,subName:_purDefaultSubName('account',subId),amount:0});
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
 function removePurPay(i){
+  _purAuto=false;
   _purPayments.splice(i,1);
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
   renderPurPayments(tot);
 }
 function purPayType(sel){
+  _purAuto=false;
   var i=Number(sel.dataset.idx);
   var type=sel.value;
   var subId=_purDefaultSub(type);
@@ -3745,6 +3807,7 @@ function purPaySub(sel){
   renderPurPayments(tot);
 }
 function purPayAmt(inp){
+  _purAuto=false;
   var i=Number(inp.dataset.idx);
   _purPayments[i].amount=Number(inp.value||0);
   var tot=Number($('pcs')&&$('pcs').value||0)*Number($('pq')&&$('pq').value||0);
@@ -3973,6 +4036,160 @@ async function saveCmTxn(kind,id){
     if(tIns&&tIns.data)await _cancelTxn(tIns.data.id,'Committee transaction not completed: '+ex.message);
     toast(ex.message,'err');
   }
+}
+
+// ---- shared report helpers ----
+async function _fetchAll(build){
+  var out=[],from=0,step=1000;
+  for(;;){var r=await build().range(from,from+step-1);if(r.error)throw new Error(r.error.message);var d=r.data||[];out=out.concat(d);if(d.length<step)break;from+=step;}
+  return out;
+}
+async function _inChunks(table,select,col,ids,extra){
+  var out=[];ids=ids.filter(function(x,i,a){return x&&a.indexOf(x)===i;});
+  for(var i=0;i<ids.length;i+=150){var q=sb.from(table).select(select).in(col,ids.slice(i,i+150));if(extra)q=extra(q);var r=await q;if(r.error)throw new Error(r.error.message);out=out.concat(r.data||[]);}
+  return out;
+}
+function _csvDownload(name,keys,rows){
+  var lines=[keys.map(function(k){return '"'+String(k).replace(/"/g,'""')+'"';}).join(',')];
+  rows.forEach(function(r){lines.push(keys.map(function(k){var v=r[k];return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}).join(','));});
+  var blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(function(){document.body.removeChild(a);},500);
+  return lines.length-1;
+}
+function _domRows(c){
+  var out=[];var rs=c.querySelectorAll('.rr,.rf');
+  for(var i=0;i<rs.length;i++){var sp=rs[i].querySelectorAll(':scope > span');if(sp.length>=2)out.push({Item:sp[0].textContent.trim(),Amount:sp[sp.length-1].textContent.trim()});}
+  return out;
+}
+function _lday(d){var x=new Date(d);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0');}
+
+// ================= CASH TRANSACTION REPORT (date range, per account or all, opening/closing, CSV) =================
+var _cashRepRows=[],_cashRepMeta={};
+function oCashReport(){
+  var d0=new Date();var first=d0.getFullYear()+'-'+String(d0.getMonth()+1).padStart(2,'0')+'-01';
+  var opts='<option value="">All payment accounts</option>'+payAccs().map(function(a){return'<option value="'+a.id+'">'+_esc(a.name)+'</option>';}).join('');
+  var h='<div class="g2"><div class="fg"><label class="lb">From</label><input class="ip" id="cr-f" type="date" value="'+first+'"></div><div class="fg"><label class="lb">To</label><input class="ip" id="cr-t" type="date" value="'+td()+'"></div></div>'+
+    '<div class="fg"><label class="lb">Account</label><select class="sl" id="cr-a">'+opts+'</select></div>'+
+    '<div style="display:flex;gap:8px;margin-bottom:10px"><button class="btn bi bsm" style="flex:1" onclick="genCashReport()">Generate</button><button class="btn bh bsm" style="flex:1" onclick="exportCashReport()">Export CSV</button></div><div id="cr-out"></div>';
+  omo('Cash Transaction Report',h);
+}
+async function genCashReport(){
+  var out=$('cr-out');if(!out)return;
+  var f=$('cr-f')&&$('cr-f').value,t=$('cr-t')&&$('cr-t').value,accSel=$('cr-a')&&$('cr-a').value;
+  if(!f||!t){toast('Select both dates','err');return;}
+  if(f>t){toast('From date is after To date','err');return;}
+  out.innerHTML='<div class="em"><p style="font-size:.7rem">Loading...</p></div>';
+  try{
+    var useAccs=accSel?accs.filter(function(a){return a.id===accSel;}):payAccs();
+    var ids=useAccs.map(function(a){return a.id;});
+    var ents=await _fetchAll(function(){return sb.from('ledger_entries').select('*').eq('account_category','cashflow').in('cashflow_account_id',ids).gte('entry_date',f).order('entry_date',{ascending:true}).order('created_at',{ascending:true});});
+    ents=ents.filter(function(e){return !e.is_reversed||true;});
+    var inRange=ents.filter(function(e){return e.entry_date<=t;});
+    var net=function(a){return a.reduce(function(s2,e){return s2+(e.entry_type==='credit'?1:-1)*Number(e.amount);},0);};
+    var curBal=useAccs.reduce(function(s2,a){return s2+Number(a.current_balance||0);},0);
+    var opening=Math.round((curBal-net(ents))*100)/100;     // balance at the start of "From", derived from the real current balances
+    var tids=inRange.map(function(e){return e.transaction_id;});
+    var txs=await _inChunks('transactions','id,transaction_no,transaction_type,party_id,notes','id',tids);
+    var ces=await _inChunks('cash_entries','transaction_id,account_id,nature,party_category,party_id,description','transaction_id',tids);
+    var sls=await _inChunks('sales','transaction_id,customer_name','transaction_id',tids);
+    var pus=await _inChunks('purchases','transaction_id,supplier_party_id','transaction_id',tids);
+    var T={},C={},S={},P={};
+    txs.forEach(function(x){T[x.id]=x;});ces.forEach(function(x){C[x.transaction_id+'|'+x.account_id]=x;C[x.transaction_id]=C[x.transaction_id]||x;});
+    sls.forEach(function(x){S[x.transaction_id]=x.customer_name;});pus.forEach(function(x){P[x.transaction_id]=x.supplier_party_id;});
+    var pname=function(id){var p=parties.find(function(q){return q.id===id;});return p?p.name:'';};
+    var natureOf={sale:'Sale',purchase:'Purchase',sale_return:'Sales Return',purchase_return:'Purchase Return',expense:'Expense',income:'Income',receipt:'Receipt',payment:'Payment'};
+    var run=opening,rec=0,pay=0,rows=[];
+    inRange.forEach(function(e){
+      var tx=T[e.transaction_id]||{};var ce=C[e.transaction_id+'|'+e.cashflow_account_id]||C[e.transaction_id]||{};
+      var isIn=e.entry_type==='credit',amt=Number(e.amount);
+      var party=S[e.transaction_id]||pname(P[e.transaction_id])||pname(ce.party_id)||pname(tx.party_id)||'';
+      if(isIn)rec+=amt;else pay+=amt;run=Math.round((run+(isIn?amt:-amt))*100)/100;
+      var acc=accs.find(function(a){return a.id===e.cashflow_account_id;});
+      rows.push({Date:e.entry_date,Nature:ce.party_category||natureOf[tx.transaction_type]||tx.transaction_type||'',Description:e.description||ce.description||'',Reference:tx.transaction_no||'','Customer / Supplier':party,'Payment Account':acc?acc.name:'',Receipts:isIn?amt:'',Payments:isIn?'':amt,Balance:run});
+    });
+    var closing=Math.round((opening+rec-pay)*100)/100;
+    _cashRepRows=rows;_cashRepMeta={f:f,t:t,acc:accSel?useAccs[0].name:'All accounts',opening:opening,closing:closing,rec:rec,pay:pay};
+    var h='<div class="sg"><div class="sc"><div class="sl2">Opening balance</div><div class="sv">'+fmt(opening)+'</div></div><div class="sc"><div class="sl2">Closing balance</div><div class="sv">'+fmt(closing)+'</div></div><div class="sc sg2"><div class="sl2">Receipts</div><div class="sv">'+fmt(rec)+'</div></div><div class="sc rd"><div class="sl2">Payments</div><div class="sv">'+fmt(pay)+'</div></div></div>';
+    h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.58rem;min-width:620px"><tr style="background:var(--ink);color:#fff">'+['Date','Nature','Description','Ref','Party','Account','Receipts','Payments','Balance'].map(function(x){return'<th style="padding:5px;text-align:left">'+x+'</th>';}).join('')+'</tr>';
+    h+='<tr style="background:var(--cream2);font-weight:700"><td colspan="8" style="padding:5px">Opening balance ('+_esc(_cashRepMeta.acc)+') on '+f+'</td><td style="padding:5px;text-align:right">'+fmt(opening)+'</td></tr>';
+    rows.forEach(function(r){h+='<tr style="border-bottom:1px solid var(--cream2)"><td style="padding:4px">'+r.Date+'</td><td style="padding:4px">'+_esc(r.Nature)+'</td><td style="padding:4px">'+_esc(r.Description)+'</td><td style="padding:4px">'+_esc(r.Reference)+'</td><td style="padding:4px">'+_esc(r['Customer / Supplier'])+'</td><td style="padding:4px">'+_esc(r['Payment Account'])+'</td><td style="padding:4px;text-align:right;color:var(--sage)">'+(r.Receipts===''?'':fmt(r.Receipts))+'</td><td style="padding:4px;text-align:right;color:var(--red)">'+(r.Payments===''?'':fmt(r.Payments))+'</td><td style="padding:4px;text-align:right;font-weight:600">'+fmt(r.Balance)+'</td></tr>';});
+    h+='<tr style="background:var(--cream2);font-weight:700"><td colspan="6" style="padding:5px">Closing balance on '+t+'</td><td style="padding:5px;text-align:right">'+fmt(rec)+'</td><td style="padding:5px;text-align:right">'+fmt(pay)+'</td><td style="padding:5px;text-align:right">'+fmt(closing)+'</td></tr></table></div>';
+    if(!rows.length)h+='<div style="padding:10px;text-align:center;font-size:.66rem;color:var(--ink3)">No transactions in this period</div>';
+    out.innerHTML=h;
+  }catch(ex){out.innerHTML='<div class="ib" style="color:var(--red)">'+_esc(ex.message)+'</div>';}
+}
+function exportCashReport(){
+  if(!_cashRepRows.length&&!_cashRepMeta.f){toast('Generate the report first','warn');return;}
+  var m=_cashRepMeta;var keys=['Date','Nature','Description','Reference','Customer / Supplier','Payment Account','Receipts','Payments','Balance'];
+  var rows=[{Date:m.f,Nature:'OPENING BALANCE',Description:m.acc,Reference:'','Customer / Supplier':'','Payment Account':'',Receipts:'',Payments:'',Balance:m.opening}].concat(_cashRepRows).concat([{Date:m.t,Nature:'CLOSING BALANCE',Description:m.acc,Reference:'','Customer / Supplier':'','Payment Account':'',Receipts:m.rec,Payments:m.pay,Balance:m.closing}]);
+  _csvDownload('Cash_Report_'+m.f+'_to_'+m.t+'.csv',keys,rows);toast('CSV downloaded','ok');
+}
+
+// ---- Buy tab: chips preset the payment grid; the grid is the single source of truth ----
+var _purAuto=true;
+function _purApplyPreset(tot){
+  if(!(tot>0)){_purPayments=[];return;}
+  var cur=_purPayments.find(function(r){return r.type==='account';});
+  var accId=(cur&&cur.subId)||_purDefaultSub('account');var accName=(cur&&cur.subName)||_purDefaultSubName('account',accId);
+  var m=purPayMode;
+  if(m==='credit')_purPayments=[{type:'credit',amount:tot}];
+  else if(m==='owner'){var oid=_purDefaultSub('owner');_purPayments=oid?[{type:'owner',subId:oid,subName:_purDefaultSubName('owner',oid),amount:tot}]:[{type:'credit',amount:tot}];}
+  else if(m==='partial'){
+    var paid=Math.min(tot,Math.max(0,Number($('ppd2')&&$('ppd2').value||0)));
+    _purPayments=[{type:'account',subId:accId,subName:accName,amount:paid}];
+    if(tot-paid>0)_purPayments.push({type:'credit',amount:Math.round((tot-paid)*100)/100});
+  } else _purPayments=[{type:'account',subId:accId,subName:accName,amount:tot}];
+}
+function updPP(){
+  var q=Number($('pq')&&$('pq').value||0),c=Number($('pcs')&&$('pcs').value||0),tot=q*c;
+  if(_purAuto)_purApplyPreset(tot);
+  else if(!_purPayments.length&&tot>0){var caP=accs.find(function(a){return a.name==='Cash Drawer';});_purPayments=[{type:'account',subId:caP&&caP.id||'',subName:caP&&caP.name||'Cash',amount:tot}];}
+  else if(_purPayments.length===1&&tot>0&&!_purPayments[0].amount)_purPayments[0].amount=tot;
+  if(tot>0)renderPurPayments(tot);else{var pe=document.getElementById('pur-payments');if(pe)pe.innerHTML='';}
+  var p=$('pprev');if(!p)return;
+  if(!(tot>0)){p.style.display='none';return;}
+  var rows=_purPayments.filter(function(r){return r.amount>0;});
+  var paidRows=rows.filter(function(r){return r.type==='account'||r.type==='owner'||r.type==='loan';});
+  var paid=paidRows.reduce(function(s2,r){return s2+r.amount;},0);
+  var payable=Math.max(0,Math.round((tot-paid)*100)/100);
+  var supName=($('ps2')&&$('ps2').value||'').trim();
+  var sp=supName?parties.find(function(x){return x.party_type==='supplier'&&(x.name||'').toLowerCase()===supName.toLowerCase();}):null;
+  var L=function(l,v,col){return'<div style="display:flex;justify-content:space-between;font-size:.7rem;margin-bottom:3px'+(col?';color:'+col:'')+'"><span>'+l+'</span><span style="font-weight:600">'+v+'</span></div>';};
+  var h=L('Supplier',supName?_esc(supName)+(sp?'':' (new)'):'<span style="color:var(--red)">'+(payable>0?'not selected':'-')+'</span>');
+  if(sp)h+=L('Payable to this supplier now','Rs '+fmt(Math.max(0,-(sp.current_balance||0))),'var(--ink3)');
+  paidRows.forEach(function(r){
+    var lbl=r.type==='account'?(r.subName||'Account'):(r.type==='owner'?'Owner capital ('+(r.subName||'')+')':'Loan ('+(r.subName||'')+')');
+    var a=r.type==='account'?accs.find(function(x){return x.id===r.subId;}):null;
+    h+=L(_esc(lbl),'Rs '+fmt(r.amount)+(a?' (balance after Rs '+fmt((a.current_balance||0)-r.amount)+')':''),'var(--sage)');
+  });
+  h+=L('Total','Rs '+fmt(tot))+L('Paid now','Rs '+fmt(paid),'var(--sage)');
+  h+='<div style="display:flex;justify-content:space-between;font-size:.75rem;font-weight:700;border-top:1px dashed var(--border);padding-top:6px;margin-top:5px;color:var(--red)"><span>Payable (credit)</span><span>Rs '+fmt(payable)+'</span></div>';
+  if(payable>0&&sp)h+=L('Supplier payable after this purchase','Rs '+fmt(Math.max(0,-(sp.current_balance||0))+payable),'var(--ink3)');
+  p.style.display='block';p.innerHTML=h;
+}
+async function showPurchase(txnId){
+  try{
+    var tx=(await sb.from('transactions').select('*').eq('id',txnId).maybeSingle()).data||{};
+    var pu=(await sb.from('purchases').select('*').eq('transaction_id',txnId).maybeSingle()).data||{};
+    var items=(await sb.from('purchase_items').select('qty,purchase_price,product_variants(sku,colour,size,products(name))').eq('transaction_id',txnId)).data||[];
+    var le=(await sb.from('ledger_entries').select('*').eq('transaction_id',txnId)).data||[];
+    var sup=parties.find(function(p){return p.id===pu.supplier_party_id;});
+    var total=Number(tx.total_amount||pu.total_amount||0);
+    var rowH=function(l,v,col){return'<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:.68rem;border-bottom:1px solid var(--cream2)"><span style="color:var(--ink3)">'+l+'</span><b style="text-align:right'+(col?';color:'+col:'')+'">'+v+'</b></div>';};
+    var h='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:10px">'+rowH('Reference',_esc(tx.transaction_no||''))+rowH('Date',_esc(pu.purchase_date||tx.transaction_date||''))+rowH('Supplier',_esc((sup&&sup.name)||'-'))+rowH('Total','Rs '+fmt(total))+'</div>';
+    h+='<div style="font-size:.6rem;font-weight:700;text-transform:uppercase;color:var(--gold);margin-bottom:4px">Items</div>';
+    items.forEach(function(it){var pv=it.product_variants||{};h+=rowH(_esc(((pv.products&&pv.products.name)||pv.sku||'Item')+(pv.colour?' | '+pv.colour:'')+(pv.size?' | '+pv.size:''))+' x'+it.qty,'@ Rs '+fmt(it.purchase_price)+' = Rs '+fmt(it.qty*it.purchase_price));});
+    h+='<div style="font-size:.6rem;font-weight:700;text-transform:uppercase;color:var(--gold);margin:10px 0 4px">How it was paid</div>';
+    var paid=0,pay=0;
+    le.forEach(function(l){
+      if(l.account_category==='cashflow'){var a=accs.find(function(x){return x.id===l.cashflow_account_id;});paid+=Number(l.amount);h+=rowH(_esc((a&&a.name)||'Account'),'Rs '+fmt(l.amount)+' (balance now Rs '+fmt(a&&a.current_balance)+')','var(--sage)');}
+      else if(l.account_category==='party'){var p=parties.find(function(x){return x.id===l.party_id;});
+        if(p&&p.party_type==='supplier'){pay+=Number(l.amount);}else{paid+=Number(l.amount);h+=rowH(_esc(((p&&p.party_type==='owner')?'Owner capital - ':'Loan - ')+((p&&p.name)||'')),'Rs '+fmt(l.amount),'var(--sage)');}}
+    });
+    if(!le.length)h+='<div style="font-size:.64rem;color:var(--ink3)">No payment lines recorded</div>';
+    h+='<div style="background:var(--ink);color:#fff;border-radius:9px;padding:10px;margin-top:10px">'+rowH('Paid','Rs '+fmt(paid))+rowH('Outstanding for this purchase','Rs '+fmt(pay),pay>0?'#ffcf8a':'#9be39b')+(sup?rowH('Total payable to '+_esc(sup.name)+' now','Rs '+fmt(Math.max(0,-(sup.current_balance||0)))):'')+'</div>';
+    omo('Purchase '+(tx.transaction_no||''),h);
+  }catch(ex){toast(ex.message,'err');}
 }
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
