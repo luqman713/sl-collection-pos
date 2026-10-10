@@ -3,7 +3,7 @@
 // Offline-first: caches app shell, queues failed API calls
 // ============================================================
 
-const CACHE_NAME = 'slc-pos-v8';
+const CACHE_NAME = 'slc-pos-v9';
 const APP_SHELL = [
   '/',
   '/index.html',
@@ -40,9 +40,24 @@ self.addEventListener('activate', function(e) {
 self.addEventListener('fetch', function(e) {
   var url = e.request.url;
 
-  // App shell: cache first
-  if (url.includes('/index.html') || url.includes('/logo.png') ||
-      url.endsWith('/') || url.includes('jsbarcode') || url.includes('jsbarcode')) {
+  // App page: NETWORK FIRST (always the latest version when online), cached copy only when offline
+  if (!url.includes('supabase.co') && (e.request.mode === 'navigate' || url.includes('/index.html') || url.endsWith('/'))) {
+    e.respondWith(
+      fetch(e.request, { cache: 'no-cache' }).then(function(res) {
+        var clone = res.clone();
+        caches.open(CACHE_NAME).then(function(c) { c.put(e.request, clone); });
+        return res;
+      }).catch(function() {
+        return caches.match(e.request, { ignoreSearch: true }).then(function(m) {
+          return m || caches.match('./index.html') || caches.match('/index.html');
+        });
+      })
+    );
+    return;
+  }
+
+  // Logo and CDN libraries (Supabase client, barcode): cache first so the app also starts offline
+  if (url.includes('/logo.png') || url.includes('jsdelivr')) {
     e.respondWith(
       caches.match(e.request).then(function(cached) {
         return cached || fetch(e.request).then(function(res) {
