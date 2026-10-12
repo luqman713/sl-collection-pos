@@ -3,7 +3,7 @@
 // Offline-first: caches app shell, queues failed API calls
 // ============================================================
 
-const CACHE_NAME = 'slc-pos-v9';
+const CACHE_NAME = 'slc-pos-v10';
 const APP_SHELL = [
   '/',
   '/index.html',
