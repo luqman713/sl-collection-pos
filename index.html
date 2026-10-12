@@ -463,7 +463,7 @@ async function iDash(){
   }
   // Purchases & Purchase Returns (read-only, from transactions)
   try{
-    var _pq=async function(tp,from,to){var q=sb.from('transactions').select('total_amount').eq('transaction_type',tp).eq('is_cancelled',false);q=to?q.eq('transaction_date',to):q.gte('transaction_date',from);var r=await q;return(r.data||[]).reduce(function(a,x){return a+Number(x.total_amount||0);},0);};
+    var _pq=async function(tp,from,to){var q=sb.from('transactions').select('total_amount').eq('transaction_type',tp).eq('is_cancelled',false).not('notes','ilike','OPENING STOCK%');q=to?q.eq('transaction_date',to):q.gte('transaction_date',from);var r=await q;return(r.data||[]).reduce(function(a,x){return a+Number(x.total_amount||0);},0);};
     var tPur=await _pq('purchase',null,td()),tPRet=await _pq('purchase_return',null,td());
     var mPur=await _pq('purchase',monthStart,null),mPRet=await _pq('purchase_return',monthStart,null);
     if(ds){ds.insertAdjacentHTML('beforeend','<div class="sc"><div class="sl2">Net Purchases (Today)</div><div class="sv">'+fmt(Math.max(0,tPur-tPRet))+'</div><div style="font-size:.5rem;color:var(--ink3)">Purchases: '+fmt(tPur)+(tPRet>0?' | Returns: -'+fmt(tPRet):'')+'</div></div><div class="sc"><div class="sl2">Net Purchases (Month)</div><div class="sv">'+fmt(Math.max(0,mPur-mPRet))+'</div><div style="font-size:.5rem;color:var(--ink3)">Purchases: '+fmt(mPur)+(mPRet>0?' | Returns: -'+fmt(mPRet):'')+'</div></div>');}
@@ -921,7 +921,7 @@ function ddOpts(arr){return arr.map(function(x){var v=x.id?x.id:x;return'<option
 function rBuy(){
   _purPayments=[];_purAuto=true;purPayMode='cash';
   var hasMasters=_fabrics.length>0;
-  var h='<div class="card"><div class="ct">New Purchase</div>';
+  var h='<div class="card"><div class="ct">New Purchase'+(CUP&&CUP.role==='owner'?'<button class="btn bh bsm" style="float:right" onclick="oOpeningImport()">Import Opening Stock</button>':'')+'</div>';
   h+='<div class="fg"><label class="lb">Product Name *</label><input class="ip" id="pn" placeholder="e.g. Lawn 3PC Suit"></div>';
   h+='<div class="g2"><div class="fg"><label class="lb">Category *</label><select class="sl" id="pc2" onchange="updSKU()"><option value="">Select...</option>';
   for(var i=0;i<CATS.length;i++)h+='<option>'+CATS[i]+'</option>';
@@ -4191,6 +4191,268 @@ async function showPurchase(txnId){
     omo('Purchase '+(tx.transaction_no||''),h);
   }catch(ex){toast(ex.message,'err');}
 }
+
+// ================= OPENING STOCK IMPORT (owner only): check first, then import =================
+// Stock is created through the normal purchase tables: purchase_items (database trigger adds the stock),
+// owner capital + supplier payable ledger lines. NO cash / bank account is touched.
+var _imp={rows:null,file:'',report:null,running:false,date:''};
+var IMP_COLS={'product name':'name','category':'category','size':'size','colour':'colour','color':'colour','fabric':'fabric','season':'season','customer segment':'segment','design':'design','brand':'brand','qty':'qty','quantity':'qty','unit cost rs':'cost','unit cost':'cost','cost':'cost','supplier':'supplier','owner capital rs':'owner','owner capital':'owner'};
+function _impNorm(h){return String(h==null?'':h).replace(/\*/g,'').trim().toLowerCase();}
+function _impNum(v){if(v===''||v==null)return null;var n=Number(String(v).replace(/,/g,'').trim());return isNaN(n)?NaN:n;}
+function _impHash(str){var h=2166136261;for(var i=0;i<str.length;i++){h^=str.charCodeAt(i);h=(h*16777619)>>>0;}return h.toString(36).toUpperCase();}
+function _csvParse(text){
+  var rows=[],row=[],cur='',q=false;text=text.replace(/^\ufeff/,'');
+  for(var i=0;i<text.length;i++){var ch=text[i];
+    if(q){if(ch==='"'){if(text[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=ch;}
+    else if(ch==='"')q=true;else if(ch===','){row.push(cur);cur='';}
+    else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&text[i+1]==='\n')i++;row.push(cur);cur='';if(row.some(function(x){return x!=='';})||row.length>1)rows.push(row);row=[];}
+    else cur+=ch;}
+  if(cur!==''||row.length){row.push(cur);rows.push(row);}
+  if(!rows.length)return[];
+  var hd=rows[0];return rows.slice(1).map(function(r){var o={};hd.forEach(function(h,i){o[h]=r[i]===undefined?'':r[i];});return o;});
+}
+// json rows (header names -> values) -> clean rows with their Excel row numbers
+function _impParseRows(json){
+  var out=[],missing=[];
+  if(!json||!json.length)return{rows:[],missing:['(file has no rows)']};
+  var map={};json.forEach(function(r){Object.keys(r).forEach(function(h){if(!map[h]){var k=IMP_COLS[_impNorm(h)];if(k)map[h]=k;}});});   // columns are recognised even if the first row leaves them empty
+  ['name','category','size','colour','qty','cost'].forEach(function(k){if(!Object.keys(map).some(function(h){return map[h]===k;}))missing.push(k);});
+  json.forEach(function(r,i){
+    var o={n:i+2};var any=false;
+    Object.keys(map).forEach(function(h){var v=r[h];if(v!==''&&v!=null&&String(v).trim()!=='')any=true;o[map[h]]=(v==null?'':(typeof v==='string'?v.trim():v));});
+    if(any)out.push(o);
+  });
+  return{rows:out,missing:missing};
+}
+function _impFind(list,name){var n=String(name||'').trim().toLowerCase();return (list||[]).find(function(x){return (x.name||'').trim().toLowerCase()===n;})||null;}
+async function _impValidate(rows,date){
+  var items=[],groups={};
+  var cats={};var cr=await sb.from('categories').select('id,name');(cr.data||[]).forEach(function(c){cats[(c.name||'').toLowerCase()]=c;});
+  var vs=await _fetchAll(function(){return sb.from('product_variants').select('id,size,colour,purchase_price,fabric_id,season_id,segment_id,design_id,brand_id,products(name,category_id)');});
+  var inv=await _fetchAll(function(){return sb.from('inventory').select('variant_id,qty_total_received');});
+  var hasStock={};inv.forEach(function(i){if(Number(i.qty_total_received||0)>0)hasStock[i.variant_id]=true;});
+  var existing={};
+  vs.forEach(function(v){if(!hasStock[v.id]||!v.products)return;existing[[v.products.name,v.products.category_id,v.size,v.colour,v.fabric_id||'',v.season_id||'',v.segment_id||'',v.design_id||'',v.brand_id||'',Number(v.purchase_price)].join('|').toLowerCase()]=true;});
+  var seen={};
+  var ownerParty=parties.find(function(p){return p.party_type==='owner';});
+  // one fingerprint for the whole file; each supplier group has a marker so an interrupted import can be resumed safely
+  var hash=_impHash(JSON.stringify([date,rows.map(function(r){return[r.name,r.category,r.size,r.colour,r.fabric,r.season,r.segment,r.design,r.brand,r.qty,r.cost,r.supplier,r.owner];})]));
+  var gkOf=function(r){var s0=String(r.supplier||'').trim();return (s0||'Opening Stock').toLowerCase().replace(/[^a-z0-9]+/g,'_');};
+  var gidsAll={};rows.forEach(function(r){gidsAll['OPN-'+hash+'-'+gkOf(r)]=true;});
+  var doneMap={};var slr=await sb.from('sync_log').select('local_id').in('local_id',Object.keys(gidsAll));(slr.data||[]).forEach(function(x){doneMap[x.local_id]=true;});
+  rows.forEach(function(r){
+    var msgs=[],d={n:r.n,rawName:r.name};
+    var nm=String(r.name||'').trim();if(!nm)msgs.push('Product name missing');
+    var cat=_impFind(CATS.map(function(c){return{name:c};}),r.category);var catDb=cat?cats[cat.name.toLowerCase()]:null;
+    if(!r.category)msgs.push('Category missing');else if(!cat)msgs.push('Category "'+r.category+'" is not in the Buy-tab category list');else if(!catDb)msgs.push('Category "'+cat.name+'" does not exist in the database');
+    var sz=_impFind(SIZES.map(function(x){return{name:x};}),r.size);if(!r.size)msgs.push('Size missing');else if(!sz)msgs.push('Size "'+r.size+'" is not in the Buy-tab size list');
+    var cl=_impFind(COLOURS.map(function(x){return{name:x};}),r.colour);if(!r.colour)msgs.push('Colour missing');else if(!cl)msgs.push('Colour "'+r.colour+'" is not in the Buy-tab colour list');
+    var ids={};
+    [['fabric',_fabrics,'fid'],['season',_seasons,'sid'],['segment',_segments,'gid'],['design',_designs,'did'],['brand',_brands,'bid']].forEach(function(m){
+      var v=r[m[0]];if(v===''||v==null)return;var f=_impFind(m[1],v);if(!f)msgs.push(m[0].charAt(0).toUpperCase()+m[0].slice(1)+' "'+v+'" does not exist in the master list');else ids[m[2]]=f.id;});
+    var qty=_impNum(r.qty),cost=_impNum(r.cost),own=_impNum(r.owner);
+    if(qty===null||isNaN(qty)||qty<=0||qty!==Math.floor(qty))msgs.push('Qty must be a whole number above 0');
+    if(cost===null||isNaN(cost)||cost<=0)msgs.push('Unit cost must be above 0');
+    if(own===null)own=0;if(isNaN(own)||own<0)msgs.push('Owner capital must be 0 or more');
+    var total=(qty>0&&cost>0)?Math.round(qty*cost*100)/100:0;
+    if(total>0&&own>total+0.0001)msgs.push('Owner capital exceeds the total cost');
+    var payable=Math.round((total-(own||0))*100)/100;
+    var sup=String(r.supplier||'').trim();
+    if(payable>0.0001&&!sup)msgs.push('Supplier is required because Rs '+fmt(payable)+' is payable');
+    if(own>0&&!ownerParty)msgs.push('No owner ledger exists to record owner capital');
+    var key=[nm,catDb&&catDb.id,sz&&sz.name,cl&&cl.name,ids.fid||'',ids.sid||'',ids.gid||'',ids.did||'',ids.bid||'',cost].join('|').toLowerCase();
+    if(!msgs.length){
+      if(seen[key])msgs.push('Duplicate of row '+seen[key]+' (same product, size, colour and attributes) - merge the quantities');
+      else if(existing[key]){if(doneMap['OPN-'+hash+'-'+gkOf(r)])d.done=true;else msgs.push('This exact item is already in the POS with stock');}
+      seen[key]=seen[key]||r.n;
+    }
+    d.item={name:nm,cat:cat&&cat.name,catId:catDb&&catDb.id,size:sz&&sz.name,colour:cl&&cl.name,ids:ids,qty:qty,cost:cost,owner:own||0,total:total,payable:payable,supplier:sup};
+    d.msgs=msgs;d.status=d.done?'DONE':(msgs.length?'ERROR':'OK');items.push(d);
+  });
+  var ok=items.filter(function(x){return x.status==='OK';});
+  ok.forEach(function(x){
+    var it=x.item;var gname=it.supplier||'Opening Stock';var gk=gname.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+    var g=groups[gk]=groups[gk]||{key:gk,name:gname,placeholder:!it.supplier,rows:[],qty:0,value:0,owner:0,payable:0};
+    g.rows.push(it);g.qty+=it.qty;g.value=Math.round((g.value+it.total)*100)/100;g.owner=Math.round((g.owner+it.owner)*100)/100;g.payable=Math.round((g.payable+it.payable)*100)/100;
+  });
+  var glist=Object.keys(groups).sort().map(function(k){var g=groups[k];g.id='OPN-'+hash+'-'+g.key;
+    var ex=parties.find(function(p){return p.party_type==='supplier'&&(p.name||'').toLowerCase()===g.name.toLowerCase();});g.exists=!!ex;return g;});
+  glist.forEach(function(g){g.done=!!doneMap[g.id];});
+  var doneCount=items.filter(function(x){return x.status==='DONE';}).length;
+  var errCount=items.filter(function(x){return x.status==='ERROR';}).length;
+  var sumK=function(k){return ok.reduce(function(a,x){return a+(x.item[k]||0);},0);};
+  return{items:items,groups:glist,errors:errCount,doneCount:doneCount,okCount:ok.length,pieces:sumK('qty'),value:Math.round(sumK('total')*100)/100,owner:Math.round(sumK('owner')*100)/100,payable:Math.round(sumK('payable')*100)/100,hash:hash,date:date,alreadyDone:ok.length===0&&doneCount>0&&errCount===0};
+}
+function oOpeningImport(){
+  if(!(CUP&&CUP.role==='owner')){toast('Only the owner can import opening stock','err');return;}
+  var owners=parties.filter(function(p){return p.party_type==='owner';});
+  var h='<div class="ib">Check your Excel/CSV file first. Nothing is saved until you press Import and confirm. Stock is added without touching any cash, bank or wallet account.</div>'+
+   '<div class="fg"><label class="lb">Opening stock date *</label><input class="ip" id="imp-d" type="date" value="'+td()+'"></div>'+
+   '<div class="fg"><label class="lb">Owner capital is credited to *</label><select class="sl" id="imp-o">'+owners.map(function(o){return'<option value="'+o.id+'">'+_esc(o.name)+'</option>';}).join('')+'</select></div>'+
+   '<div class="fg"><label class="lb">Excel (.xlsx) or CSV file *</label><input class="ip" id="imp-f" type="file" accept=".xlsx,.xls,.csv" onchange="_impFileChosen(this)"></div>'+
+   '<div id="imp-status" style="font-size:.66rem;color:var(--ink3);margin:6px 0"></div><div id="imp-out"></div>';
+  omo('Import Opening Stock',h);
+}
+function _loadXLSX(){
+  return new Promise(function(res,rej){
+    if(window.XLSX)return res(window.XLSX);
+    var sc=document.createElement('script');sc.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    sc.onload=function(){res(window.XLSX);};sc.onerror=function(){rej(new Error('Could not load the Excel reader (are you online?). Save the sheet as CSV and choose the CSV file instead.'));};
+    document.head.appendChild(sc);
+  });
+}
+async function _impFileChosen(inp){
+  var f=inp&&inp.files&&inp.files[0];if(!f)return;
+  var st=$('imp-status');if(st)st.textContent='Reading '+f.name+'...';
+  try{
+    var json;
+    if(/\.csv$/i.test(f.name)){json=_csvParse(await f.text());}
+    else{var X=await _loadXLSX();var wb=X.read(await f.arrayBuffer(),{type:'array'});var ws=wb.Sheets['Opening_Stock']||wb.Sheets[wb.SheetNames[0]];json=X.utils.sheet_to_json(ws,{defval:'',raw:true});}
+    await _impLoadRows(json,f.name);
+  }catch(e){if(st)st.innerHTML='<span style="color:var(--red)">'+_esc(e.message)+'</span>';}
+}
+async function _impLoadRows(json,fname){
+  var st=$('imp-status'),out=$('imp-out');
+  var p=_impParseRows(json);
+  if(p.missing.length){if(st)st.innerHTML='<span style="color:var(--red)">Required columns not found: '+_esc(p.missing.join(', '))+'. Use the opening-stock template.</span>';if(out)out.innerHTML='';_imp.report=null;return;}
+  if(!p.rows.length){if(st)st.innerHTML='<span style="color:var(--red)">The file has no stock rows.</span>';return;}
+  var date=($('imp-d')&&$('imp-d').value)||td();
+  if(st)st.textContent='Checking '+p.rows.length+' rows against the POS data...';
+  var rep=await _impValidate(p.rows,date);
+  rep.file=fname||'';_imp.report=rep;_impRenderReport(rep);
+}
+function _impRenderReport(rep){
+  var st=$('imp-status'),out=$('imp-out');if(!out)return;
+  if(st)st.textContent=rep.file?('File: '+rep.file):'';
+  var bad=rep.errors>0;
+  var h='<div class="sg"><div class="sc"><div class="sl2">Rows</div><div class="sv">'+rep.items.length+'</div><div style="font-size:.54rem;color:var(--ink3)">'+rep.okCount+' OK / '+rep.errors+' with problems</div></div><div class="sc sg2"><div class="sl2">Pieces</div><div class="sv">'+fmt(rep.pieces)+'</div></div><div class="sc go"><div class="sl2">Stock value (cost)</div><div class="sv">'+fmt(rep.value)+'</div></div><div class="sc"><div class="sl2">Owner capital</div><div class="sv">'+fmt(rep.owner)+'</div><div style="font-size:.54rem;color:var(--ink3)">Payable '+fmt(rep.payable)+'</div></div></div>';
+  if(rep.alreadyDone)h+='<div class="ib" style="color:var(--red)">This file was already imported. Nothing will be added again.</div>';
+  else if(rep.doneCount)h+='<div class="ib">'+rep.doneCount+' row(s) were imported earlier and will be skipped.</div>';
+  if(bad)h+='<div class="ib" style="color:var(--red)">Fix the problems below in your Excel file and check it again. Import is disabled until there are none.</div>';
+  else if(!rep.alreadyDone)h+='<div class="ib" style="color:var(--sage)">All rows are valid. Review the totals, then press Import.</div>';
+  h+='<div style="overflow-x:auto;max-height:46vh;overflow-y:auto"><table style="width:100%;border-collapse:collapse;font-size:.58rem;min-width:520px"><tr style="background:var(--ink);color:#fff"><th style="padding:5px;text-align:left">Row</th><th style="padding:5px;text-align:left">Product</th><th style="padding:5px">Qty</th><th style="padding:5px">Cost</th><th style="padding:5px;text-align:left">Result</th></tr>';
+  var sorted=rep.items.slice().sort(function(a,b){return (a.status==='ERROR'?0:1)-(b.status==='ERROR'?0:1)||a.n-b.n;});
+  sorted.slice(0,300).forEach(function(x){h+='<tr style="border-bottom:1px solid var(--cream2);'+(x.status==='ERROR'?'background:#fdecea':'')+'"><td style="padding:4px">'+x.n+'</td><td style="padding:4px">'+_esc(x.rawName||'')+'</td><td style="padding:4px;text-align:center">'+_esc(x.item.qty)+'</td><td style="padding:4px;text-align:right">'+_esc(x.item.cost)+'</td><td style="padding:4px;color:'+(x.status==='ERROR'?'var(--red)':'var(--sage)')+'">'+(x.status==='ERROR'?_esc(x.msgs.join('; ')):x.status==='DONE'?'Already imported':'OK')+'</td></tr>';});
+  h+='</table></div>'+(rep.items.length>300?'<div style="font-size:.56rem;color:var(--ink3)">Showing the first 300 rows (problems first). Download the problem list for everything.</div>':'');
+  if(rep.groups.length){h+='<div style="font-size:.6rem;font-weight:700;text-transform:uppercase;color:var(--gold);margin:10px 0 4px">By supplier</div>';rep.groups.forEach(function(g){h+='<div style="display:flex;justify-content:space-between;font-size:.64rem;padding:3px 0;border-bottom:1px solid var(--cream2)"><span>'+_esc(g.name)+(g.placeholder?' (placeholder)':g.exists?'':' (new)')+(g.done?' - already imported':'')+'</span><span>'+g.rows.length+' items | owner '+fmt(g.owner)+' | payable '+fmt(g.payable)+'</span></div>';});}
+  h+='<div style="display:flex;gap:8px;margin-top:12px">'+(bad?'<button class="btn bh bsm" style="flex:1" onclick="_impProblemsCsv()">Download problem list</button>':'')+'<button class="btn bi bsm" style="flex:1" '+((bad||rep.alreadyDone||!rep.okCount)?'disabled':'')+' onclick="_impConfirmRun()">Import</button></div>';
+  out.innerHTML=h;
+}
+function _impProblemsCsv(){
+  var r=_imp.report;if(!r)return;
+  _csvDownload('Opening_Stock_problems.csv',['Row','Product','Problem'],r.items.filter(function(x){return x.status==='ERROR';}).map(function(x){return{Row:x.n,Product:x.rawName||'',Problem:x.msgs.join('; ')};}));
+}
+async function _impConfirmRun(){
+  var rep=_imp.report;if(!rep||_imp.running||rep.errors>0||rep.alreadyDone)return;
+  var own=parties.find(function(p){return p.id===($('imp-o')&&$('imp-o').value);})||parties.find(function(p){return p.party_type==='owner';});
+  var newS=rep.groups.filter(function(g){return !g.exists&&!g.done;});
+  var cf='<div>'+cfmRow('Opening stock date',rep.date)+cfmRow('Items (variants) to create',String(rep.okCount))+cfmRow('Pieces added to stock',fmt(rep.pieces))+cfmRow('Stock value at cost','Rs '+fmt(rep.value))+cfmSec('Accounting')+cfmRow('Owner capital credited to '+((own&&own.name)||'owner'),'Rs '+fmt(rep.owner))+cfmRow('Payable to suppliers','Rs '+fmt(rep.payable))+cfmRow('Cash / bank / wallet accounts','No change','#2e7d32');
+  if(newS.length)cf+=cfmSec('New supplier records to be created')+newS.map(function(g){return cfmRow(g.name,g.placeholder?'placeholder for owner-funded items':'new');}).join('');
+  cf+='</div>';
+  var ok=await askConfirm('Confirm Opening Stock Import',cf,'Import Now');
+  if(!ok)return;
+  await _impRun(own);
+}
+async function _impRun(ownerParty){
+  var rep=_imp.report;if(!rep||_imp.running)return;_imp.running=true;
+  var st=$('imp-status'),out=$('imp-out');var say=function(m){if(st)st.innerHTML=m;};
+  var created=[],doneG=0,failMsg=null;
+  try{
+    var sup={};
+    for(var gi=0;gi<rep.groups.length;gi++){var g=rep.groups[gi];if(g.done)continue;
+      var sp=parties.find(function(p){return p.party_type==='supplier'&&(p.name||'').toLowerCase()===g.name.toLowerCase();});
+      if(!sp){var nsp=await sb.from('parties').insert({party_type:'supplier',name:g.name,created_by:CUP&&CUP.id}).select().single();if(nsp.error||!nsp.data)throw new Error('Could not create supplier '+g.name+': '+((nsp.error&&nsp.error.message)||''));parties.push(nsp.data);sp=nsp.data;}
+      sup[g.key]=sp;}
+    for(var gi2=0;gi2<rep.groups.length;gi2++){
+      var g2=rep.groups[gi2];if(g2.done){continue;}
+      say('Importing '+(gi2+1)+' of '+rep.groups.length+': '+_esc(g2.name)+' ('+g2.rows.length+' items)...');
+      var made={variants:[],txn:null,itemsDone:false,ledgerDone:false};
+      try{
+        var prodCache={};
+        for(var ri=0;ri<g2.rows.length;ri++){
+          var it=g2.rows[ri];var pk=it.name.toLowerCase()+'|'+it.catId;var prodId=prodCache[pk];
+          if(!prodId){var ep=await sb.from('products').select('id').eq('name',it.name).eq('category_id',it.catId).maybeSingle();
+            if(ep.data&&ep.data.id)prodId=ep.data.id;else{var np=await sb.from('products').insert({name:it.name,category_id:it.catId,created_by:CUP&&CUP.id}).select().single();if(np.error||!np.data)throw new Error('Product "'+it.name+'": '+((np.error&&np.error.message)||'could not be created'));prodId=np.data.id;}
+            prodCache[pk]=prodId;}
+          var prefix=(CCOD[it.cat]||it.cat.substring(0,3).toUpperCase())+'-'+colCode(it.colour)+'-'+szCode(it.size);var variant=null;
+          for(var at=0;at<3;at++){var skuVal=await genUniqueNo(prefix,at);
+            var vp={product_id:prodId,sku:skuVal,colour:it.colour,colour_code:colCode(it.colour),size:it.size,size_code:szCode(it.size),purchase_price:it.cost,created_by:CUP&&CUP.id};
+            if(it.ids.fid)vp.fabric_id=it.ids.fid;if(it.ids.sid)vp.season_id=it.ids.sid;if(it.ids.gid)vp.segment_id=it.ids.gid;if(it.ids.did)vp.design_id=it.ids.did;if(it.ids.bid)vp.brand_id=it.ids.bid;
+            var vr=await sb.from('product_variants').insert(vp).select().single();
+            if(!vr.error){variant={id:vr.data.id,sku:skuVal,qty:it.qty,cost:it.cost,name:it.name,size:it.size,colour:it.colour};break;}
+            if(!(vr.error.message&&vr.error.message.indexOf('duplicate')>=0))throw new Error('Variant for "'+it.name+'": '+vr.error.message);}
+          if(!variant)throw new Error('Could not generate a unique SKU for "'+it.name+'"');
+          made.variants.push(variant);
+        }
+        var supRow=sup[g2.key];
+        var note='OPENING STOCK '+rep.date+' ['+rep.hash+']';
+        var tIns=await insertWithUniqueNo('transactions','OPN',function(noVal){return{transaction_no:noVal,transaction_type:'purchase',transaction_date:rep.date,party_id:supRow.id,total_amount:g2.value,paid_amount:g2.owner,payment_status:g2.payable>0?(g2.owner>0?'partial':'credit'):'paid',performed_by:CUP&&CUP.id,notes:note};});
+        if(tIns.error||!tIns.data)throw new Error((tIns.error&&tIns.error.message)||'Could not create the transaction');
+        made.txn=tIns;
+        var pr=await sb.from('purchases').insert({transaction_id:tIns.data.id,supplier_party_id:supRow.id,purchase_date:rep.date,total_amount:g2.value,paid_amount:g2.owner,payment_mode:g2.owner<=0?'credit':(g2.payable<=0?'owner':'partial'),notes:note,split_payments:g2.owner>0?[{type:'owner',party_id:ownerParty&&ownerParty.id,amount:g2.owner}]:[]}).select().single();
+        if(pr.error||!pr.data)throw new Error('Purchase record: '+((pr.error&&pr.error.message)||''));
+        // ledger first (owner capital + supplier payable). Only party ledgers: no cash/bank line.
+        var led=[];
+        if(g2.owner>0)led.push({transaction_id:tIns.data.id,entry_date:rep.date,entry_type:'credit',account_category:'party',party_id:ownerParty.id,amount:g2.owner,description:'Opening stock - owner capital ('+g2.name+')',created_by:CUP&&CUP.id});
+        if(g2.payable>0)led.push({transaction_id:tIns.data.id,entry_date:rep.date,entry_type:'credit',account_category:'party',party_id:supRow.id,amount:g2.payable,description:'Opening stock payable ('+g2.name+')',created_by:CUP&&CUP.id});
+        if(led.length){var lr=await sb.from('ledger_entries').insert(led);if(lr&&lr.error)throw new Error('Ledger: '+lr.error.message);made.ledgerDone=true;made.led=led;}
+        // stock: pre-create the inventory rows so the purchase trigger adds the quantity once
+        var invR=await sb.from('inventory').insert(made.variants.map(function(v){return{variant_id:v.id,qty_available:0,qty_total_received:v.qty,last_purchase_date:rep.date};}));
+        if(invR&&invR.error)throw new Error('Inventory: '+invR.error.message);
+        var piR=await sb.from('purchase_items').insert(made.variants.map(function(v){return{purchase_id:pr.data.id,transaction_id:tIns.data.id,variant_id:v.id,qty:v.qty,purchase_price:v.cost};}));
+        if(piR&&piR.error)throw new Error('Stock: '+piR.error.message);
+        made.itemsDone=true;
+        await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',tIns.data.id);
+        var sl=await sb.from('sync_log').insert({local_id:g2.id,entity_type:'opening_stock',bill_no:tIns.no});
+        if(sl&&sl.error)toast('Imported, but the import marker could not be saved: '+sl.error.message,'warn',6000);
+        created=created.concat(made.variants.map(function(v){return{Group:g2.name,Transaction:tIns.no,SKU:v.sku,Product:v.name,Size:v.size,Colour:v.colour,Qty:v.qty,'Unit Cost':v.cost,Total:Math.round(v.qty*v.cost*100)/100};}));
+        g2.done=true;doneG++;
+      }catch(e){
+        // undo only what THIS group created
+        try{
+          if(!made.itemsDone){
+            if(made.ledgerDone&&made.led){await sb.from('ledger_entries').insert(made.led.map(function(l){return Object.assign({},l,{entry_type:l.entry_type==='credit'?'debit':'credit',description:'REVERSAL: '+l.description});}));}
+            if(made.txn&&made.txn.data)await _cancelTxn(made.txn.data.id,'Opening stock import failed: '+e.message);
+            var vids=made.variants.map(function(v){return v.id;});
+            if(vids.length){await sb.from('inventory').delete().in('variant_id',vids);await sb.from('product_variants').delete().in('id',vids);}
+          }
+        }catch(e2){}
+        failMsg='Group "'+g2.name+'" failed: '+e.message;break;
+      }
+    }
+    await loadData();
+  }catch(e){failMsg=e.message;}
+  _imp.running=false;
+  await _impShowResult(rep,created,doneG,failMsg);
+}
+async function _impShowResult(rep,created,doneG,failMsg){
+  var out=$('imp-out'),st=$('imp-status');if(!out)return;
+  var h='';
+  if(failMsg)h+='<div class="ib" style="color:var(--red)"><b>Import stopped.</b> '+_esc(failMsg)+'<br>'+doneG+' supplier group(s) were imported completely; the failed group was undone. Fix the cause and check the same file again - groups already imported are skipped automatically.</div>';
+  var ids=[];created.forEach(function(c){});
+  var qtyOk=null,valOk=null;
+  try{
+    var skus=created.map(function(c){return c.SKU;});
+    if(skus.length){
+      var vr=await _inChunks('product_variants','id,sku,purchase_price','sku',skus);var idBySku={};vr.forEach(function(v){idBySku[v.sku]=v;});
+      var invRows=await _inChunks('inventory','variant_id,qty_available,qty_total_received','variant_id',vr.map(function(v){return v.id;}));
+      var invBy={};invRows.forEach(function(i){invBy[i.variant_id]=i;});
+      var mvRows=await _inChunks('inventory_movements','variant_id,movement_type,qty_change','variant_id',vr.map(function(v){return v.id;}));
+      var mvCount={};mvRows.forEach(function(m){mvCount[m.variant_id]=(mvCount[m.variant_id]||0)+1;});
+      var bad=[],totQty=0,totVal=0;
+      created.forEach(function(c){var v=idBySku[c.SKU];var i=v&&invBy[v.id];totQty+=(i?Number(i.qty_available):0);totVal+=(i?Number(i.qty_available):0)*Number(c['Unit Cost']);if(!v||!i||Number(i.qty_available)!==Number(c.Qty)||Number(i.qty_total_received)!==Number(c.Qty)||mvCount[v.id]!==1)bad.push(c.SKU);});
+      var expQty=created.reduce(function(a,c){return a+Number(c.Qty);},0),expVal=created.reduce(function(a,c){return a+Number(c.Total);},0);
+      qtyOk=(totQty===expQty);valOk=(Math.abs(totVal-expVal)<0.01);
+      h+='<div style="background:var(--cream2);border-radius:9px;padding:10px;margin-bottom:8px"><div style="font-size:.62rem;font-weight:700;text-transform:uppercase;color:var(--gold);margin-bottom:4px">Verification (read back from the database)</div>'+
+        cfmRow('Items created',String(created.length))+cfmRow('Stock in inventory',fmt(totQty)+' of '+fmt(expQty)+' pieces',qtyOk?'#2e7d32':'#c62828')+cfmRow('Stock value at cost','Rs '+fmt(totVal)+' of Rs '+fmt(expVal),valOk?'#2e7d32':'#c62828')+cfmRow('Exactly one stock movement per item',bad.length?bad.length+' item(s) differ':'Yes',bad.length?'#c62828':'#2e7d32')+'</div>';
+      _imp.created=created;
+      h+='<button class="btn bh bsm" style="width:100%;margin-bottom:6px" onclick="_impSkuCsv()">Download list of created items and SKUs</button>';
+    }
+  }catch(e){h+='<div class="ib" style="color:var(--red)">Verification could not run: '+_esc(e.message)+'</div>';}
+  if(!failMsg&&created.length)h+='<div class="ib" style="color:var(--sage)"><b>Opening stock imported.</b> Check Inventory, the Stock report and Ledger (owner and supplier balances). No cash or bank account was changed.</div>';
+  out.innerHTML=h;if(st)st.textContent='';
+}
+function _impSkuCsv(){if(_imp.created)_csvDownload('Opening_Stock_created_SKUs.csv',['Group','Transaction','SKU','Product','Size','Colour','Qty','Unit Cost','Total'],_imp.created);}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
