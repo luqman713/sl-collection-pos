@@ -726,12 +726,12 @@ async function completeSale(){
   var _okSale=await askConfirm('Confirm Sale',_cf,'Confirm Sale');
   if(!_okSale){if(btn){btn.textContent='Complete Sale';btn.disabled=false;}return;}
   var custId=null;
-  if(payMode==='credit'||payMode==='split'||_arNeeded){
+  if((payMode==='credit'||payMode==='split'||_arNeeded)&&navigator.onLine){
     var cp=parties.find(function(p){return p.name===cust&&p.party_type==='customer';});
     if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:cust,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
     custId=cp&&cp.id||null;
   }
-  if(!navigator.onLine){
+  if(!(await _serverReachable())){
     await completeSaleOffline(cart.slice(),tot,cst2,mg,disc,subtotal,cust,custId,payMode,splitCash,null,null,null);
     if(btn){btn.textContent='Complete Sale';btn.disabled=false;}
     return;
@@ -852,8 +852,11 @@ async function processReturn(){
   if(!pr||pr<=0){toast('Enter refund amount','err');return;}
   if(!accId){toast('Select the account the refund is paid from','err');return;}
   if(!rsn){toast('Enter reason','err');return;}
+  var _offR=!(await _serverReachable());
+  var _offV=null;
   var refTxnId=null;
-  if(bn){
+  if(_offR){_offV=await _offValidateReturn(bn,vid,qty);if(!_offV.ok){toast(_offV.msg,'err');return;}}
+  else if(bn){
     var ot=await sb.from('transactions').select('id').eq('transaction_no',bn).single();
     if(ot.error||!ot.data){toast('Bill '+bn+' not found','err');return;}
     var si=await sb.from('sale_items').select('qty').eq('transaction_id',ot.data.id).eq('variant_id',vid).single();
@@ -868,8 +871,9 @@ async function processReturn(){
   var prod=prods.find(function(p){return p.id===vid;});
   var ra=Math.round(qty*pr*100)/100;
   var cf='<div>'+(bn?cfmRow('Original bill',bn):'')+cfmRow('Reason',rsn)+cfmSec('Stock')+cfmRow((prod?prod.name:'Item')+' x'+qty,'stock +'+qty)+(prod?cfmRow('Stock after',String((prod.stock||0)+qty)):'')+cfmSec('Money to customer')+cfmRow('Refund ('+qty+' x Rs '+fmt(pr)+')','Rs '+fmt(ra),'#c62828')+cfmRow('Paid from',(racc&&racc.name)||'')+(racc?cfmRow('Account balance after','Rs '+fmt((racc.current_balance||0)-ra)):'')+'</div>';
-  var okR=await askConfirm('Confirm Sales Return',cf,'Confirm Return');
+  var okR=await askConfirm('Confirm Sales Return'+(_offR?' (offline)':''),cf+(_offR?'<div class="ib" style="margin-top:8px">No internet: the return is saved on this device and posts automatically when internet returns.'+(_offV&&_offV.unverified?' The original sale will be checked then.':'')+'</div>':''),'Confirm Return');
   if(!okR)return;
+  if(_offR){await _offRecordSaleReturn({variant_id:vid,name:prod&&prod.name,sku:prod&&prod.sku,qty:qty,unit:pr,total:ra,account_id:accId,account_name:racc&&racc.name,reason:rsn,bill_no:_offV.bill_no||bn||null,bill_off_no:_offV.bill_off_no||null,bill_local_id:_offV.bill_local_id||null,unverified:_offV.unverified});return;}
   if(btnEl){btnEl.disabled=true;btnEl.textContent='Processing...';}
   var txnIns=null;
   try{
@@ -1754,6 +1758,15 @@ async function saveStockMove(mtype){
     'Stock will decrease by '+qty+'.\nLedger will be updated.\n\nProceed?';
   if(!confirm(summary)){if(btnEl){btnEl.disabled=false;btnEl.textContent='Process';}return;}
 
+  if(!(await _serverReachable())){
+    if(mtype!=='purchase_return'){if(btnEl){btnEl.disabled=false;}toast('This stock adjustment needs an internet connection. Purchase Return can be saved offline.','warn',5000);return;}
+    var offSup=($('sm-sup')&&$('sm-sup').value||'').trim();
+    var offSp=offSup?parties.find(function(x){return x.name===offSup&&x.party_type==='supplier';}):null;
+    var offCas=accs.find(function(a){return a.name==='Cash Drawer';});
+    var offCash=!!(offSup&&offCas&&confirm('Did supplier pay cash back?\nRs'+totalVal.toLocaleString()+'\n\nYes = Cash received from supplier\nNo = Adjusted against supplier balance only'));
+    await _offRecordPurchaseReturn({variant_id:varId,name:p.name,sku:p.sku,qty:qty,cost:cost,total:totalVal,reason:rsn,ref:refNo||null,supplier_name:offSup||null,supplier_id:offSp&&offSp.id||null,cash_back:offCash,cash_account_id:offCas&&offCas.id||null,date:td()});
+    return;
+  }
   // -- STEP 5: Process stock movement --
   try{
   var result=await sb.rpc('process_stock_movement',{
@@ -1813,6 +1826,7 @@ async function saveStockMove(mtype){
         description:'Purchase Return: '+p.name+' x'+qty,
         created_by:CUP&&CUP.id
       });
+      if(cashBack&&casPret){await sb.from('ledger_entries').insert({transaction_id:txn2.data.id,entry_date:td(),entry_type:'credit',account_category:'party',party_id:sp.id,amount:totalVal,description:'Supplier cash refund: '+p.name,created_by:CUP&&CUP.id});}
       // (supplier balance updated by database trigger)
       toast('Purchase Return done: '+no2.data+' | Rs'+totalVal.toLocaleString()+(cashBack?' | Cash received':'| Balance adjusted')+' | Supplier: '+sp.name,'ok',7000);
     } else {
@@ -3309,27 +3323,36 @@ function initConnectivityWatcher(){
 async function updateSyncStatus(){
   var bar=document.getElementById('sync-status-bar');
   if(!bar)return;
-  var pending=0;
+  var pending=0,attention=0;
   try{
     var allQ=await idbGetAll('queue',null,null);
-    pending=allQ.filter(function(i){return i.status==='pending'||i.status==='failed';}).length;
+    allQ.forEach(function(i){if(i.status==='pending')pending++;else if(i.status==='failed'){if(i.needs_attention||(i.retry_count||0)>=5)attention++;else pending++;}});
   }catch(e){}
   var bg,txt;
   if(_isSyncing){bg='#7A6000';txt='Syncing... ('+pending+' pending)';}
+  else if(attention>0){bg='var(--red)';txt=(_isOnline?'Online':'Offline')+' - '+attention+' record'+(attention>1?'s':'')+' need attention (tap)'+(pending?' - '+pending+' pending':'');}
   else if(!_isOnline){bg='var(--red)';txt='Offline'+(pending?' - '+pending+' pending':' - data saved locally');}
   else if(pending>0){bg='var(--gold)';txt='Online - '+pending+' transactions pending sync';}
   else{bg='var(--sage)';txt='Online';}
   bar.style.background=bg;
   bar.innerHTML='<span style="font-size:.6rem;font-weight:700;color:white">'+txt+'</span>';
-  // Always allow tap-to-sync when online with pending items
-  if(pending>0&&_isOnline){
-    bar.style.cursor='pointer';
-    bar.onclick=function(){if(!_isSyncing)runSyncQueue();};
-    bar.title='Tap to sync '+pending+' pending transaction'+(pending>1?'s':'');
-  } else {
-    bar.onclick=null;
-    bar.style.cursor='default';
-  }
+  if(attention>0){bar.style.cursor='pointer';bar.onclick=function(){showSyncProblems();};bar.title='Tap to review records that could not sync';}
+  else if(pending>0&&_isOnline){bar.style.cursor='pointer';bar.onclick=function(){if(!_isSyncing)runSyncQueue();};bar.title='Tap to sync '+pending+' pending transaction'+(pending>1?'s':'');}
+  else{bar.onclick=null;bar.style.cursor='default';}
+}
+async function showSyncProblems(){
+  var all=await idbGetAll('queue',null,null);
+  var bad=all.filter(function(i){return i.status==='failed'&&(i.needs_attention||(i.retry_count||0)>=5);});
+  var h='<div class="ib">These offline records could not be posted. Nothing was posted for them. Fix the cause (for example stock), then retry.</div>';
+  bad.forEach(function(i){var pl=i.payload||{};h+='<div style="padding:8px 0;border-bottom:1px solid var(--cream2);font-size:.66rem"><b>'+_esc(({sale:'Sale',sale_return:'Sale return',purchase_return:'Purchase return',purchase:'Purchase',cash:'Cash entry'})[i.type]||i.type)+'</b> '+_esc(pl.offline_bill_no||pl.offline_ref||'')+' <span style="color:var(--ink3)">'+_esc((i.created_at||'').slice(0,16).replace('T',' '))+'</span><div style="color:var(--red)">'+_esc(i.last_error||'')+'</div></div>';});
+  if(!bad.length)h+='<div style="padding:10px;text-align:center;color:var(--ink3)">Nothing needs attention.</div>';
+  h+='<button class="btn bi bsm" style="width:100%;margin-top:10px" onclick="retrySyncProblems()">Retry now</button>';
+  omo('Offline records needing attention',h);
+}
+async function retrySyncProblems(){
+  var all=await idbGetAll('queue',null,null);
+  for(var k=0;k<all.length;k++){var i=all[k];if(i.status==='failed'&&(i.needs_attention||(i.retry_count||0)>=5)){i.status='pending';i.needs_attention=false;i.retry_count=0;await idbPut('queue',i);}}
+  cmo();updateSyncStatus();runSyncQueue();
 }
 
 // ── Offline bill number ──
@@ -3350,6 +3373,7 @@ async function completeSaleOffline(cart2,tot,cst2,mg,disc,subtotal,cust,custId,p
     date:td()
   };
   await queueOffline('sale',payload);
+  cart2.forEach(function(ci){var pp=prods.find(function(x){return x.id===ci.id;});if(pp)pp.stock=Math.max(0,(pp.stock||0)-ci.qty);});   // same-session stock stays correct offline
   // Update local inventory cache
   try{
     var cached=await readFromCache('prods');
@@ -3398,115 +3422,182 @@ async function saveCashOffline(natureRaw,dt,amt,dsc,ptype,partyName,partyId,accI
 // ── SYNC QUEUE ──
 var _syncLock=false;
 async function runSyncQueue(){
-  if(_syncLock||!_isOnline)return;
-  _syncLock=true;_isSyncing=true;updateSyncStatus();
+  if(_isSyncing||!navigator.onLine)return;
+  _isSyncing=true;updateSyncStatus();
+  var synced=0,attention=0,deferred=0,lostNet=false;
   try{
-    // Re-authenticate if session expired during offline period
     var sess=await sb.auth.getSession();
-    if(!sess.data.session){
-      _isSyncing=false;_syncLock=false;updateSyncStatus();
-      toast('Session expired - please log in again to sync','err',5000);
-      return;
-    }
-    // Include failed items with retry_count < 5
-    var allItems=await idbGetAll('queue',null,null);
-    var queue=allItems.filter(function(i){return i.status==='pending';});
-    var retryQueue=allItems.filter(function(i){return i.status==='failed'&&(i.retry_count||0)<5;});
-    queue=queue.concat(retryQueue);
-    if(!queue.length){_isSyncing=false;_syncLock=false;updateSyncStatus();return;}
-    toast('Syncing '+queue.length+' offline transaction'+(queue.length>1?'s':'')+'...','ok',3000);
-    var success=0,failed=0;
-    for(var i=0;i<queue.length;i++){
-      var item=queue[i];
+    if(!sess||!sess.data||!sess.data.session){toast('Session expired - log in again to sync offline data','warn',6000);return;}
+    var all=await idbGetAll('queue',null,null);
+    var todo=all.filter(function(i){return i.status==='pending'||(i.status==='failed'&&!i.needs_attention&&(i.retry_count||0)<5);});
+    todo.sort(function(a,b){return String(a.created_at||'')<String(b.created_at||'')?-1:1;});   // oldest first: a sale always syncs before its return
+    for(var k=0;k<todo.length;k++){
+      var item=todo[k];
       try{
-        // Idempotency check - try sync_log first, fall back gracefully if table missing
-        var alreadySynced=false;
-        try{
-          var check=await sb.from('sync_log').select('id').eq('local_id',item.local_id).maybeSingle();
-          if(check.data)alreadySynced=true;
-        }catch(e){/* sync_log table may not exist yet - continue with sync */}
-        if(alreadySynced){await markSynced(item.local_id);success++;continue;}
-        // Sync based on type
-        if(item.type==='sale') await syncSale(item);
-        else if(item.type==='purchase') await syncPurchase(item);
-        else if(item.type==='cash') await syncCash(item);
-        // Record in sync_log for duplicate prevention
-        try{
-          await sb.from('sync_log').insert({
-            local_id:item.local_id,entity_type:item.type,
-            bill_no:item.offline_bill_no,
-            device_info:navigator.userAgent.slice(0,80)
-          });
-        }catch(e){/* non-fatal if sync_log missing */}
-        await markSynced(item.local_id);
-        success++;
-        updateSyncStatus();
-      }catch(ex){
-        console.error('Sync failed for '+item.local_id+':',ex.message);
-        await markFailed(item.local_id,ex.message);
-        failed++;
+        var dup=await sb.from('sync_log').select('id').eq('local_id',item.local_id).maybeSingle();
+        _offChk(dup,'Marker look-up');
+        if(dup.data){await markSynced(item.local_id);synced++;continue;}
+        var res;
+        if(item.type==='sale')res=await syncSale(item);
+        else if(item.type==='sale_return')res=await syncSaleReturn(item);
+        else if(item.type==='purchase_return')res=await syncPurchaseReturn(item);
+        else if(item.type==='purchase')res=await syncPurchase(item);
+        else if(item.type==='cash')res=await syncCash(item);
+        else throw _offPerm('Unknown offline record type: '+item.type);
+        var mk=await sb.from('sync_log').insert({local_id:item.local_id,entity_type:item.type,bill_no:(res&&res.bill)||item.offline_bill_no||null,device_info:navigator.userAgent.substring(0,100)});
+        if(mk&&mk.error&&String(mk.error.message).indexOf('duplicate')<0)throw _offChk(mk,'Marker');
+        await markSynced(item.local_id);synced++;
+      }catch(e){
+        if(e&&e.defer){deferred++;continue;}                       // waiting for something else - not a failure
+        if(e&&(e.net||_offNetErr(e))){lostNet=true;break;}         // connection dropped - leave everything pending and stop
+        var it2=await idbGet('queue',item.local_id);
+        if(it2){it2.status='failed';it2.last_error=String(e.message||e);it2.retry_count=(it2.retry_count||0)+1;if(e&&e.perm){it2.needs_attention=true;it2.retry_count=5;}await idbPut('queue',it2);}
+        attention++;
       }
     }
-    await loadData();
-    var msg='Sync complete: '+success+' uploaded';
-    if(failed)msg+=' | '+failed+' failed (will retry)';
-    toast(msg,'ok',5000);
-  }catch(ex){
-    console.error('Sync queue error:',ex);
-    toast('Sync error: '+ex.message,'err');
+  }catch(e){
+    if(_offNetErr(e))lostNet=true;else console.error('Sync queue error',e);
+  }finally{
+    _isSyncing=false;
+    try{await loadData();refreshSaleHistoryCache(true);}catch(e){}
+    updateSyncStatus();
   }
-  _isSyncing=false;_syncLock=false;updateSyncStatus();
-  // Schedule retry for any remaining failed items
-  try{
-    var remaining=await idbGetAll('queue',null,null);
-    var hasRetryable=remaining.some(function(i){return i.status==='failed'&&(i.retry_count||0)<5;});
-    if(hasRetryable)setTimeout(runSyncQueue,30000);
-  }catch(e){}
+  if(synced>0)toast(synced+' offline record'+(synced>1?'s':'')+' synced','ok',3500);
+  if(attention>0)toast(attention+' offline record'+(attention>1?'s':'')+' need attention - tap the status bar','warn',6000);
+  if(lostNet)toast('Connection lost while syncing - the rest will sync automatically','warn',4000);
 }
 
 // ── Sync a sale to Supabase ──
 async function syncSale(item){
-  var p=item.payload;
-  var ca=accs.find(function(a){return a.name==='Cash Drawer';});
-  // Resolve or create customer
+  var p=item.payload,tag='Synced offline: '+p.offline_bill_no;
+  var cart=p.cart||[];if(!cart.length)throw _offPerm('The offline sale has no items');
+  var rows=((p.payments&&p.payments.length)?p.payments:[{accId:p.accId,accName:'Cash',amount:(p.payMode==='credit'?0:p.total)}]).filter(function(r){return r.accId&&r.accId!=='__credit__'&&Number(r.amount)>0;});
+  var cashSum=rows.reduce(function(a,r){return a+Number(r.amount);},0);
+  var arAmt=Math.round((Number(p.total)-cashSum)*100)/100;
   var custId=p.customer_id||null;
-  if(!custId&&p.customer&&p.customer!=='Walk-in'){
-    var cp=parties.find(function(pt){return pt.name===p.customer&&pt.party_type==='customer';});
-    if(!cp){var nr=await sb.from('parties').insert({party_type:'customer',name:p.customer,created_by:CUP&&CUP.id}).select().single();if(nr.data){parties.push(nr.data);cp=nr.data;}}
-    custId=cp&&cp.id||null;
+  if(!custId&&arAmt>0&&p.customer&&p.customer!=='Walk-in'){
+    var ex=await sb.from('parties').select('id,name').eq('party_type','customer');_offChk(ex,'Customer look-up');
+    var hit=(ex.data||[]).find(function(x){return (x.name||'').toLowerCase()===String(p.customer).toLowerCase();});
+    if(hit)custId=hit.id;else{var np=await sb.from('parties').insert({party_type:'customer',name:p.customer,created_by:CUP&&CUP.id}).select().single();_offChk(np,'Customer');custId=np.data.id;}
   }
-  // Insert transaction
-  var trIns=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:p.date,party_id:custId,total_amount:p.total,paid_amount:p.payMode==='credit'?0:p.total,payment_status:p.payMode==='credit'?'credit':'paid',performed_by:CUP&&CUP.id,notes:'Synced offline: '+p.offline_bill_no};});
-  var txnId=trIns.data.id;var bn=trIns.no;
-  // Sale items + stock movements
-  // (stock is deducted once by the sale_items database trigger)
-  // Sales table
-  var saleRow=await sb.from('sales').insert({transaction_id:txnId,customer_party_id:custId,customer_name:p.customer||'Walk-in',sale_date:p.date,subtotal:p.subtotal,total_amount:p.total,paid_amount:p.payMode==='credit'?0:p.total,payment_mode:p.payMode||'cash',gross_profit:p.margin,performed_by:CUP&&CUP.id}).select().single();
-  // Sale items
-  if(saleRow.data){
-    await sb.from('sale_items').insert(p.cart.map(function(it){return{sale_id:saleRow.data.id,transaction_id:txnId,variant_id:it.id,qty:it.qty,purchase_price:it.cost||0,sale_price:it.price||0};}));
+  if(arAmt>0&&!custId)throw _offPerm('The unpaid part of the sale needs a customer name');
+  // 1) the transaction - created once; an interrupted earlier attempt is found again by its offline reference
+  var txn=await _offFindTxn(p.offline_bill_no);
+  if(txn&&txn.ledger_posted)return{bill:txn.transaction_no};
+  if(!txn){
+    var tr=await insertWithUniqueNo('transactions','BILL',function(no){return{transaction_no:no,transaction_type:'sale',transaction_date:p.date,party_id:custId,total_amount:p.total,paid_amount:cashSum,payment_status:cashSum<=0?'credit':(arAmt>0?'partial':'paid'),performed_by:CUP&&CUP.id,notes:tag};});
+    if(tr.error||!tr.data){var te=new Error('Transaction: '+((tr.error&&tr.error.message)||'not created'));te.net=_offNetErr(tr.error);throw te;}
+    txn={id:tr.data.id,transaction_no:tr.no};
   }
-  // Ledger + cash entries
-  if(ca&&p.payMode!=='credit'){
-    // Multi-payment: post each allocation (single posting per payment row)
-    var syncPays=p.payments&&p.payments.length?p.payments:[{accId:p.accId||ca&&ca.id,accName:'Cash',amount:p.total}];
-    for(var spi=0;spi<syncPays.length;spi++){
-      var sp2=syncPays[spi];
-      if(!sp2.accId||sp2.accId==='__credit__'||!sp2.amount)continue;
-      await insCash({transaction_id:txnId,entry_date:p.date,amount:sp2.amount,direction:'in',account_id:sp2.accId,description:'Sale Receipt: '+bn+' ('+sp2.accName+')',nature:'receipt',party_category:'Customer Receipt'});
-      await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'credit',account_category:'cashflow',cashflow_account_id:sp2.accId,amount:sp2.amount,description:'Sale: '+bn+' ('+sp2.accName+')',created_by:CUP&&CUP.id});
+  // 2) the sales record
+  var sr=await sb.from('sales').select('id').eq('transaction_id',txn.id).maybeSingle();_offChk(sr,'Sales look-up');
+  var saleId=sr.data&&sr.data.id;
+  if(!saleId){
+    var mode=cashSum<=0?'credit':((arAmt>0||rows.length>1)?'split':'cash');
+    var ins=await sb.from('sales').insert({transaction_id:txn.id,customer_party_id:custId,customer_name:p.customer||'Walk-in',sale_date:p.date,subtotal:p.subtotal,discount_amount:p.discount||0,total_amount:p.total,paid_amount:cashSum,payment_mode:mode,primary_account_id:rows[0]?rows[0].accId:null,split_payments:rows.map(function(r){return{account:r.accName,account_id:r.accId,amount:Number(r.amount)};}),gross_profit:p.margin}).select().single();
+    _offChk(ins,'Sales record');saleId=ins.data.id;
+  }
+  // 3) the items - the database deducts the stock; if it refuses (not enough stock) the half-created sale is undone and nothing is posted
+  var ic=await sb.from('sale_items').select('id').eq('sale_id',saleId).limit(1);_offChk(ic,'Items look-up');
+  if(!(ic.data&&ic.data.length)){
+    var ir=await sb.from('sale_items').insert(cart.map(function(it){return{sale_id:saleId,transaction_id:txn.id,variant_id:it.id,qty:it.qty,purchase_price:it.cost,sale_price:it.price};}));
+    if(ir&&ir.error){
+      var msg=ir.error.message||'';
+      if(_offNetErr(ir.error)){var ne=new Error('Items: '+msg);ne.net=true;throw ne;}
+      await sb.from('sales').delete().eq('id',saleId);
+      await sb.from('transactions').update({is_cancelled:true,cancelled_reason:'Offline sale not synced: '+msg,posting_error:msg}).eq('id',txn.id);
+      throw _offPerm('Sale '+p.offline_bill_no+' could not be recorded: '+msg);
     }
   }
-  var _syncCash=(p.payMode==='credit')?0:((p.payments&&p.payments.length?p.payments:[{accId:p.accId||ca&&ca.id,amount:p.total}]).filter(function(r){return r.accId&&r.accId!=='__credit__';}).reduce(function(a2,r){return a2+(r.amount||0);},0));
-  var _syncAR=Math.round((p.total-_syncCash)*100)/100;
-  if(custId&&_syncAR>0){
-    await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'debit',account_category:'party',party_id:custId,amount:_syncAR,description:'Credit Sale AR: '+bn,created_by:CUP&&CUP.id});
+  // 4) money and customer balance - one atomic insert, only if not already posted
+  var lc=await sb.from('ledger_entries').select('id').eq('transaction_id',txn.id).limit(1);_offChk(lc,'Ledger look-up');
+  if(!(lc.data&&lc.data.length)){
+    var led=[];
+    rows.forEach(function(r){led.push({transaction_id:txn.id,entry_date:p.date,entry_type:'credit',account_category:'cashflow',cashflow_account_id:r.accId,amount:Number(r.amount),description:'Sale: '+txn.transaction_no+' ('+(r.accName||'')+')',created_by:CUP&&CUP.id});});
+    if(arAmt>0&&custId)led.push({transaction_id:txn.id,entry_date:p.date,entry_type:'debit',account_category:'party',party_id:custId,amount:arAmt,description:'Credit Sale AR: '+txn.transaction_no,created_by:CUP&&CUP.id});
+    if(Number(p.cost)>0)led.push({transaction_id:txn.id,entry_date:p.date,entry_type:'debit',account_category:'expense',amount:Number(p.cost),description:'COGS '+txn.transaction_no,created_by:CUP&&CUP.id});
+    if(led.length){var lr=await sb.from('ledger_entries').insert(led);_offChk(lr,'Ledger');}
+    for(var k=0;k<rows.length;k++){await insCash({transaction_id:txn.id,entry_date:p.date,amount:Number(rows[k].amount),direction:'in',account_id:rows[k].accId,party_id:custId||null,description:'Sale '+txn.transaction_no+' ('+(rows[k].accName||'')+')',nature:'receipt',party_category:'Customer Receipt'});}
   }
-  if(p.cost>0)await sb.from('ledger_entries').insert({transaction_id:txnId,entry_date:p.date,entry_type:'debit',account_category:'expense',amount:p.cost,description:'COGS: '+bn,created_by:CUP&&CUP.id});
-  logActivity('sale_synced','offline',{offline_no:p.offline_bill_no,bill_no:bn});
+  var up=await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',txn.id);_offChk(up,'Finalise');
+  return{bill:txn.transaction_no};
 }
-
-// ── Sync a purchase to Supabase ──
+async function syncSaleReturn(item){
+  var p=item.payload,tag='Synced offline: '+item.local_id;
+  // the original sale: a bill recorded offline must have synced first
+  var billNo=p.bill_no||null,refTxn=null;
+  if(p.bill_local_id){
+    var sl=await sb.from('sync_log').select('bill_no').eq('local_id',p.bill_local_id).maybeSingle();_offChk(sl,'Original sale look-up');
+    if(!sl.data||!sl.data.bill_no)throw _offDefer('Waiting for the original sale ('+(p.bill_off_no||'')+') to sync first');
+    billNo=sl.data.bill_no;
+  }
+  var txn=await _offFindTxn(item.local_id);
+  if(txn&&txn.ledger_posted)return{bill:txn.transaction_no};
+  if(!txn){
+    if(billNo){
+      var ot=await sb.from('transactions').select('id').eq('transaction_no',billNo).maybeSingle();_offChk(ot,'Bill look-up');
+      if(!ot.data)throw _offPerm('Original sale '+billNo+' was not found');
+      var si=await sb.from('sale_items').select('qty').eq('transaction_id',ot.data.id).eq('variant_id',p.variant_id).maybeSingle();_offChk(si,'Bill items look-up');
+      if(!si.data)throw _offPerm('This product was not in bill '+billNo);
+      if(Number(p.qty)>Number(si.data.qty))throw _offPerm('Return qty ('+p.qty+') exceeds sold qty ('+si.data.qty+') on bill '+billNo);
+      refTxn=ot.data.id;
+    } else {
+      var an=await sb.from('sale_items').select('qty').eq('variant_id',p.variant_id).limit(1);_offChk(an,'Sales look-up');
+      if(!(an.data&&an.data.length))throw _offPerm('No sales record found for this product');
+    }
+    var tIns=await insertWithUniqueNo('transactions','RET',function(no){return{transaction_no:no,transaction_type:'sale_return',transaction_date:p.date,total_amount:p.total,paid_amount:p.total,payment_status:'paid',reference_transaction_id:refTxn,performed_by:CUP&&CUP.id,notes:(p.reason||'')+' | '+tag};});
+    if(tIns.error||!tIns.data){var te=new Error('Transaction: '+((tIns.error&&tIns.error.message)||'not created'));te.net=_offNetErr(tIns.error);throw te;}
+    txn={id:tIns.data.id,transaction_no:tIns.no};
+  }
+  var mv=await sb.from('inventory_movements').select('id').eq('transaction_id',txn.id).limit(1);_offChk(mv,'Stock look-up');
+  if(!(mv.data&&mv.data.length)){
+    var rr=await sb.rpc('process_stock_movement',{p_variant_id:p.variant_id,p_movement_type:'sales_return',p_qty:p.qty,p_reason:p.reason,p_reference_no:billNo||txn.transaction_no,p_cost_impact:p.unit_refund,p_user_id:CUP&&CUP.id,p_txn_id:txn.id});
+    if(rr.error){var re=new Error('Stock: '+rr.error.message);re.net=_offNetErr(rr.error);throw re;}
+    if(!rr.data||!rr.data.success){var why=(rr.data&&rr.data.error)||'stock update failed';await _cancelTxn(txn.id,'Offline return not synced: '+why);throw _offPerm('Return could not be recorded: '+why);}
+  }
+  var lc=await sb.from('ledger_entries').select('id').eq('transaction_id',txn.id).limit(1);_offChk(lc,'Ledger look-up');
+  if(!(lc.data&&lc.data.length)){
+    var lr=await sb.from('ledger_entries').insert([{transaction_id:txn.id,entry_date:p.date,entry_type:'debit',account_category:'cashflow',cashflow_account_id:p.account_id,amount:p.total,description:'Sales return refund '+(billNo||txn.transaction_no)+' ('+(p.account_name||'')+')',created_by:CUP&&CUP.id}]);_offChk(lr,'Ledger');
+    await insCash({transaction_id:txn.id,entry_date:p.date,amount:p.total,direction:'out',account_id:p.account_id,description:'Sales return refund '+(billNo?'(Bill '+billNo+') ':'')+'- '+(p.reason||''),nature:'payment',party_category:'Customer Refund'});
+  }
+  var up=await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',txn.id);_offChk(up,'Finalise');
+  return{bill:txn.transaction_no};
+}
+async function syncPurchaseReturn(item){
+  var p=item.payload,tag='Synced offline: '+item.local_id;
+  var sp=null;
+  if(p.supplier_name){
+    var ex=await sb.from('parties').select('id,name').eq('party_type','supplier');_offChk(ex,'Supplier look-up');
+    sp=(ex.data||[]).find(function(x){return (x.name||'').toLowerCase()===String(p.supplier_name).toLowerCase();})||null;
+    if(!sp){var ns=await sb.from('parties').insert({party_type:'supplier',name:p.supplier_name,created_by:CUP&&CUP.id}).select().single();_offChk(ns,'Supplier');sp=ns.data;}
+  }
+  var txn=await _offFindTxn(item.local_id);
+  if(txn&&txn.ledger_posted)return{bill:txn.transaction_no};
+  if(!txn){
+    var tIns=await insertWithUniqueNo('transactions','PRET',function(no){return{transaction_no:no,transaction_type:'purchase_return',transaction_date:p.date,party_id:sp&&sp.id||null,total_amount:p.total,paid_amount:0,payment_status:'paid',performed_by:CUP&&CUP.id,notes:'Purchase Return: '+p.name+' x'+p.qty+' @ Rs'+p.cost+'. '+(p.reason||'')+(sp?'':' (No supplier  -  no payable recovery expected)')+' | '+tag};});
+    if(tIns.error||!tIns.data){var te=new Error('Transaction: '+((tIns.error&&tIns.error.message)||'not created'));te.net=_offNetErr(tIns.error);throw te;}
+    txn={id:tIns.data.id,transaction_no:tIns.no};
+  }
+  var mv=await sb.from('inventory_movements').select('id').eq('transaction_id',txn.id).limit(1);_offChk(mv,'Stock look-up');
+  if(!(mv.data&&mv.data.length)){
+    var rr=await sb.rpc('process_stock_movement',{p_variant_id:p.variant_id,p_movement_type:'purchase_return',p_qty:p.qty,p_reason:p.reason||'',p_reference_no:p.ref||txn.transaction_no,p_cost_impact:p.cost,p_user_id:CUP&&CUP.id,p_txn_id:txn.id});
+    if(rr.error){var re=new Error('Stock: '+rr.error.message);re.net=_offNetErr(rr.error);throw re;}
+    if(!rr.data||!rr.data.success){var why=(rr.data&&rr.data.error)||'stock update failed';await _cancelTxn(txn.id,'Offline purchase return not synced: '+why);throw _offPerm('Purchase return could not be recorded: '+why);}
+  }
+  var lc=await sb.from('ledger_entries').select('id').eq('transaction_id',txn.id).limit(1);_offChk(lc,'Ledger look-up');
+  if(!(lc.data&&lc.data.length)&&sp){
+    var led=[{transaction_id:txn.id,entry_date:p.date,entry_type:'debit',account_category:'party',party_id:sp.id,amount:p.total,description:'Purchase Return: '+p.name+' x'+p.qty,created_by:CUP&&CUP.id}];
+    var cashBack=!!(p.cash_back&&p.cash_account_id);
+    if(cashBack){
+      led.unshift({transaction_id:txn.id,entry_date:p.date,entry_type:'credit',account_category:'cashflow',cashflow_account_id:p.cash_account_id,amount:p.total,description:'Purchase Return cash received: '+p.name,created_by:CUP&&CUP.id});
+      led.push({transaction_id:txn.id,entry_date:p.date,entry_type:'credit',account_category:'party',party_id:sp.id,amount:p.total,description:'Supplier cash refund: '+p.name,created_by:CUP&&CUP.id});
+    }
+    var lr=await sb.from('ledger_entries').insert(led);_offChk(lr,'Ledger');
+    if(cashBack)await insCash({transaction_id:txn.id,entry_date:p.date,amount:p.total,direction:'in',account_id:p.cash_account_id,party_id:sp.id,description:'Purchase Return cash received: '+p.name,nature:'receipt',party_category:'Supplier Refund'});
+  }
+  var up=await sb.from('transactions').update({ledger_posted:true,posting_error:null}).eq('id',txn.id);_offChk(up,'Finalise');
+  return{bill:txn.transaction_no};
+}
 async function syncPurchase(item){
   var p=item.payload;
   var catCode=CCOD[p.category]||p.category.substring(0,3).toUpperCase();
@@ -4453,6 +4544,83 @@ async function _impShowResult(rep,created,doneG,failMsg){
   out.innerHTML=h;if(st)st.textContent='';
 }
 function _impSkuCsv(){if(_imp.created)_csvDownload('Opening_Stock_created_SKUs.csv',['Group','Transaction','SKU','Product','Size','Colour','Qty','Unit Cost','Total'],_imp.created);}
+
+// ================= OFFLINE: sales, sale returns and purchase returns - record offline, sync once, exactly once =================
+function _offNetErr(e){var m=String((e&&e.message)||e||'');return /failed to fetch|networkerror|network request failed|load failed|fetch failed|timed out|timeout|internet/i.test(m);}
+function _offPerm(msg){var e=new Error(msg);e.perm=true;return e;}
+function _offDefer(msg){var e=new Error(msg);e.defer=true;return e;}
+function _offChk(res,what){if(res&&res.error){var e=new Error(what+': '+res.error.message);e.net=_offNetErr(res.error);throw e;}return res;}
+var _reachAt=0,_reachOk=true;
+async function _serverReachable(){
+  if(!navigator.onLine)return false;
+  if(Date.now()-_reachAt<8000)return _reachOk;
+  try{
+    var r=await Promise.race([sb.from('store_settings').select('id').limit(1),new Promise(function(_,rej){setTimeout(function(){rej(new Error('timeout'));},4000);})]);
+    _reachOk=!(r&&r.error&&_offNetErr(r.error));
+  }catch(e){_reachOk=false;}
+  _reachAt=Date.now();return _reachOk;
+}
+// look for a transaction an earlier (interrupted) attempt already created for this offline record
+async function _offFindTxn(localId){
+  var r=await sb.from('transactions').select('id,transaction_no,ledger_posted,is_cancelled').ilike('notes','%'+localId+'%').eq('is_cancelled',false).limit(1);
+  _offChk(r,'Look-up');return (r.data&&r.data[0])||null;
+}
+async function _offAdjustStock(vid,delta){
+  var p=prods.find(function(x){return x.id===vid;});if(p)p.stock=Math.max(0,(p.stock||0)+delta);
+  try{var c=await readFromCache('prods');if(c){var q=c.find(function(x){return x.id===vid;});if(q){q.stock=Math.max(0,(q.stock||0)+delta);await cacheToLocal('prods',c);}}}catch(e){}
+}
+// a copy of recent sales kept on the device while online, so returns can be checked without internet
+var _histAt=0;
+async function refreshSaleHistoryCache(force){
+  if(!force&&Date.now()-_histAt<600000)return;
+  if(!(await _serverReachable()))return;
+  try{
+    var since=new Date(Date.now()-120*86400000).toISOString();
+    var rows=await _fetchAll(function(){return sb.from('sale_items').select('variant_id,qty,transactions(transaction_no)').gte('created_at',since).order('created_at',{ascending:true});});
+    var bills={},sold={};
+    rows.forEach(function(r){var bn=r.transactions&&r.transactions.transaction_no;if(bn){bills[bn]=bills[bn]||{};bills[bn][r.variant_id]=(bills[bn][r.variant_id]||0)+Number(r.qty);}sold[r.variant_id]=(sold[r.variant_id]||0)+Number(r.qty);});
+    await cacheToLocal('salehist',{bills:bills,sold:sold,at:new Date().toISOString()});
+    _histAt=Date.now();
+  }catch(e){}
+}
+// check a sale return against what this device knows: the saved sales history plus sales recorded offline
+async function _offValidateReturn(bn,vid,qty){
+  var h=null;try{h=await readFromCache('salehist');}catch(e){}
+  var q=[];try{q=await idbGetAll('queue',null,null);}catch(e){}
+  var offBills={},offSold={},offRet={};
+  q.forEach(function(i){
+    var pl=i.payload||{};
+    if(i.type==='sale'&&i.status!=='synced'){(pl.cart||[]).forEach(function(c){offSold[c.id]=(offSold[c.id]||0)+Number(c.qty);var b=offBills[pl.offline_bill_no]=offBills[pl.offline_bill_no]||{lid:i.local_id,items:{}};b.items[c.id]=(b.items[c.id]||0)+Number(c.qty);});}
+    if(i.type==='sale_return'&&i.status!=='synced'){var k=(pl.bill_off_no||pl.bill_no||'')+'|'+pl.variant_id;offRet[k]=(offRet[k]||0)+Number(pl.qty);}
+  });
+  if(bn){
+    var ob=offBills[bn],soldQty=null,res={ok:true};
+    if(ob){soldQty=ob.items[vid]||0;res={ok:true,bill_local_id:ob.lid,bill_off_no:bn};}
+    else if(h&&h.bills&&h.bills[bn]){soldQty=h.bills[bn][vid]||0;res={ok:true,bill_no:bn};}
+    else if(!h)return{ok:true,bill_no:bn,unverified:true};
+    else return{ok:false,msg:'Bill '+bn+' was not found in the sales saved on this device'};
+    if(!soldQty)return{ok:false,msg:'This product was not in bill '+bn};
+    var already=offRet[bn+'|'+vid]||0;
+    if(qty>soldQty-already)return{ok:false,msg:'Return qty ('+qty+') exceeds the quantity still returnable ('+(soldQty-already)+') on bill '+bn};
+    return res;
+  }
+  var total=(h&&h.sold&&h.sold[vid]||0)+(offSold[vid]||0);
+  if(total>0)return{ok:true};
+  if(!h)return{ok:true,unverified:true};
+  return{ok:false,msg:'No sales record found for this product (checked the sales saved on this device)'};
+}
+async function _offRecordSaleReturn(a){
+  await queueOffline('sale_return',{offline_ref:'OFFRET-'+Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase(),date:td(),variant_id:a.variant_id,product_name:a.name,sku:a.sku,qty:a.qty,unit_refund:a.unit,total:a.total,account_id:a.account_id,account_name:a.account_name,reason:a.reason,bill_no:a.bill_no||null,bill_off_no:a.bill_off_no||null,bill_local_id:a.bill_local_id||null,unverified:!!a.unverified});
+  await _offAdjustStock(a.variant_id,a.qty);
+  cmo();if(typeof srch==='function')srch();
+  toast('Return saved offline - it will sync automatically when internet returns','ok',5000);
+}
+async function _offRecordPurchaseReturn(a){
+  await queueOffline('purchase_return',{offline_ref:'OFFPRET-'+Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,5).toUpperCase(),date:a.date,variant_id:a.variant_id,name:a.name,sku:a.sku,qty:a.qty,cost:a.cost,total:a.total,reason:a.reason,ref:a.ref,supplier_name:a.supplier_name,supplier_id:a.supplier_id,cash_back:a.cash_back,cash_account_id:a.cash_account_id});
+  await _offAdjustStock(a.variant_id,-a.qty);
+  cmo();if(typeof srch==='function')srch();
+  toast('Purchase return saved offline - it will sync automatically when internet returns','ok',5000);
+}
 function validatePayments(payments, total, allowCredit){
   if(!payments.length)return {ok:false,msg:'Add at least one payment row'};
   for(var i=0;i<payments.length;i++){
@@ -4471,6 +4639,8 @@ function validatePayments(payments, total, allowCredit){
 
 
 ['savePur','saveCash','processReturn','saveExchange','saveStockMove','saveExp','completeSale','saveCommittee','saveCmTxn'].forEach(_wrapSave);
+
+setInterval(async function(){try{if(!navigator.onLine||_isSyncing)return;var q=await idbGetAll('queue',null,null);if(q.some(function(i){return i.status==='pending'||(i.status==='failed'&&!i.needs_attention&&(i.retry_count||0)<5);}))runSyncQueue();}catch(e){}},60000);
 </script>
 </body>
 </html>
